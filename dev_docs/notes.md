@@ -3,3 +3,44 @@
 - 2026-07-09: Game design exploration drafted at `dev_docs/design.md` (**DRAFT** — awaiting Scott's confirmation of high-level direction; do not treat as canon until confirmed). No code exists yet. Implementation planning comes only after design sign-off.
 - 2026-07-09: Design **confirmed** with amendments — `dev_docs/design.md` is now canon; full implementation plan at `dev_docs/plan.md` (stages S0–S14). Key interpretations settled with Scott: (1) "no NPCs" includes the automatons — zero characters, but wildlife is desired and central; (2) the sea is treated **as air** — normal physics everywhere, underwater is purely a rendering/audio treatment (no swimming, no buoyancy, no airlocks); (3) fixed time of day — no day/night cycle, so shadows can be aggressively cached; the Grotto interior is the game's only darkness; (4) plans must always target the ultimate state (CLAUDE.md rule) — stages are build order, not feature tiers, and nothing is "deferred to later".
 - Aesthetic questions should NOT be bounced back to Scott — he explicitly wants to be pleasantly surprised by bold choices ("photoreal + dream-like, a little cartoonish in feel"). Ask him only about logistics: package installs, supplied assets (PBR textures, audio files, fonts), hardware targets.
+- 2026-07-09 S0 lessons (toolchain):
+  - `npx tsc -b` can report a FALSE PASS off a stale `.tsbuildinfo` — trust `npm run build` (or `tsc -b --force`) after structural changes.
+  - tsconfig has `erasableSyntaxOnly` → NO constructor parameter properties, NO enums/namespaces. Declare fields + assign in ctor; use const objects instead of enums.
+  - `GameEvents` must stay a `type` alias (not interface) — the EventBus generic needs the implicit index signature.
+  - TS 6 DOM lib already types `navigator.gpu`; do not hand-roll WebGPU navigator types.
+  - three r185: `WebGPURenderer` silently falls back to WebGL2 — we hard-fail instead (see systems/foundation.md). TSL display effects live in `three/examples/jsm/tsl/display/*` (BloomNode, GTAONode, TRAANode, Lut3DNode, GodraysNode all exist in r185).
+  - The Claude preview browser DOES support WebGPU — agents can and should self-verify visuals via preview screenshots (launch config `.claude/launch.json`, server name `seapark`), in addition to Scott's own runs.
+- 2026-07-09 S1 lessons:
+  - **`npx` is BROKEN in Scott's shell** (profile wrapper references missing `_sfw_run` → npx silently runs NOTHING and "passes"). Use `npm run <script>` or `./node_modules/.bin/<tool>` directly. Never trust an `npx` result in this repo.
+  - GTAO node renders to a RedFormat target — apply as `.mul(aoTex.r)`; multiplying by the vec4 turns the whole frame red.
+  - r185 post-processing class is `RenderPipeline` (in `three/webgpu`); `PostProcessing` still exists as legacy alias. `pass(scene, camera, { samples: 4 })` gives MSAA. `renderOutput()` placed manually + `outputColorTransform = false` = explicit tonemap ownership.
+  - TSL node types: keep system boundaries typed as `object` + single cast (see systems/render-pipeline.md); fighting `Node<"vec4">` generics across modules is a time sink.
+- 2026-07-09 S2 lessons (see systems/sea-and-sky.md for the full set):
+  - **Debug mystery artifacts with `?pass=` isolation BEFORE touching materials.** A dither band on distant water survived five material fixes; it was GTAO the whole time (`?pass=ao` showed it in seconds). AO now distance-fades to neutral in the pipeline.
+  - GPU readback for verification: storage buffer + `renderer.getArrayBufferAsync()`, NEVER a material/quad blit (tone mapping clamps negatives → corrupted comparisons).
+  - TSL Fn params: annotate as `Node<'vec2'>` etc. (`import type { Node } from 'three/webgpu'`); `varying()` returns lose arity — cast at creation. `ComputeNode` type is exported for arrays of dispatches.
+  - `renderer.compute()` accepts an array = one submission (batch same FFT stage across cascades); separate calls = separate submissions (required between stages).
+  - FFT self-test PASSES (err ~1e-8): the transform is proven — never "tune around" wave oddities by touching the FFT; look at spectrum/assembly instead.
+- 2026-07-09 S3 lessons:
+  - Renderer is globally `NoToneMapping` now; the pipeline's explicit `renderOutput(x, AgX, sRGB)` is the ONLY output transform. Side render targets stay linear. Never set toneMapping on the renderer again.
+  - Node materials: transparency/blending needs `material.opacityNode` — vec4 colorNode alpha is ignored (renders opaque).
+  - Caustics-on-surfaces go through `material.receivedShadowNode` (shadow × (1 + caustic)) — inherits occlusion; use `SeaMediumSystem.applyCaustics(material)` for every underwater lit material.
+  - Fog belongs in the pipeline hook, not in materials — one place, everything fogged, no per-material wiring.
+  - TSL camera matrices are built-in nodes (`cameraProjectionMatrixInverse`, `cameraWorldMatrix`) — no manual matrix uniforms for post-process ray reconstruction.
+  - Perf watch: god-ray march costs ~half the frame at tier 2 (121→54 fps in preview) — S14 must half-res it or add temporal accumulation.
+- 2026-07-09 S5 lessons:
+  - Rapier heightfield heights are COLUMN-major; a `?debug` raycast self-check guards it (physics/physicsWorld.ts) — keep that check when touching terrain.
+  - Camera-parented objects need `scene.add(camera)` or they never render.
+  - Agent self-testing pattern: `?debug` exposes `window.__pearl`; synthetic `KeyboardEvent`s drive the player (movement works without pointer lock by design). Walk + screenshot + read camera position = full loop verification without a human.
+  - Full-frame FPS in preview now ~35 at tier 2 with terrain+flora+rays: acceptable during construction; the S14 perf pass has the levers list (godray march, seagrass vertex count, shadow cadence).
+- 2026-07-10 S7 lessons (park assembly — see systems/park-assembly-audio.md for the full set):
+  - **Hidden preview tab ≠ perf collapse.** When the preview window is occluded, rAF stops: stats read 0–5 FPS, `ctx.time.frame` freezes, rAF-based evals time out — while `setTimeout` and screenshots keep working. Diagnose with `document.visibilityState` FIRST before chasing "0 fps bugs". Frames can be driven manually: `registry.fixedUpdate/update` + `pipeline.render()` from `preview_eval`.
+  - In `?view` mode, DevOrbit owns camera orientation every frame — to pose a shot, set `orbit.controls.target` + `camera.position` then `controls.update()`; bare `camera.lookAt` is overwritten as soon as the tab becomes visible.
+  - Long thin geometry at a fixed height (paths!) floats over terrain dips and casts kilometre-long straight shadow bands. Ground every plate segment on its own terrain sample (`groundedPath`, ≤9 m pieces).
+  - Scatter systems must respect `inParkFootprint()` from parkPlan.ts (discs + capsules incl. path network and future ride sites). Anything new that sprinkles the seabed follows the same rule.
+  - Torus prototypes must be radius-keyed when used as rings — uniform-scaling a unit torus fattens the tube with the major radius (1.2 m brass donuts on domes, the atrium "gold balloon" mass).
+  - Transparent slots must not cast shadows (`SlotWriter.compile` handles it) — glass roofs were shadowing like plywood.
+  - Solid-of-revolution "basins" need open profiles: a capped CylinderGeometry LIDDED the reflecting pool with marble 3 cm above the water; the pool tuning looked broken for several rounds because the water was simply invisible.
+  - Planar reflections: TSL `reflector()` works under our RenderPipeline pass. Blend it via `emissiveNode` over a black-base standard material; Reinhard-squash the mirrored HDR ceiling; Fresnel by plane-facing; set `levelNode` directly (never `.level()`/`.blur()` — clones lose the live RT); keep UV wobble ≤~0.012 or the low-res mirror moirés.
+  - Rapier `world.castRay` before the first `world.step()` returns no hits — run raycast self-checks on the first fixedUpdate, not at init.
+  - Preview FPS with the full park at tier 2 measured ~27–40 while visible (reflector adds a second scene render when the pool is on screen — S14 lever: pause reflector when hub out of view).

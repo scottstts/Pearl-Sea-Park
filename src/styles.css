@@ -1,0 +1,246 @@
+:root {
+  --deep: #0b2e3c;
+  --deeper: #071e28;
+  --ink: #04161d;
+  --foam: #eaf6f2;
+  --gold: #d8b56a;
+  --gold-dim: #a98c52;
+  --serif: 'Didot', 'Bodoni 72', 'Playfair Display', 'Georgia', serif;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--ink);
+  font-family: var(--serif);
+}
+
+canvas#scene {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  outline: none;
+}
+
+/* ── Ticket screen ─────────────────────────────────────── */
+
+.ticket {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(120% 90% at 50% 20%, var(--deep) 0%, var(--deeper) 55%, var(--ink) 100%);
+  color: var(--foam);
+  z-index: 100;
+  transition: opacity 1.6s ease;
+  user-select: none;
+}
+
+.ticket.is-hidden {
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ticket-card {
+  text-align: center;
+  padding: 3.5rem 4.5rem;
+  border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent);
+  border-radius: 4px;
+  position: relative;
+  background: color-mix(in srgb, var(--ink) 35%, transparent);
+  box-shadow: 0 0 80px rgba(0, 0, 0, 0.35);
+  max-width: min(560px, calc(100vw - 3rem));
+}
+
+.ticket-card::before,
+.ticket-card::after {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border: 1px solid color-mix(in srgb, var(--gold) 22%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.ticket-card::after {
+  inset: 10px;
+}
+
+.ticket-eyebrow {
+  font-size: 0.72rem;
+  letter-spacing: 0.42em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 1.1rem;
+}
+
+.ticket-title {
+  font-size: clamp(2.6rem, 7vw, 4.2rem);
+  font-weight: 400;
+  letter-spacing: 0.08em;
+  line-height: 1.05;
+  color: var(--foam);
+}
+
+.ticket-sub {
+  margin-top: 0.9rem;
+  font-style: italic;
+  font-size: 0.95rem;
+  opacity: 0.75;
+  letter-spacing: 0.06em;
+}
+
+.ticket-rule {
+  width: 120px;
+  height: 1px;
+  margin: 1.6rem auto;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+
+.ticket-status {
+  min-height: 3.4rem;
+  display: grid;
+  place-items: center;
+  gap: 0.6rem;
+}
+
+.ticket-progress-label {
+  font-size: 0.8rem;
+  font-style: italic;
+  opacity: 0.65;
+  letter-spacing: 0.08em;
+}
+
+.ticket-progress {
+  width: 220px;
+  height: 2px;
+  background: color-mix(in srgb, var(--foam) 12%, transparent);
+  overflow: hidden;
+  border-radius: 1px;
+}
+
+.ticket-progress > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--gold);
+  transition: width 0.35s ease;
+}
+
+.ticket-enter {
+  font-family: var(--serif);
+  font-size: 0.85rem;
+  letter-spacing: 0.3em;
+  text-transform: uppercase;
+  color: var(--gold);
+  background: none;
+  border: 1px solid var(--gold-dim);
+  border-radius: 2px;
+  padding: 0.85rem 2.2rem;
+  cursor: pointer;
+  transition:
+    background 0.35s ease,
+    color 0.35s ease,
+    box-shadow 0.35s ease;
+}
+
+.ticket-enter:hover {
+  background: var(--gold);
+  color: var(--ink);
+  box-shadow: 0 0 34px color-mix(in srgb, var(--gold) 40%, transparent);
+}
+
+.ticket-error {
+  color: var(--foam);
+  font-size: 0.95rem;
+  line-height: 1.6;
+  max-width: 40ch;
+  opacity: 0.85;
+}
+
+.ticket-error strong {
+  display: block;
+  color: var(--gold);
+  font-weight: 400;
+  font-size: 1.05rem;
+  margin-bottom: 0.5rem;
+  letter-spacing: 0.05em;
+}
+
+.ticket-footnote {
+  position: absolute;
+  bottom: 1.4rem;
+  left: 0;
+  right: 0;
+  text-align: center;
+  font-size: 0.68rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+  opacity: 0.32;
+}
+
+/* ── Contextual prompt (the only in-game UI) ───────────── */
+
+.prompt {
+  position: fixed;
+  left: 50%;
+  bottom: 14vh;
+  transform: translateX(-50%) translateY(6px);
+  color: var(--foam);
+  font-size: 1rem;
+  font-style: italic;
+  letter-spacing: 0.05em;
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.55);
+  opacity: 0;
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+  pointer-events: none;
+  z-index: 40;
+}
+
+.prompt.is-visible {
+  opacity: 0.92;
+  transform: translateX(-50%) translateY(0);
+}
+
+.prompt .key {
+  font-style: normal;
+  font-size: 0.8rem;
+  border: 1px solid color-mix(in srgb, var(--foam) 55%, transparent);
+  border-radius: 3px;
+  padding: 0.1rem 0.45rem;
+  margin-right: 0.55rem;
+  letter-spacing: 0.12em;
+  vertical-align: 1px;
+}
+
+/* ── Pause card ────────────────────────────────────────── */
+
+.pause {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--ink) 55%, transparent);
+  backdrop-filter: blur(6px);
+  z-index: 90;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.4s ease;
+}
+
+.pause.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}

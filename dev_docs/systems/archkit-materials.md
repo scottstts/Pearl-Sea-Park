@@ -1,0 +1,10 @@
+# Archkit & materials (S6)
+
+- **`materials/library.ts` (ParkMaterials)** — the park's whole identity, built ONCE via MaterialsSystem (init-time, after medium provides the caustic sampler). Brass, verdigris, marble, nacre (view-angle iridescence), iron, glass, lamp globes (emissive 2.6 — inside bloom's hierarchy), worldspace mosaic, dark wood, canvas. All procedural TSL, all caustic-lit. Never instantiate ad-hoc materials in districts — extend the library.
+- **`archkit/writer.ts` (SlotWriter)** — modules emit cloned+transformed geometry per material slot; `compile()` merges to one Mesh per material (procedural-architecture skill). An entire district = ~10 draw calls.
+- **`archkit/modules.ts` (ArchKit)** — column (plinth/entasis shaft/brass capital), arch (half-torus scaled span×rise, then yaw), balustrade (lathe balusters), ribbed glass dome + finial, lamp post (returns globe position for a real PointLight), bench, mosaic plaza + steps ring, ticket machine. Geometry prototypes cached per kit instance. Real meters everywhere.
+- **Rotation lesson**: torus prototypes already live in a VERTICAL (XY) plane — arches and dome ribs need only scale+yaw. Composing "fix-up" rotations flattened the ribs invisibly; check silhouettes from inside AND outside.
+- Districts receive `DistrictServices { physics, materials, seats?, interaction? }` — seats/interaction are absent in `?view=` inspection mode, so register conditionally.
+- Glass is jewelry (sea = air): opacity 0.07, roughness 0.03, envMapIntensity 0.25, depthWrite off. What reads as the "dome color" from inside is mostly the sunlit sea through it — correct, and the amber sun-wash is the fog's sunward lobe.
+- `world/parkPlan.ts` now exists — ALL positions come from it (S7 fills the remaining districts).
+- Atrium (`world/districts/atrium.ts`) is the hero reference: colonnade ring with entrance gaps, arches, dome, benches with real seats, lamps with PointLights (intensity ~6.5, distance 13 — four of them; keep local light counts modest), plaza collider (`addStaticCylinder`), ticket machine emitting `ticket/punched`.
