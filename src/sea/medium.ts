@@ -51,6 +51,8 @@ export class SeaMediumSystem implements GameSystem {
   /** 0 above water → 1 below; smoothed across the crossing frames. */
   private readonly submerged = uniform(0)
   private readonly timeUniform = uniform(0)
+  /** 0 = open sea, 1 = deep inside an interior (grotto): kills fog glow + rays. */
+  private readonly interior = uniform(0)
   private caustics: CausticsPass | null = null
   private particulates: InstancedMesh | null = null
   private causticSampler: ReturnType<typeof causticWorldSample> | null = null
@@ -96,9 +98,11 @@ export class SeaMediumSystem implements GameSystem {
         const upness = smoothstep(-0.5, 0.75, rayDir.y)
         const cameraDim = exp(cameraPosition.y.min(0).mul(0.03))
         const sunward = pow(max(rayDir.dot(sunDirectionUniform), 0.0), 6.0).mul(0.06)
+        const interiorKeep = float(1).sub(this.interior.mul(0.94))
         const inscatter = mix(AMBIENT_DOWN, AMBIENT_UP, upness)
           .mul(cameraDim)
           .add(sunColorUniform.mul(sunward))
+          .mul(interiorKeep)
         const fogged = scene
           .mul(transmittance)
           .add(inscatter.mul(float(1).sub(transmittance.g)))
@@ -117,7 +121,7 @@ export class SeaMediumSystem implements GameSystem {
           const light = sampler(samplePos).g
           shaft.addAssign(light.mul(exp(t.mul(-0.03))))
         })
-        const rays = sunColorUniform.mul(shaft.mul(stepLength).mul(0.007))
+        const rays = sunColorUniform.mul(shaft.mul(stepLength).mul(0.007)).mul(interiorKeep)
 
         const underwater = fogged.add(rays)
         return vec4(mix(scene, underwater, submerged), 1.0)
@@ -139,6 +143,11 @@ export class SeaMediumSystem implements GameSystem {
    * caustics inherit occlusion for free. Every underwater lit material gets
    * this (terrain, architecture, props).
    */
+  /** Interiors (the grotto) fade the open-sea glow as the camera goes deep. */
+  setInterior(value: number): void {
+    this.interior.value = Math.min(1, Math.max(0, value))
+  }
+
   applyCaustics(material: MeshStandardNodeMaterial, strength = 1.4): void {
     const sampler = this.causticSampler
     if (!sampler) return

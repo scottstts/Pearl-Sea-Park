@@ -26,5 +26,10 @@ export type GameEvents = {
   'ride/carousel-riding': { riding: boolean }
   /** Torrent lap-bar down / raised (rattle + roar while riding). */
   'ride/torrent-riding': { riding: boolean }
+  /** Guest boarded/left a Grotto shell boat. */
+  'ride/grotto-riding': { riding: boolean }
+  /** Camera blend into the Grotto's long cave acoustic. */
+  'audio/grotto-interior': { amount: number }
+  /** A deterministic ceiling drip struck the simulated channel. */
+  'grotto/drip': Record<string, never>
 }
-

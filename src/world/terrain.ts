@@ -1,6 +1,6 @@
 import { BufferAttribute, BufferGeometry, Color, Mesh, Object3D } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
-import { Fn, mix, normalGeometry, normalize, positionWorld, sin, vec2, vec3 } from 'three/tsl'
+import { Fn, float, mix, normalGeometry, normalize, positionWorld, sin, smoothstep, vec2, vec3 } from 'three/tsl'
 import { fbm2 as fbmCpu } from '../core/noise2'
 import { registerBookmark } from '../core/debug'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
@@ -44,6 +44,59 @@ export function terrainHeight(x: number, z: number): number {
     const basinFloor = -40 + (fbmCpu(x * 0.06, z * 0.06, 2, 71) - 0.5) * 1.2
     height = height * (1 - basinBlend) + basinFloor * basinBlend
   }
+
+  // The grotto reef massif (grotto anchor 185,125): the caverns run beneath
+  // this rise — "moon-pool boat into caverns beneath the reef".
+  const massifDistance = Math.hypot((x - 208) / 1.25, z - 102)
+  const massifBlend = 1 - smoothstepJs(22, 50, massifDistance)
+  if (massifBlend > 0) {
+    const crown = 9.5 + (fbmCpu(x * 0.05, z * 0.05, 3, 83) - 0.5) * 4
+    height += crown * massifBlend
+    // The boarding gorge: a skylit crack from the anchor into the massif —
+    // guests walk and board here in the open; only boats enter the caverns.
+    const gx = x - 185
+    const gz = z - 125
+    const t = Math.min(1, Math.max(0, (gx * 12 + gz * -14) / (12 * 12 + 14 * 14)))
+    const nearestX = 185 + 12 * t
+    const nearestZ = 125 - 14 * t
+    // Continue the same cut backward along the final Midway path approach;
+    // otherwise the massif rises under the last path plates before the gorge
+    // begins and turns them into a bridge.
+    const approachDx = 17
+    const approachDz = -6
+    const approachT = Math.min(
+      1,
+      Math.max(0, ((x - 168) * approachDx + (z - 131) * approachDz) / (approachDx ** 2 + approachDz ** 2)),
+    )
+    const approachX = 168 + approachDx * approachT
+    const approachZ = 131 + approachDz * approachT
+    const gorgeDistance = Math.min(
+      Math.hypot(x - nearestX, z - nearestZ),
+      Math.hypot(x - approachX, z - approachZ),
+    )
+    const gorgeBlend = 1 - smoothstepJs(3.4, 7.2, gorgeDistance)
+    if (gorgeBlend > 0) height = height * (1 - gorgeBlend) + -26.6 * gorgeBlend
+  }
+
+  // The open reach of the Grotto channel: terrainHeight owns this cut so the
+  // visual mesh, Rapier heightfield, dock access, and water all agree. The
+  // rest of the loop remains beneath the one-sided reef surface.
+  const channelAx = 196.6
+  const channelAz = 110.5
+  const channelBx = 203.4
+  const channelBz = 104.6
+  const channelDx = channelBx - channelAx
+  const channelDz = channelBz - channelAz
+  const channelT = Math.min(
+    1,
+    Math.max(0, ((x - channelAx) * channelDx + (z - channelAz) * channelDz) / (channelDx ** 2 + channelDz ** 2)),
+  )
+  const channelDistance = Math.hypot(
+    x - (channelAx + channelDx * channelT),
+    z - (channelAz + channelDz * channelT),
+  )
+  const channelBlend = 1 - smoothstepJs(2.55, 4.25, channelDistance)
+  if (channelBlend > 0) height = height * (1 - channelBlend) + -29.15 * channelBlend
 
   // The drop-off: a jagged rim north of RIM_Z plunging to the abyss.
   const rimJitter =
@@ -132,7 +185,16 @@ export function createSandMaterial(medium: SeaMediumSystem): MeshStandardNodeMat
   const patchTone = fbm2(xz.mul(0.0045))
   const base = mix(vec3(0.48, 0.43, 0.33), vec3(0.58, 0.54, 0.43), tone)
   const seagrassTint = mix(base, vec3(0.33, 0.4, 0.3), patchTone.smoothstep(0.62, 0.85).mul(0.5))
-  material.colorNode = seagrassTint
+  const grottoDistance = vec2(xz.x.sub(208).div(1.25), xz.y.sub(102)).length()
+  const grottoMassif = float(1)
+    .sub(smoothstep(22, 50, grottoDistance))
+    .mul(smoothstep(-25.2, -21.5, positionWorld.y))
+  const reefStone = mix(
+    vec3(0.12, 0.18, 0.17),
+    vec3(0.24, 0.29, 0.24),
+    fbm2(xz.mul(0.075)),
+  )
+  material.colorNode = mix(seagrassTint, reefStone, grottoMassif)
 
   // Sand ripples: banded sine distorted by noise, as a normal perturbation.
   material.normalNode = Fn(() => {

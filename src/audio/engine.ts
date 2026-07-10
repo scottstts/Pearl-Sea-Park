@@ -23,6 +23,11 @@ export class AudioEngineSystem implements GameSystem {
   private waltzGain: GainNode | null = null
   private waltzFilter: BiquadFilterNode | null = null
   private waltzLoopEnd = 0
+  private caveWet: GainNode | null = null
+  private caveDry: GainNode | null = null
+  private organGain: GainNode | null = null
+  private organLoopEnd = 0
+  private grottoInterior = 0
 
   init(ctx: GameContext): void {
     // The context must start from a user gesture: the enter click.
@@ -63,6 +68,19 @@ export class AudioEngineSystem implements GameSystem {
       if (riding) this.startHum('torrent', 52, 0.06)
       else this.stopHum('torrent')
     })
+    ctx.events.on('ride/grotto-riding', ({ riding }) => {
+      if (riding) this.startHum('grotto', 42, 0.028)
+      else this.stopHum('grotto')
+    })
+    ctx.events.on('grotto/drip', () => this.playDrip())
+    ctx.events.on('audio/grotto-interior', ({ amount }) => {
+      this.grottoInterior = Math.max(0, Math.min(1, amount))
+      const context = this.context
+      if (!context) return
+      this.caveWet?.gain.setTargetAtTime(this.grottoInterior * 0.62, context.currentTime, 0.22)
+      this.caveDry?.gain.setTargetAtTime(1 - this.grottoInterior * 0.12, context.currentTime, 0.18)
+      this.organGain?.gain.setTargetAtTime(this.grottoInterior * 0.16, context.currentTime, 0.3)
+    })
   }
 
   private start(_ctx: GameContext): void {
@@ -77,9 +95,19 @@ export class AudioEngineSystem implements GameSystem {
     lowpass.type = 'lowpass'
     lowpass.frequency.value = 1900 // guests begin underwater
     lowpass.Q.value = 0.4
-    master.connect(lowpass).connect(context.destination)
+    const caveDry = context.createGain()
+    caveDry.gain.value = 1
+    const caveWet = context.createGain()
+    caveWet.gain.value = 0
+    const convolver = context.createConvolver()
+    convolver.buffer = this.createCaveImpulse(context)
+    master.connect(caveDry).connect(lowpass)
+    master.connect(convolver).connect(caveWet).connect(lowpass)
+    lowpass.connect(context.destination)
     this.master = master
     this.lowpass = lowpass
+    this.caveDry = caveDry
+    this.caveWet = caveWet
 
     this.buildAmbience(context, master)
 
@@ -92,12 +120,21 @@ export class AudioEngineSystem implements GameSystem {
     waltzGain.connect(waltzFilter).connect(master)
     this.waltzGain = waltzGain
     this.waltzFilter = waltzFilter
+
+    const organGain = context.createGain()
+    organGain.gain.value = this.grottoInterior * 0.16
+    organGain.connect(master)
+    this.organGain = organGain
   }
 
   /** Distance-mix the waltz every frame; schedule the next loop as needed. */
   update(ctx: GameContext): void {
     const context = this.context
-    if (!context || !this.waltzGain || !this.waltzFilter || !this.waltzSource) return
+    if (!context) return
+    if (this.grottoInterior > 0.12 && context.currentTime > this.organLoopEnd - 1) {
+      this.scheduleShellOrgan()
+    }
+    if (!this.waltzGain || !this.waltzFilter || !this.waltzSource) return
     const d = ctx.camera.position.distanceTo(this.waltzSource)
     const gain = Math.min(0.55, 36 / Math.max(9, d * d) + (d < 26 ? 0.22 : 0))
     this.waltzGain.gain.setTargetAtTime(gain, context.currentTime, 0.4)
@@ -107,6 +144,73 @@ export class AudioEngineSystem implements GameSystem {
       0.5,
     )
     if (context.currentTime > this.waltzLoopEnd - 1.5) this.scheduleWaltzLoop()
+  }
+
+  /** Deterministic 3.8 s impulse: long stone chamber, dense quiet tail. */
+  private createCaveImpulse(context: AudioContext): AudioBuffer {
+    const seconds = 3.8
+    const buffer = context.createBuffer(2, Math.ceil(context.sampleRate * seconds), context.sampleRate)
+    for (let channel = 0; channel < buffer.numberOfChannels; channel++) {
+      const data = buffer.getChannelData(channel)
+      for (let i = 0; i < data.length; i++) {
+        const time = i / context.sampleRate
+        const envelope = Math.exp(-time * 1.72) * (1 - Math.exp(-time * 38))
+        data[i] = deterministicNoise(i + channel * 104729) * envelope * 0.55
+      }
+    }
+    return buffer
+  }
+
+  /** Slow five-note shell-organ phrase; audible only through the cave bus. */
+  private scheduleShellOrgan(): void {
+    const context = this.context
+    const out = this.organGain
+    if (!context || !out) return
+    const start = Math.max(context.currentTime + 0.05, this.organLoopEnd)
+    const notes = [130.81, 196, 261.63, 220, 164.81]
+    notes.forEach((frequency, index) => this.organTone(frequency, start + index * 1.55, 2.8, out))
+    this.organLoopEnd = start + 10.5
+  }
+
+  private organTone(frequency: number, at: number, duration: number, out: GainNode): void {
+    const context = this.context
+    if (!context) return
+    const carrier = context.createOscillator()
+    carrier.type = 'sine'
+    carrier.frequency.value = frequency
+    const breath = context.createOscillator()
+    breath.type = 'triangle'
+    breath.frequency.value = frequency * 2.005
+    const breathGain = context.createGain()
+    breathGain.gain.value = 0.12
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(0.12, at + 0.22)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + duration)
+    carrier.connect(gain)
+    breath.connect(breathGain).connect(gain)
+    gain.connect(out)
+    carrier.start(at)
+    breath.start(at)
+    carrier.stop(at + duration + 0.05)
+    breath.stop(at + duration + 0.05)
+  }
+
+  private playDrip(): void {
+    const context = this.context
+    const master = this.master
+    if (!context || !master || this.grottoInterior < 0.08) return
+    const at = context.currentTime
+    const oscillator = context.createOscillator()
+    oscillator.type = 'sine'
+    oscillator.frequency.setValueAtTime(1180, at)
+    oscillator.frequency.exponentialRampToValueAtTime(430, at + 0.12)
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.045, at)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.24)
+    oscillator.connect(gain).connect(master)
+    oscillator.start(at)
+    oscillator.stop(at + 0.26)
   }
 
   /** One 16-bar music-box waltz loop (3/4, ~96 bpm), scheduled ahead. */
@@ -328,4 +432,10 @@ export class AudioEngineSystem implements GameSystem {
     osc.stop(t + 0.1)
     this.bell(1318.5, t + 0.1, 1.2, 0.08)
   }
+}
+
+function deterministicNoise(value: number): number {
+  let h = Math.imul(value ^ 0x9e3779b9, 0x85ebca6b)
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35)
+  return ((((h ^ (h >>> 16)) >>> 0) / 4294967296) * 2) - 1
 }

@@ -19,6 +19,7 @@ import { createRenderer, webgpuAvailable } from './render/renderer'
 import { CarouselSystem } from './rides/carousel'
 import { DescentBellSystem } from './rides/descentBell'
 import { GreatWheelSystem } from './rides/greatWheel'
+import { GrottoSystem } from './rides/grotto/grottoSystem'
 import { PearlLineSystem } from './rides/pearlLine'
 import { TorrentSystem } from './rides/torrent'
 import type { GameContext } from './runtime/context'
@@ -127,6 +128,7 @@ async function boot(): Promise<void> {
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))
     registry.add(new TorrentSystem(services, player))
+    registry.add(new GrottoSystem(services, player, medium))
     const carousel = registry.add(new CarouselSystem(services, player))
     registry.add(new SchedulerSystem())
     const audio = registry.add(new AudioEngineSystem())

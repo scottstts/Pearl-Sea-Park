@@ -66,3 +66,10 @@
   - Helix→straight handoffs need explicit unwind waypoints along the exit tangent; CatmullRom otherwise balloons downward and the design speed profile silently absorbs it.
   - Run the SAME integrator as a design pass before building banking/geometry — banked frames must match the speeds the train will actually carry.
   - For automated ride tests, call `interactable.onInteract()` directly; synthetic KeyE is view-cone dependent and fails silently at the wrong look angle.
+- 2026-07-10 S11 lessons (Grotto — see systems/ride-grotto.md):
+  - A height+velocity five-point water step has a strict 2D stability limit. The inherited `laplacian × 4.75` coupling exploded into meter-scale triangle sheets within seconds; normalized coupling 0.018 at 120 Hz is stable, and the 64² mirror scales it by cell-size squared.
+  - Water impulses must be zero-mean. Repeated positive Gaussians permanently raise the conserved channel mean; use a Mexican-hat crest+trough kernel, and resolve it over at least 1.25 cells in the coarse buoyancy mirror.
+  - Do not GPU-read back ride water every frame. A low-resolution CPU mirror fed the exact same mask, static profile, and impulses gives causal four-point buoyancy with no synchronization stall.
+  - New terrain massing must include the approach cut used by existing paths. Segmenting plates cannot ground a path when the terrain rises between its centerline samples; carve the intended gorge in `terrainHeight` so visual and Rapier ground agree.
+  - A partial back-face cave shell in an open gorge reads as disconnected black sheets. Let the terrain own the open reach and start the full shell after a bend where the one-sided surface hides the cut.
+  - HDR hierarchy applies inside dark rides too: thousands of above-threshold pearls become white bloom blobs. Keep the galaxy field lit below threshold and reserve hero emission for one focal pearl.
