@@ -1,7 +1,7 @@
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 
-interface ScheduleEntry {
+export interface ScheduleEntry {
   name: string
   /** Seconds between starts. */
   period: number

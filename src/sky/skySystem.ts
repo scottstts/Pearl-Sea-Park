@@ -1,16 +1,15 @@
-import { BackSide, DirectionalLight, Mesh, Scene, SphereGeometry, Vector3 } from 'three'
+import { BackSide, DirectionalLight, Mesh, Scene, SphereGeometry } from 'three'
 import { MeshBasicNodeMaterial, PMREMGenerator } from 'three/webgpu'
 import { normalize, positionLocal } from 'three/tsl'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
+import { CachedShadowClipmapNode } from '../render/cachedShadowClipmaps'
 import { skyRadiance } from './skyRadiance'
 import { SUN_LIGHT_INTENSITY, sunColor, sunDirection } from './sun'
 
-const SHADOW_FOCUS_QUANT = 8
-
 /**
  * Sky dome (shared radiance function), the one directional sun light with a
- * camera-following shadow frustum, and a once-baked PMREM environment
+ * cached camera-centered shadow clipmaps, and a once-baked PMREM environment
  * (the sun never moves, so the environment never regenerates).
  */
 export class SkySystem implements GameSystem {
@@ -18,7 +17,8 @@ export class SkySystem implements GameSystem {
 
   private dome: Mesh | null = null
   private sun: DirectionalLight | null = null
-  private readonly focus = new Vector3()
+  private clipmaps: CachedShadowClipmapNode | null = null
+  private debugCanvas: HTMLCanvasElement | null = null
 
   init(ctx: GameContext): void {
     const { scene, renderer, quality } = ctx
@@ -36,20 +36,25 @@ export class SkySystem implements GameSystem {
 
     const sun = new DirectionalLight(sunColor, SUN_LIGHT_INTENSITY)
     sun.castShadow = true
-    const size = quality.params.shadowMapSize
-    sun.shadow.mapSize.set(size, size)
-    const extent = 90
-    sun.shadow.camera.left = -extent
-    sun.shadow.camera.right = extent
-    sun.shadow.camera.top = extent
-    sun.shadow.camera.bottom = -extent
-    sun.shadow.camera.near = 10
-    sun.shadow.camera.far = 600
+    sun.shadow.mapSize.set(quality.params.shadowMapSizes[0], quality.params.shadowMapSizes[0])
     sun.shadow.bias = -0.0004
     sun.shadow.normalBias = 0.02
+    sun.position.copy(sunDirection).multiplyScalar(700)
+    sun.target.position.set(0, 0, 0)
     scene.add(sun)
     scene.add(sun.target)
     this.sun = sun
+    this.clipmaps = new CachedShadowClipmapNode(sun, {
+      camera: ctx.camera,
+      levelMapSizes: quality.params.shadowMapSizes,
+      firstRadius: 28,
+      scaleFactor: 3,
+      maxDistance: 650,
+      dynamicLevels: 1,
+      updateBudget: 1,
+      maxCacheAge: 180,
+    }).attach()
+    if (ctx.flags.debug) this.debugCanvas = renderer.domElement
 
     // Fixed sky → bake the environment exactly once.
     const envScene = new Scene()
@@ -66,16 +71,8 @@ export class SkySystem implements GameSystem {
     const camera = ctx.camera
     this.dome?.position.copy(camera.position)
 
-    // Shadow frustum follows the camera on a coarse grid (full texel-stable
-    // clipmaps land with the terrain stage).
-    if (this.sun) {
-      this.focus.set(
-        Math.round(camera.position.x / SHADOW_FOCUS_QUANT) * SHADOW_FOCUS_QUANT,
-        0,
-        Math.round(camera.position.z / SHADOW_FOCUS_QUANT) * SHADOW_FOCUS_QUANT,
-      )
-      this.sun.position.copy(this.focus).addScaledVector(sunDirection, 260)
-      this.sun.target.position.copy(this.focus)
+    if (this.debugCanvas && ctx.time.frame % 60 === 0) {
+      this.debugCanvas.dataset.shadowClipmaps = JSON.stringify(this.clipmaps?.debugSnapshot())
     }
   }
 
@@ -85,5 +82,8 @@ export class SkySystem implements GameSystem {
       ctx.scene.remove(this.sun.target)
       ctx.scene.remove(this.sun)
     }
+    this.clipmaps?.dispose()
+    this.clipmaps = null
+    if (this.debugCanvas) delete this.debugCanvas.dataset.shadowClipmaps
   }
 }

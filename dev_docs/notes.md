@@ -80,3 +80,23 @@
   - GPU-driven instanced positions require `frustumCulled = false` unless a separate dynamic bounds system updates world bounds; otherwise Three culls a whole school against the tiny source fish geometry at the origin.
   - Scheduled wildlife reads best as one authored composition: the manta and selected schools share the Esplanade cue, while the ordinary player-avoidance force creates the split. Validation views hold the timetable at the readable beat rather than duplicating behavior.
   - Audio-first events need semantic phases. The whale emits `approach` twelve seconds before it becomes visible, so sound, shadow, body, eye, and departure remain an explicit sequence rather than offsets scattered across systems.
+- 2026-07-10 S13 lessons (Games — see systems/games-and-wonders.md):
+  - A torus render mesh is not a physics ring. Ring the Narwhal uses one rigid body with 14 small ball colliders arranged around the same XZ opening as the rotated torus; the fixed horn is a cone collider, so landing over it is physically possible.
+  - High-striker tuning belongs in velocity/energy space, not arbitrary impulse units. With the puck's real mass, a literal 8–19 N·s impulse launched it hundreds of meters; assigning 8.97–11.7 m/s produces the intended 4.8–7.7 m ballistic range and a meaningful upper timing band.
+  - Throwing interaction needs exactly one owner. Racks arm the shared `GamesSystem`; the next pointer click samples the raw camera forward and hands a world-space origin/direction to the selected toy. This prevents four game modules from installing conflicting click listeners.
+  - A bounded-water caustic must share the heightfield cause. The well bottom derives intensity from the simulated surface second difference; a decorative scrolling projector would violate the surface/normal/caustic contract.
+  - Progress remains diegetic only if the state changes the prop. Unique ride events add visible ticket stamps, and unique press motifs add copper pieces to actual book pockets; counters and arrays alone are not the player-facing result.
+  - Positional synthesis still needs listener ownership. Updating Web Audio's listener from the Three camera once per frame lets one-shot procedural voices use HRTF panners without introducing an audio-scene framework.
+- 2026-07-10 S14 lessons (Opening Day — see systems/opening-day.md):
+  - A quality tier must be chosen before tier-sized resources exist. Changing only `quality.tier` after wildlife/storage/shadow construction is false control; the pause card persists the override and reloads so every budget agrees.
+  - Fixed-sun caching is only stable when shader selection reads committed map centers. Desired centers may wait behind a refresh budget; publishing them early makes the sample box drift away from cached content.
+  - The original god-ray mechanism was sound but placed at the wrong resolution. Marching the same field at reduced resolution with depth in alpha and bilateral recovery preserves causal shafts while moving the loss to thin edges.
+  - Exposure readback belongs on a tiny encoded target and must be asynchronous. Reading the HDR scene directly or synchronously would turn eye adaptation into a frame stall.
+  - A 3D LUT owns color relationships, not screen position. Keep the vignette after the LUT; baking it into color space is impossible.
+  - Scheduled time begins at `park/entered`. Advancing `sim` behind the ticket makes every first visit start at an arbitrary point in the timetable and can consume the opening chime before audio exists.
+  - Canonical validation names need a code authority. A boot-time ten-postcard audit prevents construction-era aliases from silently weakening the final visual contract.
+  - TSL types do not prove graph-construction legality. Mutable `toVar()` accumulation still has to be created inside `Fn`; otherwise the browser reports “No stack defined” even though TypeScript and Vite pass.
+  - Node labels can become WGSL declarations. Hyphens in `RTTNode.setName()` produce invalid shader identifiers; use camelCase for shader-facing names and reserve punctuation for Object3D/debug labels.
+  - A Three `Data3DTexture` needs the TSL `texture3D()` accessor. The generic `texture()` accessor declares a 2D binding and WebGPU correctly rejects its 3D view.
+  - Do not write `vec3(vec4Node)` in TSL. Select `.rgb`; component-count validation occurs only while the graph is built.
+  - rapier3d-compat 0.19.3's own wrapper still invokes wasm-bindgen's deprecated positional initializer (upstream issue #811). Physics filters only that exact known warning during `RAPIER.init()` and restores `console.warn` in `finally`.

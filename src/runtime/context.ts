@@ -13,6 +13,8 @@ export interface TimeState {
   sim: number
   /** Rendered frame counter. */
   frame: number
+  /** True while the back-of-ticket pause card owns input. */
+  paused: boolean
 }
 
 /**

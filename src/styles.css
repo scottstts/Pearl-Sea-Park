@@ -39,7 +39,13 @@ canvas#scene {
   inset: 0;
   display: grid;
   place-items: center;
-  background: radial-gradient(120% 90% at 50% 20%, var(--deep) 0%, var(--deeper) 55%, var(--ink) 100%);
+  background: radial-gradient(
+    120% 90% at 50% 20%,
+    rgba(11, 46, 60, 0.78) 0%,
+    rgba(7, 30, 40, 0.87) 55%,
+    rgba(4, 22, 29, 0.94) 100%
+  );
+  backdrop-filter: blur(13px) saturate(0.72);
   color: var(--foam);
   z-index: 100;
   transition: opacity 1.6s ease;
@@ -243,4 +249,113 @@ canvas#scene {
 .pause.is-open {
   opacity: 1;
   pointer-events: auto;
+}
+
+.pause-card {
+  width: min(560px, calc(100vw - 2rem));
+  color: var(--deep);
+  background:
+    linear-gradient(rgba(244, 229, 182, 0.96), rgba(226, 201, 139, 0.97)),
+    repeating-linear-gradient(90deg, transparent 0 7px, rgba(91, 62, 20, 0.04) 7px 8px);
+  border: 1px solid #8b6c32;
+  border-radius: 4px;
+  padding: 2.7rem 3rem 2.5rem;
+  text-align: center;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.52);
+  position: relative;
+}
+
+.pause-card::before {
+  content: '';
+  position: absolute;
+  inset: 8px;
+  border: 1px solid rgba(96, 65, 20, 0.28);
+  pointer-events: none;
+}
+
+.pause-eyebrow,
+.pause-card legend {
+  color: #73551e;
+  font-size: 0.7rem;
+  letter-spacing: 0.28em;
+  text-transform: uppercase;
+}
+
+.pause-card h2 {
+  margin: 0.8rem 0 1.5rem;
+  font-size: clamp(1.9rem, 5vw, 2.8rem);
+  font-weight: 400;
+  letter-spacing: 0.04em;
+}
+
+.pause-card button {
+  font: inherit;
+  color: #5c4318;
+  background: transparent;
+  border: 1px solid rgba(92, 67, 24, 0.5);
+  border-radius: 2px;
+  padding: 0.65rem 0.9rem;
+  cursor: pointer;
+}
+
+.pause-card button:hover,
+.pause-card button:focus-visible,
+.pause-card button.is-active {
+  color: #fff9e8;
+  background: #73551e;
+  outline: none;
+}
+
+.pause-resume {
+  min-width: 15rem;
+  letter-spacing: 0.08em;
+}
+
+.pause-rule {
+  height: 1px;
+  margin: 1.7rem auto;
+  background: linear-gradient(90deg, transparent, rgba(92, 67, 24, 0.55), transparent);
+}
+
+.pause-card fieldset {
+  border: 0;
+}
+
+.pause-tiers {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0.45rem;
+  margin: 0.8rem 0 0.5rem;
+}
+
+.pause-card small {
+  display: block;
+  font-size: 0.68rem;
+  font-style: italic;
+  opacity: 0.62;
+}
+
+.pause-volume {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+  font-size: 0.82rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.pause-volume input {
+  accent-color: #73551e;
+}
+
+@media (max-width: 560px) {
+  .pause-card {
+    padding: 2.2rem 1.3rem 2rem;
+  }
+
+  .pause-tiers {
+    grid-template-columns: repeat(2, 1fr);
+  }
 }

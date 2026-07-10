@@ -4,7 +4,7 @@ import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 
 /**
- * Temporary inspection camera until the S5 player controller lands.
+ * Inspection camera for fixed postcard and diagnostic views.
  * Picks up whatever pose the start bookmark set.
  */
 export class DevOrbitSystem implements GameSystem {

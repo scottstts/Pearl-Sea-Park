@@ -1,0 +1,96 @@
+# Opening Day (S14)
+
+## Bubble Fountain visual contract
+
+Subject: the Tidal Court reflecting pool becomes a three-minute inverted
+Bellagio — physically scaled air bubbles threaded by lamplight, framed by the
+existing 80 m colonnade.
+
+Observable invariants:
+
+- bubbles originate at the 32 brass nozzles and rise rather than fall;
+- bubble birth/death is hidden by age envelopes, with no pool allocations;
+- light shafts share each jet's radius, fan, spiral, height, and show envelope;
+- the crown remains readable without bloom and never depends on post blur;
+- normal play follows the 720 s schedule (offset 90, duration 180);
+- `?view=fountain` holds the authored crown beat for deterministic inspection.
+
+`shows/bubbleFountain.ts` uses three draws: tiered bubble instances
+(800/1400/2200), 32 analytic shafts, and 32 brass nozzles. CPU code changes
+only seven uniforms and four local point-light intensities per frame. The
+six sections are overture, fans, spiral, crown, chorus, and finale. Debug
+modes `?pass=fountain-age` and `?pass=fountain-envelope` expose the controlling
+fields; `canvas.dataset.fountainState` records the current section and values.
+
+The composed fountain cue is procedural and positional. A sixteen-bar phrase
+is scheduled ahead on one HRTF bus while the show event is active. The same
+event also creates a bounded fish attractor, so nearby life gathers without a
+second show clock.
+
+## Fixed-sun cached shadows
+
+`render/cachedShadowClipmaps.ts` replaces the old single 180 m camera-following
+box with four ordinary shadow maps covering 28, 84, 252, and 650 m half-widths.
+Only level 0 is dynamic. Cached levels publish committed centers, snap X/Y to
+their actual texel footprints, quantize Z, stagger maximum ages, cross-fade
+inside a guard band, and consume one ordinary refresh budget per frame.
+Forced spatial invalidation bypasses that budget. Normal bias scales by world
+texel size.
+
+`canvas.dataset.shadowClipmaps` exposes desired/committed centers, coverage,
+map/texel sizes, dirty bits, age, update budget, direction delta, scaled bias,
+and render counts. The fixed sun never causes continuous direction refreshes.
+
+## Measured image and performance path
+
+- `render/exposureMeter.ts`: 64×36 encoded luminance, asynchronous readback,
+  weighted log average, highlight clamp, asymmetric adaptation.
+- `render/grade.ts`: actual generated 32³ RGBA8 LUT after the single AgX+sRGB
+  output transform; vignette remains spatial and therefore outside the LUT.
+- God rays march into a tiered reduced-resolution RGBA16F target and recover
+  with depth-aware bilateral taps.
+- Tidal Court's planar reflection uses per-tier resolution and the water draw
+  is distance-gated at 150/185/220 m. Basin geometry remains visible.
+- `canvas.dataset.performance` reports CPU frame EMA, available GPU timestamp,
+  draw/primitive/compute counts, render targets, quality, render scale, and
+  GPU-resource bytes. Debug stats enable GPU tracking.
+
+## Quality selection and pause
+
+Before any tier-sized resource exists, `core/autoQuality.ts` runs a real
+131072-element WebGPU storage kernel (one warm compile + three timed queue-
+complete dispatches). Its automatic result is cached. URL `?tier=`, then a
+persistent pause-card override, take precedence. The pause card applies volume
+live; changing tier reloads because storage counts and render-target sizes are
+construction-time contracts.
+
+## Ten-postcard gate
+
+`core/postcards.ts` is the canonical list:
+
+`descent · esplanade · breach · dive · manta · wishing-well · snell · whale · treasury · fountain`
+
+Boot fails loudly if any fixed bookmark is missing. Scheduled subjects are
+held at a readable deterministic beat in their postcard view. The output
+audit is also published on `canvas.dataset.postcardAudit`. `?time=<seconds>`
+freezes authored time while continuing render/update diagnostics, so captures
+can hold exact ride, water, exposure, and effect state.
+
+## Verification
+
+The S14 handoff uses strict TypeScript, ESLint, production build,
+whitespace/diff checks, canonical bookmark scan, deterministic-source scan,
+and schedule/clipmap math audits. After runtime-only TSL issues were reported,
+one brief tier-0 `?view=fountain&time=126` console smoke test compiled the full
+WebGPU graph with zero errors or warnings, confirmed all ten postcard systems,
+then closed the tab and server. No visual-tuning session was left running.
+
+Runtime constraints surfaced by that check:
+
+- TSL `.assign()`/`.addAssign()` operations must be constructed inside `Fn`;
+- `RTTNode.setName()` becomes a WGSL identifier, so use identifier-safe names;
+- `Data3DTexture` must enter the graph through `texture3D()`, never `texture()`;
+- select `.rgb` from vec4 nodes instead of constructing `vec3(vec4)`;
+- rapier3d-compat 0.19.3 has a known generated-wrapper init warning despite
+  successful initialization, so physics suppresses only that exact message
+  while preserving and immediately restoring all other console warnings.

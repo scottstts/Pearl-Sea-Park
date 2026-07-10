@@ -6,41 +6,54 @@
 
 export interface QualityParams {
   renderScaleMin: number
-  shadowMapSize: number
+  /** One map per cached directional-shadow level, finest to coarsest. */
+  shadowMapSizes: readonly number[]
   godraySteps: number
+  godrayResolutionScale: number
   causticsSize: number
   particulateCount: number
   seagrassDensity: number
   boidBudget: number
+  bubbleBudget: number
+  reflectorResolutionScale: number
 }
 
 export const TIERS: readonly QualityParams[] = [
   {
     renderScaleMin: 0.6,
-    shadowMapSize: 1024,
+    shadowMapSizes: [1024, 512, 512, 512],
     godraySteps: 8,
+    godrayResolutionScale: 0.34,
     causticsSize: 512,
     particulateCount: 8_000,
     seagrassDensity: 0.35,
     boidBudget: 5_000,
+    bubbleBudget: 800,
+    reflectorResolutionScale: 0.2,
   },
   {
     renderScaleMin: 0.7,
-    shadowMapSize: 2048,
+    shadowMapSizes: [1024, 1024, 512, 512],
     godraySteps: 14,
+    godrayResolutionScale: 0.42,
     causticsSize: 1024,
     particulateCount: 18_000,
     seagrassDensity: 0.7,
     boidBudget: 10_000,
+    bubbleBudget: 1_400,
+    reflectorResolutionScale: 0.28,
   },
   {
     renderScaleMin: 0.75,
-    shadowMapSize: 2048,
+    shadowMapSizes: [1024, 1024, 1024, 512],
     godraySteps: 22,
+    godrayResolutionScale: 0.5,
     causticsSize: 1024,
     particulateCount: 30_000,
     seagrassDensity: 1,
     boidBudget: 15_000,
+    bubbleBudget: 2_200,
+    reflectorResolutionScale: 0.35,
   },
 ]
 

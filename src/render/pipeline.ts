@@ -19,6 +19,7 @@ import { getDebugPane } from '../core/debugOverlay'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { dreamGrade, gradeParams } from './grade'
+import { ExposureMeter } from './exposureMeter'
 import { recommendedPixelRatio } from './renderer'
 
 /**
@@ -32,11 +33,14 @@ import { recommendedPixelRatio } from './renderer'
  */
 export class RenderPipelineSystem implements GameSystem {
   readonly id = 'render-pipeline'
+  readonly debugNodes: Record<string, object> = {}
 
   private pipeline: RenderPipeline | null = null
   private appliedScale = 1
   private basePixelRatio = recommendedPixelRatio()
   private paneWired = false
+  private meter: ExposureMeter | null = null
+  private context: GameContext | null = null
 
   /**
    * S3 hook: the medium system replaces this to composite aquatic fog and
@@ -46,6 +50,7 @@ export class RenderPipelineSystem implements GameSystem {
 
   init(ctx: GameContext): void {
     const { renderer, scene, camera, flags } = ctx
+    this.context = ctx
     this.paneWired = !flags.debug
     ctx.events.on('render/resized', ({ width, height }) => {
       this.basePixelRatio = recommendedPixelRatio(width, height)
@@ -78,6 +83,8 @@ export class RenderPipelineSystem implements GameSystem {
     const withMedium = this.hdrTransform(occluded, { viewZNode }) as typeof occluded
     const bloomNode = bloom(withMedium, 0.35, 0.55, 1.0)
     const hdr = withMedium.add(bloomNode)
+    const meter = new ExposureMeter(renderer, hdr, flags.debug)
+    this.meter = meter
 
     const exposed = hdr.mul(exp2(gradeParams.exposureEV))
     const mapped = renderOutput(exposed, AgXToneMapping, SRGBColorSpace)
@@ -99,6 +106,30 @@ export class RenderPipelineSystem implements GameSystem {
       case 'normal':
         outputNode = vec4(sceneNormal.rgb.mul(0.5).add(0.5), 1.0)
         break
+      case 'exposure':
+        outputNode = vec4(vec3(meter.textureNode.r), 1)
+        break
+      case 'rays':
+        outputNode = renderOutput(
+          (this.debugNodes.rays ?? vec4(0)) as typeof sceneColor,
+          AgXToneMapping,
+          SRGBColorSpace,
+        )
+        break
+      case 'caustics':
+        outputNode = renderOutput(
+          (this.debugNodes.caustics ?? vec4(0)) as typeof sceneColor,
+          AgXToneMapping,
+          SRGBColorSpace,
+        )
+        break
+      case 'no-rays':
+        outputNode = renderOutput(
+          (this.debugNodes['no-rays'] ?? sceneColor) as typeof sceneColor,
+          AgXToneMapping,
+          SRGBColorSpace,
+        )
+        break
       case 'no-post':
         outputNode = renderOutput(sceneColor, AgXToneMapping, SRGBColorSpace)
         break
@@ -106,7 +137,9 @@ export class RenderPipelineSystem implements GameSystem {
         outputNode = mapped
         break
       default:
-        outputNode = graded
+        // Sampling the meter at zero weight keeps its 64×36 RTT in the final
+        // graph without changing the image.
+        outputNode = graded.add(vec4(vec3(meter.textureNode.r.mul(0)), 0))
     }
 
     const pipeline = new RenderPipeline(renderer, outputNode)
@@ -119,6 +152,7 @@ export class RenderPipelineSystem implements GameSystem {
   /** Bound to GameLoop.renderFrame by main.ts. */
   render(): void {
     void this.pipeline?.render()
+    if (this.context) this.meter?.afterRender(this.context)
   }
 
   update(ctx: GameContext): void {
@@ -136,15 +170,17 @@ export class RenderPipelineSystem implements GameSystem {
         this.paneWired = true
         const folder = pane.addFolder({ title: 'grade', expanded: false })
         folder.addBinding(gradeParams.exposureEV, 'value', { min: -3, max: 3, label: 'exposure ev' })
-        folder.addBinding(gradeParams.vibrance, 'value', { min: 0, max: 0.5, label: 'vibrance' })
+        folder.addBinding(gradeParams.lutIntensity, 'value', { min: 0, max: 1, label: 'lut' })
         folder.addBinding(gradeParams.vignette, 'value', { min: 0, max: 0.4, label: 'vignette' })
-        folder.addBinding(gradeParams.gamma, 'value', { min: 0.8, max: 1.25, label: 'gamma' })
       }
     }
   }
 
   dispose(): void {
     this.pipeline?.dispose()
+    this.meter?.dispose()
     this.pipeline = null
+    this.meter = null
+    this.context = null
   }
 }

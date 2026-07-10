@@ -17,6 +17,7 @@ export class GameLoop {
 
   private last: number | undefined
   private accumulator = 0
+  private renderedWhilePaused = false
   private readonly ctx: GameContext
   private readonly registry: SystemRegistry
 
@@ -42,6 +43,27 @@ export class GameLoop {
     dt = Math.min(dt, 0.25)
 
     const time = this.ctx.time
+    if (time.paused) {
+      this.accumulator = 0
+      if (!this.renderedWhilePaused) {
+        this.renderFrame()
+        time.frame++
+        this.renderedWhilePaused = true
+      }
+      this.onFrameEnd?.(performance.now() - frameStart)
+      return
+    }
+    this.renderedWhilePaused = false
+    if (this.ctx.flags.fixedTime !== null) {
+      time.elapsed = this.ctx.flags.fixedTime
+      time.sim = this.ctx.flags.fixedTime
+      this.accumulator = 0
+      this.registry.update(this.ctx, 0, 0)
+      this.renderFrame()
+      time.frame++
+      this.onFrameEnd?.(performance.now() - frameStart)
+      return
+    }
     time.elapsed += dt
     this.accumulator += dt
 

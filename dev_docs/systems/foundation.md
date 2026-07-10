@@ -7,5 +7,5 @@ Design choices beyond what the code shows:
 - **Fixed 60 Hz sim / variable render** with 5-substep panic clamp. Ride physics and the scheduler run in `fixedUpdate`; visuals in `update(dt, alpha)`.
 - **Determinism contract:** every system that generates content must draw from `ctx.rng.fork('<label>')` — forks are order-independent (derived from root seed + label only). Default seed 19051906.
 - **Tone mapping is temporarily on the renderer** (AgX) and moves into the S1 post graph; S1 must set `renderer.toneMapping = NoToneMapping` when it takes ownership.
-- `TestGallerySystem` is a disposable proving ground (with OrbitControls until the player lands in S5); keep it importable behind `?view=gallery` for material auditing even after the park exists.
+- `TestGallerySystem` remains an isolated proving ground behind `?view=gallery` for material auditing; postcard views use the same DevOrbit inspection controls while normal play uses the first-person guest.
 - Ticket screen maps system ids to loading copy (`ui/ticketScreen.ts`) — when adding a system with a visible init cost, add a line to that map.

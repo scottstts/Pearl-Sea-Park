@@ -72,11 +72,26 @@
   {name, phase} from `PARK_SCHEDULE` (chimes 5 min, fountain show 12 min,
   manta 15 min, whale 20 min). Ride/wildlife stages subscribe rather than
   keeping their own clocks, so everything stays in phase with `ctx.time.sim`.
+- The clock is held at zero behind the entry ticket. Chimes and the first
+  90-second fountain cue therefore begin relative to the guest's arrival, not
+  an arbitrary amount of time spent on the loading/entry screen.
+- Two in-world mechanical timetable boards flip on event transitions and
+  15-second countdown boundaries. They render the same `PARK_SCHEDULE`
+  authority used by the systems; there is no parallel UI timetable.
 - `AudioEngineSystem` is fully procedural (pink-noise bed + breathing filter,
   detuned shimmer pad, FM bell chimes, ticket-punch thunk). The master chain
   ends in a low-pass swept 1900 Hz ↔ 16 kHz on `sea/waterline-crossed` — the
   audible half of the waterline crossing. AudioContext starts on
   `park/entered` (the enter click satisfies the gesture requirement).
+- S13 updates the Web Audio listener from the camera pose every frame. The
+  Kraken Bell is the first true HRTF world source (inverse distance, 90 m
+  cutoff); its low body and high strike partials originate at the physical
+  bell rather than the master bus. Penny presses, prizes, and ticket
+  completion reuse the procedural punch/chime voices.
+- S14 adds the fountain's sixteen-bar glass-and-brass cue on a persistent HRTF
+  source at Tidal Court. Its gain follows the exact `fountain-show` start/end
+  phases. The pause card drives the master gain, and all procedural noise and
+  detune choices are now deterministic.
 
 ## Verification workflow additions
 

@@ -32,6 +32,8 @@ export class ParkAssemblySystem implements GameSystem {
   private group: Object3D | null = null
   private readonly services: DistrictServices
   private readonly timeUniform = uniform(0)
+  private poolWater: Mesh | null = null
+  private poolReflectionDistance = 180
 
   constructor(services: DistrictServices) {
     this.services = services
@@ -146,7 +148,7 @@ export class ParkAssemblySystem implements GameSystem {
       kit.arch(w, a.x, a.z, b.x, b.z, hubY + 7.5, 1.4)
     }
 
-    // The reflecting pool (the Bubble Fountain stage — show lands in S14).
+    // The reflecting pool — the Bubble Fountain show uses this exact stage.
     // The basin is an open RING — a capped cylinder would lid the water over.
     const poolRadius = hub.lagoonRadius
     const basin = new LatheGeometry(
@@ -193,7 +195,10 @@ export class ParkAssemblySystem implements GameSystem {
     // the busy mirrored wave ceiling into a dreamy sheen while arches and
     // lamps still draw. (Direct levelNode set — .level() clones, and clones
     // never receive the live reflector texture.)
-    const poolReflection = reflector({ resolutionScale: 0.35, generateMipmaps: true })
+    const poolReflection = reflector({
+      resolutionScale: ctx.quality.params.reflectorResolutionScale,
+      generateMipmaps: true,
+    })
     poolReflection.target.rotateX(-Math.PI / 2)
     const reflectionUv = poolReflection.uvNode as unknown as Node<'vec2'>
     // Keep the lookup wobble tiny — big screen-space offsets alias the
@@ -217,6 +222,8 @@ export class ParkAssemblySystem implements GameSystem {
     waterDisc.position.set(hub.x, hubY + 0.42, hub.z)
     waterDisc.add(poolReflection.target)
     group.add(waterDisc)
+    this.poolWater = waterDisc
+    this.poolReflectionDistance = 150 + ctx.quality.tier * 35
     // Verdigris lip on the basin rim so the water's edge reads at a glance.
     const lip = new Mesh(new TorusGeometry(poolRadius + 1.2, 0.09, 12, 72), lib.verdigris)
     lip.rotation.x = Math.PI / 2
@@ -234,7 +241,7 @@ export class ParkAssemblySystem implements GameSystem {
       lamp(hub.x + dx, hubY + 0.1, hub.z + dz, true)
     }
 
-    // ── Midway hall shell (games arrive in S13) ───────────────────────────
+    // ── Midway hall shell and its physical games ─────────────────────────
     const mid = PARK_PLAN.midway
     const midY = terrainHeight(mid.x, mid.z) + 0.1
     groundedPath(mid.x - mid.width / 2, mid.z, mid.x + mid.width / 2, mid.z, mid.depth)
@@ -339,13 +346,25 @@ export class ParkAssemblySystem implements GameSystem {
       look: [hub.x, hubY + 4, hub.z],
       note: 'Tidal Court colonnade + reflecting pool',
     })
+    registerBookmark({
+      name: 'snell',
+      position: [obs.x, obsY + 1.55, obs.z + 0.5],
+      look: [obs.x, 8, obs.z - 2],
+      note: "Postcard 7 — Snell's window through the Observatory oculus",
+    })
   }
 
   update(ctx: GameContext): void {
     this.timeUniform.value = ctx.time.elapsed
+    if (this.poolWater) {
+      const dx = ctx.camera.position.x - this.poolWater.position.x
+      const dz = ctx.camera.position.z - this.poolWater.position.z
+      this.poolWater.visible = dx * dx + dz * dz <= this.poolReflectionDistance ** 2
+    }
   }
 
   dispose(ctx: GameContext): void {
     if (this.group) ctx.scene.remove(this.group)
+    this.poolWater = null
   }
 }

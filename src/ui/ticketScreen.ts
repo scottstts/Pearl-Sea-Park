@@ -34,6 +34,7 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
 
   const labels: Record<string, string> = {
     'render-pipeline': 'Polishing the lenses',
+    'quality-benchmark': 'Measuring the machinery',
     'ocean-sky': 'Painting the afternoon',
     'ocean-surface': 'Calming the surface',
     'arrival-pavilion': 'Mooring the buoy',
@@ -43,6 +44,7 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     flora: 'Planting the gardens',
     physics: 'Winding the gears',
     player: 'Pressing your ticket',
+    'pause-card': 'Printing the ticket reverse',
     interaction: 'Polishing the levers',
     seats: 'Plumping the cushions',
     'held-items': 'Gilding the ticket',
@@ -56,6 +58,8 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     torrent: 'Priming the torrent',
     scheduler: 'Winding the timetable',
     wildlife: 'Inviting the fish',
+    'bubble-fountain': 'Teaching the bubbles to dance',
+    'schedule-boards': 'Setting the performance boards',
     audio: 'Tuning the music boxes',
     'debug-overlay': 'Hanging the gauges',
     'test-gallery': 'Arranging the gallery',

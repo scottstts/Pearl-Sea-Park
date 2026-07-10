@@ -5,8 +5,10 @@ import { getBookmark, parseFlags } from './core/debug'
 import { DebugOverlaySystem } from './core/debugOverlay'
 import { EventBus } from './core/events'
 import type { GameEvents } from './core/gameEvents'
+import { selectInitialQuality } from './core/autoQuality'
 import { Rng } from './core/prng'
 import { QualityState } from './core/quality'
+import { auditPostcardBookmarks } from './core/postcards'
 import { SchedulerSystem } from './core/scheduler'
 import { MaterialsSystem } from './materials/materialsSystem'
 import { PhysicsSystem } from './physics/physicsWorld'
@@ -20,6 +22,7 @@ import { CarouselSystem } from './rides/carousel'
 import { DescentBellSystem } from './rides/descentBell'
 import { GreatWheelSystem } from './rides/greatWheel'
 import { GrottoSystem } from './rides/grotto/grottoSystem'
+import { GamesSystem } from './games/gamesSystem'
 import { PearlLineSystem } from './rides/pearlLine'
 import { TorrentSystem } from './rides/torrent'
 import type { GameContext } from './runtime/context'
@@ -28,7 +31,10 @@ import { SystemRegistry } from './runtime/registry'
 import { SeaMediumSystem } from './sea/medium'
 import { SeaSystem } from './sea/seaSystem'
 import { SkySystem } from './sky/skySystem'
+import { BubbleFountainSystem } from './shows/bubbleFountain'
+import { ScheduleBoardSystem } from './shows/scheduleBoard'
 import { createTicketScreen } from './ui/ticketScreen'
+import { PauseCardSystem } from './ui/pauseCard'
 import { ArrivalSystem } from './world/arrival'
 import { DevOrbitSystem } from './world/devOrbit'
 import type { DistrictServices } from './world/districts/atrium'
@@ -69,6 +75,10 @@ async function boot(): Promise<void> {
     return
   }
 
+  ticket.setProgress('quality-benchmark', 0.075)
+  const qualitySelection = await selectInitialQuality(renderer, flags.tier)
+  canvas.dataset.qualitySelection = JSON.stringify(qualitySelection)
+
   const scene = new Scene()
   // Far plane covers the sky dome (3400 m) and ocean skirt; near stays tight
   // for held items. WebGPU float depth keeps this ratio artifact-free.
@@ -81,8 +91,14 @@ async function boot(): Promise<void> {
     events: new EventBus<GameEvents>(),
     rng: new Rng(flags.seed ?? DEFAULT_SEED),
     flags,
-    quality: new QualityState(flags.tier ?? 2),
-    time: { elapsed: 0, sim: 0, frame: 0 },
+    quality: new QualityState(qualitySelection.tier),
+    // The park clock begins at the gate click, not while the ticket waits.
+    time: {
+      elapsed: flags.fixedTime ?? 0,
+      sim: flags.fixedTime ?? 0,
+      frame: 0,
+      paused: true,
+    },
   }
 
   const handleResize = (): void => {
@@ -112,16 +128,18 @@ async function boot(): Promise<void> {
     const materials = registry.add(new MaterialsSystem(medium))
     const services: DistrictServices = { physics, materials }
     let player: PlayerSystem | null = null
+    let heldItems: HeldItemSystem | null = null
     if (flags.view) {
       // Fixed validation cameras inspect with orbit controls, not the player.
       registry.add(new DevOrbitSystem())
     } else {
       player = registry.add(new PlayerSystem(physics))
+      registry.add(new PauseCardSystem(player))
       const interaction = registry.add(new InteractionSystem())
       const seats = registry.add(new SeatSystem(player, interaction))
       services.seats = seats
       services.interaction = interaction
-      registry.add(new HeldItemSystem())
+      heldItems = registry.add(new HeldItemSystem())
     }
     registry.add(new AtriumSystem(services))
     registry.add(new ParkAssemblySystem(services))
@@ -132,6 +150,9 @@ async function boot(): Promise<void> {
     registry.add(new GrottoSystem(services, player, medium))
     const carousel = registry.add(new CarouselSystem(services, player))
     registry.add(new WildlifeSystem(services, medium))
+    registry.add(new BubbleFountainSystem(services, medium))
+    registry.add(new ScheduleBoardSystem(services))
+    registry.add(new GamesSystem(services, medium, heldItems))
     registry.add(new SchedulerSystem())
     const audio = registry.add(new AudioEngineSystem())
     audio.waltzSource = carousel.center
@@ -141,6 +162,11 @@ async function boot(): Promise<void> {
   await registry.init(ctx, (label, index, total) =>
     ticket.setProgress(label, 0.1 + 0.9 * (index / Math.max(1, total))),
   )
+  const postcardAudit = auditPostcardBookmarks()
+  canvas.dataset.postcardAudit = JSON.stringify(postcardAudit)
+  if (!postcardAudit.complete) {
+    throw new Error(`Missing postcard bookmarks: ${postcardAudit.missing.join(', ')}`)
+  }
 
   // Postcard/validation cameras: ?view=<bookmark>. Default pose: arrival.
   const startView = flags.view ?? 'arrival'
@@ -152,20 +178,43 @@ async function boot(): Promise<void> {
 
   if (flags.debug) {
     // Console/automation handle for live inspection (agents + humans).
-    ;(window as unknown as { __pearl: object }).__pearl = { ctx, registry }
+    ;(window as unknown as { __pearl: object }).__pearl = {
+      ctx,
+      registry,
+      qualitySelection,
+      postcardAudit,
+    }
   }
 
   const loop = new GameLoop(ctx, registry)
   loop.renderFrame = () => pipeline.render()
+  let frameEma = 1000 / 60
   loop.onFrameEnd = (frameMs) => {
+    frameEma += (frameMs - frameEma) * 0.05
     ctx.quality.submitFrame(frameMs)
+    if (ctx.time.frame % 60 === 0) {
+      const info = renderer.info
+      canvas.dataset.performance = JSON.stringify({
+        cpuFrameMs: frameEma,
+        gpuFrameMs: info.render.timestamp || null,
+        tier: ctx.quality.tier,
+        renderScale: ctx.quality.renderScale,
+        drawCalls: info.render.drawCalls,
+        triangles: info.render.triangles,
+        points: info.render.points,
+        computeCalls: info.compute.frameCalls,
+        renderTargets: info.memory.renderTargets,
+        gpuResourceBytes: info.memory.total,
+      })
+    }
   }
   loop.start()
 
   // Validation shortcuts (?view / ?pass) skip the enter gate entirely.
-  const validationMode = flags.view !== null || flags.pass !== 'final'
+  const validationMode = flags.view !== null || flags.pass !== 'final' || flags.fixedTime !== null
   if (!validationMode) await ticket.showEnter()
   ticket.hide()
+  ctx.time.paused = false
   ctx.events.emit('park/entered', {})
 }
 

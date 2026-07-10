@@ -31,7 +31,7 @@ export class DebugOverlaySystem implements GameSystem {
   async init(ctx: GameContext): Promise<void> {
     const [statsModule, tweakpane] = await Promise.all([import('stats-gl'), import('tweakpane')])
     const Stats = statsModule.default
-    const stats = new Stats({ horizontal: true, trackGPU: false }) as unknown as StatsLike
+    const stats = new Stats({ horizontal: true, trackGPU: true }) as unknown as StatsLike
     document.body.appendChild(stats.dom)
     await stats.init(ctx.renderer)
     this.stats = stats

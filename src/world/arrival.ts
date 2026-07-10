@@ -17,7 +17,7 @@ function standard(color: number, roughness: number, metalness = 0): MeshStandard
 
 /**
  * The buoy pavilion — where the visit begins, floating over the park.
- * S2 stub proves the above-water world; S8 dresses it fully and adds the bell.
+ * The above-water arrival pavilion, dressed around the working Descent Bell.
  */
 export class ArrivalSystem implements GameSystem {
   readonly id = 'arrival-pavilion'
@@ -106,6 +106,12 @@ export class ArrivalSystem implements GameSystem {
       position: [x + 5.5, 5.2, z + 9],
       look: [x - 2, 1.6, z - 60],
       note: 'Postcard 1 staging — buoy pavilion over the park',
+    })
+    registerBookmark({
+      name: 'descent',
+      position: [x + 3.5, 1.15, z + 4],
+      look: [x, -22, z - 72],
+      note: 'Postcard 1 — waterline crossing with the park glowing below',
     })
   }
 

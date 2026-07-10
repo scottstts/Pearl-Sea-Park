@@ -5,6 +5,7 @@
  *   ?pass=<name>    — isolate a render pass (ao, bloom, caustics, rays, depth, normal, no-post)
  *   ?tier=<0|1|2>   — force a quality tier
  *   ?seed=<n>       — override the world seed
+ *   ?time=<seconds>  — freeze authored time for deterministic captures
  */
 
 export interface DebugFlags {
@@ -13,18 +14,21 @@ export interface DebugFlags {
   pass: string
   tier: number | null
   seed: number | null
+  fixedTime: number | null
 }
 
 export function parseFlags(search: string = window.location.search): DebugFlags {
   const q = new URLSearchParams(search)
   const tierRaw = q.get('tier')
   const seedRaw = q.get('seed')
+  const timeRaw = q.get('time')
   return {
     debug: q.has('debug'),
     view: q.get('view'),
     pass: q.get('pass') ?? 'final',
     tier: tierRaw === null ? null : Math.max(0, Math.min(2, Number(tierRaw) | 0)),
     seed: seedRaw === null ? null : Number(seedRaw) >>> 0,
+    fixedTime: timeRaw === null ? null : Math.max(0, Number(timeRaw) || 0),
   }
 }
 

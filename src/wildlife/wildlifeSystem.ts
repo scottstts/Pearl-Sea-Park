@@ -1,6 +1,7 @@
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { Vector3 } from 'three'
+import { registerBookmark } from '../core/debug'
 import type { SeaMediumSystem } from '../sea/medium'
 import type { DistrictServices } from '../world/districts/atrium'
 import { AmbientLife } from './ambientLife'
@@ -9,6 +10,7 @@ import { FishSchoolSystem } from './fishSchool'
 import type { FishSchoolSnapshot } from './fishSchool'
 import { WhalePass } from './whale'
 import type { WhaleSnapshot } from './whale'
+import { terrainHeight } from '../world/terrain'
 
 export interface WildlifeSnapshot {
   fish: FishSchoolSnapshot | null
@@ -66,6 +68,13 @@ export class WildlifeSystem implements GameSystem {
         this.attractorRemaining = Math.max(0, duration)
       },
     )
+    const mantaGround = terrainHeight(-4, 164)
+    registerBookmark({
+      name: 'manta',
+      position: [-4, mantaGround + 1.75, 164],
+      look: [0, mantaGround + 10.5, 143],
+      note: 'Postcard 5 — the scheduled manta and its marble-crossing shadow',
+    })
   }
 
   update(ctx: GameContext, dt: number): void {
@@ -73,10 +82,11 @@ export class WildlifeSystem implements GameSystem {
       this.attractorRemaining = Math.max(0, this.attractorRemaining - dt)
       if (this.attractorRemaining === 0) this.fish?.clearAttractor()
     }
-    if (ctx.flags.view === 'esplanade') {
+    if (ctx.flags.view === 'esplanade' || ctx.flags.view === 'manta') {
       this.eventActive = true
       this.eventAmount = 1
-      this.eventPhase = 0.43 + Math.sin(ctx.time.elapsed * 0.08) * 0.035
+      const center = ctx.flags.view === 'manta' ? 0.5 : 0.43
+      this.eventPhase = center + Math.sin(ctx.time.elapsed * 0.08) * 0.035
     } else if (this.eventActive) {
       const local = Math.max(0, ctx.time.elapsed - this.eventStart)
       this.eventPhase = Math.min(1, local / 45)

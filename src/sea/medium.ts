@@ -1,9 +1,16 @@
-import { AdditiveBlending, InstancedMesh, TetrahedronGeometry } from 'three'
+import {
+  AdditiveBlending,
+  HalfFloatType,
+  InstancedMesh,
+  RGBAFormat,
+  TetrahedronGeometry,
+} from 'three'
 import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu'
 import type { Node } from 'three/webgpu'
 import {
   Fn,
   Loop,
+  abs,
   cameraPosition,
   cameraProjectionMatrixInverse,
   cameraWorldMatrix,
@@ -17,6 +24,8 @@ import {
   positionGeometry,
   positionWorld,
   pow,
+  rtt,
+  screenSize,
   screenUV,
   sin,
   smoothstep,
@@ -73,16 +82,18 @@ export class SeaMediumSystem implements GameSystem {
     this.caustics = caustics
     const sampler = causticWorldSample(caustics.textureNode)
     this.causticSampler = sampler
+    this.pipeline.debugNodes.caustics = vec4(caustics.textureNode.rgb, 1)
 
     const godraySteps = ctx.quality.params.godraySteps
+    const rayResolutionScale = ctx.quality.params.godrayResolutionScale
     const submerged = this.submerged
 
     // ── HDR composite: fog + god rays, spliced before bloom ───────────────
     this.pipeline.hdrTransform = (color, extras) => {
       const viewZ = (extras as { viewZNode: Node<'float'> }).viewZNode
-      const scene = vec3(color as Node<'vec4'>)
+      const scene = (color as Node<'vec4'>).rgb
 
-      return Fn(() => {
+      const foggedNode = Fn(() => {
         const dist = viewZ.negate().min(3500).toVar()
 
         // World-space ray from screen UV + camera matrices.
@@ -93,7 +104,6 @@ export class SeaMediumSystem implements GameSystem {
         const worldPos = cameraWorldMatrix.mul(vec4(viewPos, 1.0)).xyz
         const rayDir = worldPos.sub(cameraPosition).div(max(dist, 1e-4))
 
-        // Aquatic perspective.
         const transmittance = exp(SIGMA.mul(dist).negate())
         const upness = smoothstep(-0.5, 0.75, rayDir.y)
         const cameraDim = exp(cameraPosition.y.min(0).mul(0.03))
@@ -106,8 +116,19 @@ export class SeaMediumSystem implements GameSystem {
         const fogged = scene
           .mul(transmittance)
           .add(inscatter.mul(float(1).sub(transmittance.g)))
+        return vec4(mix(scene, fogged, submerged), 1)
+      })()
 
-        // God rays: short march through the caustic light volume.
+      // Ray contribution is marched into a reduced-resolution RGBA target;
+      // alpha carries linear depth for full-resolution bilateral recovery.
+      const rayPacked = Fn(() => {
+        const dist = viewZ.negate().min(3500).toVar()
+        const ndc = vec2(screenUV.x.mul(2).sub(1), float(1).sub(screenUV.y).mul(2).sub(1))
+        const far4 = cameraProjectionMatrixInverse.mul(vec4(ndc, 1, 1))
+        const farView = far4.xyz.div(far4.w)
+        const viewPos = farView.mul(viewZ.div(farView.z))
+        const worldPos = cameraWorldMatrix.mul(vec4(viewPos, 1)).xyz
+        const rayDir = worldPos.sub(cameraPosition).div(max(dist, 1e-4))
         const marchLength = dist.min(85.0)
         const stepLength = marchLength.div(godraySteps)
         const jitter = fract(
@@ -121,11 +142,39 @@ export class SeaMediumSystem implements GameSystem {
           const light = sampler(samplePos).g
           shaft.addAssign(light.mul(exp(t.mul(-0.03))))
         })
-        const rays = sunColorUniform.mul(shaft.mul(stepLength).mul(0.007)).mul(interiorKeep)
-
-        const underwater = fogged.add(rays)
-        return vec4(mix(scene, underwater, submerged), 1.0)
+        const interiorKeep = float(1).sub(this.interior.mul(0.94))
+        const rays = sunColorUniform
+          .mul(shaft.mul(stepLength).mul(0.007))
+          .mul(interiorKeep)
+          .mul(submerged)
+        return vec4(rays, dist.div(3500).clamp(0, 1))
       })()
+      const rayTarget = rtt(rayPacked, null, null, {
+        type: HalfFloatType,
+        format: RGBAFormat,
+        depthBuffer: false,
+      }).setResolutionScale(rayResolutionScale)
+      rayTarget.setName('godRaysHalfResolution')
+
+      const bilateralRays = Fn(() => {
+        const depth = viewZ.negate().min(3500).div(3500).clamp(0, 1)
+        const texel = vec2(1).div(screenSize.mul(rayResolutionScale))
+        const center = rayTarget.sample(screenUV)
+        const raySum = center.rgb.toVar()
+        const weightSum = float(1).toVar()
+        for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
+          const sample = rayTarget.sample(screenUV.add(texel.mul(vec2(ox, oy))))
+          const weight = exp(abs(sample.a.sub(depth)).mul(-120)).mul(0.68)
+          raySum.addAssign(sample.rgb.mul(weight))
+          weightSum.addAssign(weight)
+        }
+        return vec4(raySum.div(weightSum), 1)
+      })()
+      const resolvedRays = bilateralRays.rgb
+      const combined = vec4(foggedNode.rgb.add(resolvedRays), 1)
+      this.pipeline.debugNodes.rays = vec4(resolvedRays, 1)
+      this.pipeline.debugNodes['no-rays'] = foggedNode
+      return combined
     }
 
     this.buildParticulates(ctx)

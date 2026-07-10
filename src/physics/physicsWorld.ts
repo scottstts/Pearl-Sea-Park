@@ -16,7 +16,7 @@ export class PhysicsSystem implements GameSystem {
   private pendingVerify = false
 
   async init(ctx: GameContext): Promise<void> {
-    await RAPIER.init()
+    await initializeRapier()
     this.rapier = RAPIER
     const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
     this.world = world
@@ -114,5 +114,26 @@ export class PhysicsSystem implements GameSystem {
   dispose(): void {
     this.world?.free()
     this.world = null
+  }
+}
+
+/**
+ * rapier3d-compat 0.19.3 initializes correctly but its generated compatibility
+ * wrapper still calls wasm-bindgen's old positional signature and emits one
+ * known upstream warning. Suppress only that exact dependency message while
+ * preserving every other warning and restoring the console immediately.
+ */
+async function initializeRapier(): Promise<void> {
+  const deprecatedInitWarning =
+    'using deprecated parameters for the initialization function; pass a single object instead'
+  const warn = console.warn
+  console.warn = (...args: unknown[]) => {
+    if (args.length === 1 && args[0] === deprecatedInitWarning) return
+    warn.apply(console, args)
+  }
+  try {
+    await RAPIER.init()
+  } finally {
+    console.warn = warn
   }
 }
