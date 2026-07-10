@@ -20,5 +20,9 @@ export type GameEvents = {
   'ride/bell-state': { state: 'docked-top' | 'descending' | 'docked-bottom' | 'ascending' }
   /** Guest boarded/left a Pearl Line cabin (cable hum while riding). */
   'ride/pearl-riding': { riding: boolean }
+  /** Guest boarded/left a Great Wheel gondola. */
+  'ride/wheel-riding': { riding: boolean }
+  /** Guest mounted/left the carousel. */
+  'ride/carousel-riding': { riding: boolean }
 }
 

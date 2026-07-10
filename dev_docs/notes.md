@@ -52,3 +52,11 @@
   - Above-water aesthetics are their own regime: FFT crests (~1.3 m) swallowed a 1.3 m deck — surface structures need 2.5 m+ freeboard; ocean skirt must end INSIDE the sky dome (sawtooth seam otherwise); near-field foam tuned via coverage threshold, not the fbm floor.
   - The atrium dome's finial pierces the surface by ~2 m — kept deliberately as the arriving guest's first landmark from the buoy ("the golden spire in the waves").
   - Timing-sensitive interaction tests (door dwells) must run inside ONE preview_eval — the live loop runs whenever the preview window surfaces between evals and eats timers.
+- 2026-07-10 S9 lessons (wheel & carousel — see systems/rides-wheel-carousel.md):
+  - When a ride's geometry contradicts the terrain (40 m wheel vs 26 m depth), change the TERRAIN through terrainHeight (the wheel basin) — everything downstream (heightfield, paths, scatter, visuals) follows for free. Never special-case around the height authority.
+  - Rotating rigs: children that must stay world-upright apply the inverse of the rotor's rotation plus their own dynamic term (wheel gondolas: `+rotorAngle + pendulum` under `rotor −rotorAngle`).
+  - Mount choice needs no UI: one interactable per mount with its anchor following the mount's world position — the interaction system's view-cone scoring IS the picker.
+  - Seat eyes on small mounts must be up-and-back ((0,1.28,−0.52) on ~1 m figures) or the camera lands inside the figure's head.
+  - VehicleSeatRig look requires pointer lock now — unlocked mousemove (preview window, OS cursor) was silently drifting ride cameras. Any future camera-offset input must gate on pointerLockElement.
+  - The interaction view-cone gates ride EXIT prompts too — automated tests must aim the look (rig.lookYaw) at the gate before dispatching KeyE, exactly like a real guest looking at the door.
+  - Composed music lives fine as inline note arrays in the audio engine (16-bar waltz loop, scheduled ahead, re-armed from update()); distance mixing = gain 1/d² + closing low-pass on one bus.

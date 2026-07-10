@@ -14,8 +14,10 @@ export const PARK_PLAN = {
   esplanade: { x: 0, zFrom: 229, zTo: 121, width: 13 },
   /** Tidal Court — the hub lagoon + colonnade. */
   tidalCourt: { x: 0, z: 78, colonnadeRadius: 40, lagoonRadius: 26 },
-  /** The Great Wheel pier (east). */
-  wheel: { x: 175, z: 40, radius: 20, hubHeight: 14 },
+  /** The Great Wheel pier (east) — turns in a dredged basin (floor ≈ −40). */
+  wheel: { x: 175, z: 40, radius: 20, hubY: -18 },
+  /** Carrousel des Abysses — the Midway's southern rotunda. */
+  carousel: { x: 100, z: 182, plazaRadius: 12 },
   /** Torrent coaster station (north, near the rim). */
   torrent: { station: { x: 70, z: -165 } },
   /** Menagerie gardens (west). */
@@ -41,7 +43,8 @@ export function anchorGround(anchor: { x: number; z: number }): number {
  */
 export const PARK_PATHS: { ax: number; az: number; bx: number; bz: number; width: number }[] = [
   { ax: PARK_PLAN.arrival.x, az: PARK_PLAN.arrival.z - 6, bx: PARK_PLAN.atrium.x, bz: PARK_PLAN.atrium.z + 21, width: 5 },
-  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.wheel.x - 22, bz: PARK_PLAN.wheel.z, width: 8 },
+  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.wheel.x - 27, bz: PARK_PLAN.wheel.z, width: 8 },
+  { ax: PARK_PLAN.midway.x, az: PARK_PLAN.midway.z + 12, bx: PARK_PLAN.carousel.x, bz: PARK_PLAN.carousel.z - 13, width: 6 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.menagerie.x, bz: PARK_PLAN.menagerie.z, width: 8 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.midway.x - 10, bz: PARK_PLAN.midway.z - 4, width: 7 },
   { ax: PARK_PLAN.midway.x + 16, az: PARK_PLAN.midway.z, bx: PARK_PLAN.grotto.x, bz: PARK_PLAN.grotto.z, width: 6 },
@@ -56,7 +59,8 @@ const KEEPOUT_DISCS: { x: number; z: number; r: number }[] = [
   { x: PARK_PLAN.arrival.x, z: PARK_PLAN.arrival.z, r: 12 },
   { x: PARK_PLAN.atrium.x, z: PARK_PLAN.atrium.z, r: PARK_PLAN.atrium.plazaRadius + 4 },
   { x: PARK_PLAN.tidalCourt.x, z: PARK_PLAN.tidalCourt.z, r: PARK_PLAN.tidalCourt.colonnadeRadius + 11 },
-  { x: PARK_PLAN.wheel.x, z: PARK_PLAN.wheel.z, r: 26 },
+  { x: PARK_PLAN.wheel.x, z: PARK_PLAN.wheel.z, r: 28 },
+  { x: PARK_PLAN.carousel.x, z: PARK_PLAN.carousel.z, r: PARK_PLAN.carousel.plazaRadius + 2 },
   { x: PARK_PLAN.torrent.station.x, z: PARK_PLAN.torrent.station.z, r: 14 },
   { x: PARK_PLAN.menagerie.x, z: PARK_PLAN.menagerie.z, r: 16 },
   { x: PARK_PLAN.grotto.x, z: PARK_PLAN.grotto.z, r: 12 },

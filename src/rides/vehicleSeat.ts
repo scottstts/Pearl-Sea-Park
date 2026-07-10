@@ -38,6 +38,9 @@ export class VehicleSeatRig {
     this.player = player
     window.addEventListener('mousemove', (event) => {
       if (!this.vehicle || this.phase === 'out') return
+      // Same rule as the walking controller: look only under pointer lock,
+      // otherwise stray cursor motion drifts the seat view.
+      if (!document.pointerLockElement) return
       this.lookYaw -= event.movementX * LOOK_SENSITIVITY
       this.lookPitch -= event.movementY * LOOK_SENSITIVITY
       this.lookPitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, this.lookPitch))

@@ -35,6 +35,16 @@ export function terrainHeight(x: number, z: number): number {
   const padBlend = 1 - smoothstepJs(180, 300, centerDistance)
   height = height * (1 - padBlend * 0.75) + (PLATEAU_Y + 1.2) * padBlend * 0.75
 
+  // The Great Wheel basin (wheel anchor 175,40 — literals to avoid a cycle
+  // with parkPlan): a dredged round pit so the 40 m wheel can turn with only
+  // its crest breaching the surface.
+  const wheelDistance = Math.hypot(x - 175, z - 40)
+  const basinBlend = 1 - smoothstepJs(13, 26, wheelDistance)
+  if (basinBlend > 0) {
+    const basinFloor = -40 + (fbmCpu(x * 0.06, z * 0.06, 2, 71) - 0.5) * 1.2
+    height = height * (1 - basinBlend) + basinFloor * basinBlend
+  }
+
   // The drop-off: a jagged rim north of RIM_Z plunging to the abyss.
   const rimJitter =
     (fbmCpu(x * 0.008, 77.7, 3, 31) - 0.5) * 44 + (fbmCpu(x * 0.05, 12.3, 3, 53) - 0.5) * 10

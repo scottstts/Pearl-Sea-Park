@@ -16,7 +16,9 @@ import { PlayerSystem } from './player/player'
 import { SeatSystem } from './player/seats'
 import { RenderPipelineSystem } from './render/pipeline'
 import { createRenderer, webgpuAvailable } from './render/renderer'
+import { CarouselSystem } from './rides/carousel'
 import { DescentBellSystem } from './rides/descentBell'
+import { GreatWheelSystem } from './rides/greatWheel'
 import { PearlLineSystem } from './rides/pearlLine'
 import type { GameContext } from './runtime/context'
 import { GameLoop } from './runtime/loop'
@@ -122,8 +124,11 @@ async function boot(): Promise<void> {
     registry.add(new ParkAssemblySystem(services))
     registry.add(new DescentBellSystem(services, player))
     registry.add(new PearlLineSystem(services, player))
+    registry.add(new GreatWheelSystem(services, player))
+    const carousel = registry.add(new CarouselSystem(services, player))
     registry.add(new SchedulerSystem())
-    registry.add(new AudioEngineSystem())
+    const audio = registry.add(new AudioEngineSystem())
+    audio.waltzSource = carousel.center
   }
   registry.add(pipeline)
 

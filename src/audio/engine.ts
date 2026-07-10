@@ -1,3 +1,4 @@
+import type { Vector3 } from 'three'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 
@@ -12,10 +13,16 @@ import type { GameSystem } from '../runtime/system'
 export class AudioEngineSystem implements GameSystem {
   readonly id = 'audio'
 
+  /** Set by main: the carousel's world position for the distance-mixed waltz. */
+  waltzSource: Vector3 | null = null
+
   private context: AudioContext | null = null
   private master: GainNode | null = null
   private lowpass: BiquadFilterNode | null = null
   private started = false
+  private waltzGain: GainNode | null = null
+  private waltzFilter: BiquadFilterNode | null = null
+  private waltzLoopEnd = 0
 
   init(ctx: GameContext): void {
     // The context must start from a user gesture: the enter click.
@@ -44,6 +51,14 @@ export class AudioEngineSystem implements GameSystem {
       if (riding) this.startHum('pearl', 84, 0.035)
       else this.stopHum('pearl')
     })
+    ctx.events.on('ride/wheel-riding', ({ riding }) => {
+      if (riding) this.startHum('wheel', 47, 0.045)
+      else this.stopHum('wheel')
+    })
+    ctx.events.on('ride/carousel-riding', ({ riding }) => {
+      if (riding) this.startHum('carousel', 36, 0.02)
+      else this.stopHum('carousel')
+    })
   }
 
   private start(_ctx: GameContext): void {
@@ -63,6 +78,91 @@ export class AudioEngineSystem implements GameSystem {
     this.lowpass = lowpass
 
     this.buildAmbience(context, master)
+
+    // The carousel waltz bus: distance sets gain + its own muffle filter.
+    const waltzGain = context.createGain()
+    waltzGain.gain.value = 0
+    const waltzFilter = context.createBiquadFilter()
+    waltzFilter.type = 'lowpass'
+    waltzFilter.frequency.value = 6000
+    waltzGain.connect(waltzFilter).connect(master)
+    this.waltzGain = waltzGain
+    this.waltzFilter = waltzFilter
+  }
+
+  /** Distance-mix the waltz every frame; schedule the next loop as needed. */
+  update(ctx: GameContext): void {
+    const context = this.context
+    if (!context || !this.waltzGain || !this.waltzFilter || !this.waltzSource) return
+    const d = ctx.camera.position.distanceTo(this.waltzSource)
+    const gain = Math.min(0.55, 36 / Math.max(9, d * d) + (d < 26 ? 0.22 : 0))
+    this.waltzGain.gain.setTargetAtTime(gain, context.currentTime, 0.4)
+    this.waltzFilter.frequency.setTargetAtTime(
+      Math.max(700, 7000 - d * 55),
+      context.currentTime,
+      0.5,
+    )
+    if (context.currentTime > this.waltzLoopEnd - 1.5) this.scheduleWaltzLoop()
+  }
+
+  /** One 16-bar music-box waltz loop (3/4, ~96 bpm), scheduled ahead. */
+  private scheduleWaltzLoop(): void {
+    const context = this.context
+    const bus = this.waltzGain
+    if (!context || !bus) return
+    const beat = 0.625
+    const bar = beat * 3
+    const start = Math.max(context.currentTime + 0.1, this.waltzLoopEnd)
+    // A-major lilt: bass on 1, chord plucks on 2 & 3, singing top line.
+    const A2 = 110, E3 = 164.81, D3 = 146.83, Fs3 = 185
+    const bass = [A2, E3, A2, D3, A2, E3, Fs3, E3, A2, E3, D3, E3, A2, D3, E3, A2]
+    const chord: [number, number][] = [
+      [277.18, 329.63], [277.18, 415.3], [277.18, 329.63], [293.66, 369.99],
+      [277.18, 329.63], [329.63, 415.3], [369.99, 440], [329.63, 415.3],
+      [277.18, 329.63], [329.63, 415.3], [293.66, 369.99], [329.63, 415.3],
+      [277.18, 329.63], [293.66, 369.99], [329.63, 415.3], [277.18, 329.63],
+    ]
+    const melody: [number, number][][] = [
+      [[659.26, 0]], [[554.37, 0], [659.26, 2]], [[739.99, 0]], [[659.26, 0], [554.37, 2]],
+      [[440, 0]], [[493.88, 0], [554.37, 1], [587.33, 2]], [[554.37, 0]], [[493.88, 0]],
+      [[440, 0], [659.26, 2]], [[880, 0]], [[739.99, 0], [659.26, 2]], [[587.33, 0]],
+      [[554.37, 0], [587.33, 1], [659.26, 2]], [[554.37, 0]], [[493.88, 0], [440, 2]], [[440, 0]],
+    ]
+    for (let barIndex = 0; barIndex < 16; barIndex++) {
+      const t0 = start + barIndex * bar
+      this.pluck(bass[barIndex], t0, 1.4, 0.16, bus)
+      for (const beatIndex of [1, 2]) {
+        for (const f of chord[barIndex]) this.pluck(f, t0 + beatIndex * beat, 0.5, 0.05, bus)
+      }
+      for (const [f, onBeat] of melody[barIndex]) {
+        this.pluck(f * 2, t0 + onBeat * beat, 0.9, 0.085, bus)
+      }
+    }
+    this.waltzLoopEnd = start + 16 * bar
+  }
+
+  /** Music-box pluck: bright partial + fast decay. */
+  private pluck(frequency: number, at: number, duration: number, level: number, out: GainNode): void {
+    const context = this.context
+    if (!context) return
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.0001, at)
+    gain.gain.exponentialRampToValueAtTime(level, at + 0.008)
+    gain.gain.exponentialRampToValueAtTime(0.0001, at + duration)
+    const osc = context.createOscillator()
+    osc.frequency.value = frequency
+    const partial = context.createOscillator()
+    partial.frequency.value = frequency * 4.02
+    const partialGain = context.createGain()
+    partialGain.gain.setValueAtTime(level * 0.22, at)
+    partialGain.gain.exponentialRampToValueAtTime(0.0001, at + duration * 0.4)
+    osc.connect(gain)
+    partial.connect(partialGain).connect(gain)
+    gain.connect(out)
+    osc.start(at)
+    partial.start(at)
+    osc.stop(at + duration + 0.05)
+    partial.stop(at + duration + 0.05)
   }
 
   /** Deep, soft ambience: pink-ish noise through a slow-breathing filter. */
