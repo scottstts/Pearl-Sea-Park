@@ -20,8 +20,14 @@ export const PARK_PLAN = {
   carousel: { x: 100, z: 182, plazaRadius: 12 },
   /** Torrent coaster station (north, near the rim). */
   torrent: { station: { x: 70, z: -165 } },
-  /** Menagerie gardens (west). */
-  menagerie: { x: -170, z: 45 },
+  /** Menagerie gardens (west): the inverted zoo's three linked courts. */
+  menagerie: {
+    x: -170,
+    z: 45,
+    sunGarden: { x: -148, z: 60 },
+    jellyCourt: { x: -188, z: 53, radius: 14 },
+    turtleLagoon: { x: -168, z: 20, radius: 13 },
+  },
   /** Midway hall (south-east of hub). */
   midway: { x: 100, z: 150, width: 42, depth: 20 },
   /** Grotto of Pearls entrance (south-east). */
@@ -63,6 +69,9 @@ const KEEPOUT_DISCS: { x: number; z: number; r: number }[] = [
   { x: PARK_PLAN.carousel.x, z: PARK_PLAN.carousel.z, r: PARK_PLAN.carousel.plazaRadius + 2 },
   { x: PARK_PLAN.torrent.station.x, z: PARK_PLAN.torrent.station.z, r: 14 },
   { x: PARK_PLAN.menagerie.x, z: PARK_PLAN.menagerie.z, r: 16 },
+  { x: PARK_PLAN.menagerie.sunGarden.x, z: PARK_PLAN.menagerie.sunGarden.z, r: 11 },
+  { x: PARK_PLAN.menagerie.jellyCourt.x, z: PARK_PLAN.menagerie.jellyCourt.z, r: PARK_PLAN.menagerie.jellyCourt.radius + 2 },
+  { x: PARK_PLAN.menagerie.turtleLagoon.x, z: PARK_PLAN.menagerie.turtleLagoon.z, r: PARK_PLAN.menagerie.turtleLagoon.radius + 2 },
   { x: PARK_PLAN.grotto.x, z: PARK_PLAN.grotto.z, r: 12 },
   { x: PARK_PLAN.observatory.x, z: PARK_PLAN.observatory.z, r: 12.5 },
   { x: PARK_PLAN.cafe.x, z: PARK_PLAN.cafe.z, r: 11 },
@@ -83,11 +92,20 @@ const KEEPOUT_CAPSULES: { ax: number; az: number; bx: number; bz: number; r: num
 
 /** True when (x, z) lies inside any built footprint (+extra margin, meters). */
 export function inParkFootprint(x: number, z: number, margin = 0): boolean {
+  return parkFootprintSignedDistance(x, z) < margin
+}
+
+/**
+ * Signed distance to the coarse park collision plan (negative = inside).
+ * Wildlife bakes this exact field to a low-resolution GPU texture, so fish
+ * flow around the same district/path footprints that keep scatter clear.
+ */
+export function parkFootprintSignedDistance(x: number, z: number): number {
+  let distance = Infinity
   for (const d of KEEPOUT_DISCS) {
     const dx = x - d.x
     const dz = z - d.z
-    const r = d.r + margin
-    if (dx * dx + dz * dz < r * r) return true
+    distance = Math.min(distance, Math.hypot(dx, dz) - d.r)
   }
   for (const c of KEEPOUT_CAPSULES) {
     const abx = c.bx - c.ax
@@ -96,8 +114,7 @@ export function inParkFootprint(x: number, z: number, margin = 0): boolean {
     const t = lengthSq === 0 ? 0 : Math.max(0, Math.min(1, ((x - c.ax) * abx + (z - c.az) * abz) / lengthSq))
     const dx = x - (c.ax + abx * t)
     const dz = z - (c.az + abz * t)
-    const r = c.r + margin
-    if (dx * dx + dz * dz < r * r) return true
+    distance = Math.min(distance, Math.hypot(dx, dz) - c.r)
   }
-  return false
+  return distance
 }

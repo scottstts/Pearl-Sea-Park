@@ -23,11 +23,25 @@ export async function createRenderer(canvas: HTMLCanvasElement): Promise<WebGPUR
     throw new Error('webgpu-backend-unavailable')
   }
 
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+  renderer.setPixelRatio(recommendedPixelRatio())
   renderer.setSize(window.innerWidth, window.innerHeight)
   // Never tone-map at the renderer — the pipeline's explicit renderOutput()
   // is the single output transform (side targets must stay linear).
   renderer.toneMapping = NoToneMapping
   renderer.shadowMap.enabled = true
   return renderer
+}
+
+/** Cap both DPR and total drawing-buffer pixels before dynamic render scale. */
+export function recommendedPixelRatio(
+  width = window.innerWidth,
+  height = window.innerHeight,
+): number {
+  const maxPixels = 4_000_000
+  const dpr = Math.min(
+    window.devicePixelRatio,
+    1.7,
+    Math.sqrt(maxPixels / Math.max(1, width * height)),
+  )
+  return Math.max(1, dpr)
 }

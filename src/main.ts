@@ -37,6 +37,7 @@ import { FloraSystem } from './world/flora'
 import { ParkAssemblySystem } from './world/parkAssembly'
 import { TerrainSystem } from './world/terrain'
 import { TestGallerySystem } from './world/testGallery'
+import { WildlifeSystem } from './wildlife/wildlifeSystem'
 
 const DEFAULT_SEED = 19051906 // the year the gates first opened
 
@@ -130,6 +131,7 @@ async function boot(): Promise<void> {
     registry.add(new TorrentSystem(services, player))
     registry.add(new GrottoSystem(services, player, medium))
     const carousel = registry.add(new CarouselSystem(services, player))
+    registry.add(new WildlifeSystem(services, medium))
     registry.add(new SchedulerSystem())
     const audio = registry.add(new AudioEngineSystem())
     audio.waltzSource = carousel.center

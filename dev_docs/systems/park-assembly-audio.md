@@ -9,6 +9,14 @@
   on the seabed (flora today; shells, props, wildlife rest-points later) must
   consult `inParkFootprint` — reef rocks were spawning inside the reflecting
   pool before this existed.
+- S12 promoted the same footprints to `parkFootprintSignedDistance()`. The
+  boolean keep-out delegates to that signed field, and wildlife bakes it to a
+  128² R16F flow map. This preserves one collision/layout authority across
+  scatter, habitat placement, and GPU schooling behavior.
+- `PARK_PLAN.menagerie` now owns explicit `sunGarden`, `jellyCourt`, and
+  `turtleLagoon` anchors. Their cloister, dome, lagoon, grounded links, and
+  colliders land with S12 wildlife rather than remaining an empty reserved
+  disc.
 
 ## Paths follow terrain
 

@@ -19,6 +19,7 @@ import { getDebugPane } from '../core/debugOverlay'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { dreamGrade, gradeParams } from './grade'
+import { recommendedPixelRatio } from './renderer'
 
 /**
  * The one owner of the final image (plan §4).
@@ -34,7 +35,7 @@ export class RenderPipelineSystem implements GameSystem {
 
   private pipeline: RenderPipeline | null = null
   private appliedScale = 1
-  private readonly basePixelRatio = Math.min(window.devicePixelRatio, 2)
+  private basePixelRatio = recommendedPixelRatio()
   private paneWired = false
 
   /**
@@ -46,6 +47,10 @@ export class RenderPipelineSystem implements GameSystem {
   init(ctx: GameContext): void {
     const { renderer, scene, camera, flags } = ctx
     this.paneWired = !flags.debug
+    ctx.events.on('render/resized', ({ width, height }) => {
+      this.basePixelRatio = recommendedPixelRatio(width, height)
+      renderer.setPixelRatio(this.basePixelRatio * ctx.quality.renderScale)
+    })
 
     // The renderer itself NEVER tone-maps: every side render target (caustic
     // tiles, water sims, readbacks) must stay linear HDR. The one and only

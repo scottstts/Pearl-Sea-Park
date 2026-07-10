@@ -73,3 +73,10 @@
   - New terrain massing must include the approach cut used by existing paths. Segmenting plates cannot ground a path when the terrain rises between its centerline samples; carve the intended gorge in `terrainHeight` so visual and Rapier ground agree.
   - A partial back-face cave shell in an open gorge reads as disconnected black sheets. Let the terrain own the open reach and start the full shell after a bend where the one-sided surface hides the cut.
   - HDR hierarchy applies inside dark rides too: thousands of above-threshold pearls become white bloom blobs. Keep the galaxy field lit below threshold and reserve hero emission for one focal pearl.
+- 2026-07-10 S12 lessons (Wildlife — see systems/wildlife.md):
+  - Park avoidance needed a signed-distance authority, not a second hand-maintained obstacle list. `inParkFootprint` now derives from `parkFootprintSignedDistance`; the exact same discs/capsules bake into the fish field.
+  - R32F textures are not baseline linearly filterable in WebGPU. Coarse signed distance and terrain maps use R16F; their ±300 m ranges fit comfortably and work on baseline adapters.
+  - 15k boids do not require an atomic spatial grid when schools are explicit. Eight stable, well-spread cohort samples per 500-fish school make the solver O(N), deterministic, and bounded while retaining separation/alignment/cohesion behavior.
+  - GPU-driven instanced positions require `frustumCulled = false` unless a separate dynamic bounds system updates world bounds; otherwise Three culls a whole school against the tiny source fish geometry at the origin.
+  - Scheduled wildlife reads best as one authored composition: the manta and selected schools share the Esplanade cue, while the ordinary player-avoidance force creates the split. Validation views hold the timetable at the readable beat rather than duplicating behavior.
+  - Audio-first events need semantic phases. The whale emits `approach` twelve seconds before it becomes visible, so sound, shadow, body, eye, and departure remain an explicit sequence rather than offsets scattered across systems.

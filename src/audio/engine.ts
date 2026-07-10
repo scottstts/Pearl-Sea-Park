@@ -73,6 +73,9 @@ export class AudioEngineSystem implements GameSystem {
       else this.stopHum('grotto')
     })
     ctx.events.on('grotto/drip', () => this.playDrip())
+    ctx.events.on('wildlife/whale-cue', ({ phase }) => {
+      if (phase === 'approach') this.playWhaleSong()
+    })
     ctx.events.on('audio/grotto-interior', ({ amount }) => {
       this.grottoInterior = Math.max(0, Math.min(1, amount))
       const context = this.context
@@ -211,6 +214,58 @@ export class AudioEngineSystem implements GameSystem {
     oscillator.connect(gain).connect(master)
     oscillator.start(at)
     oscillator.stop(at + 0.26)
+  }
+
+  /**
+   * The whale arrives in sound twelve seconds before it arrives in sight:
+   * three slowly bending sub-bass partials plus a filtered breath layer.
+   */
+  private playWhaleSong(): void {
+    const context = this.context
+    const master = this.master
+    if (!context || !master) return
+    const at = context.currentTime + 0.05
+    const bus = context.createGain()
+    bus.gain.setValueAtTime(0.0001, at)
+    bus.gain.exponentialRampToValueAtTime(0.13, at + 2.8)
+    bus.gain.setValueAtTime(0.13, at + 8.5)
+    bus.gain.exponentialRampToValueAtTime(0.0001, at + 16)
+    const filter = context.createBiquadFilter()
+    filter.type = 'lowpass'
+    filter.frequency.setValueAtTime(260, at)
+    filter.frequency.exponentialRampToValueAtTime(680, at + 10)
+    bus.connect(filter).connect(master)
+
+    for (const [frequency, bend, level] of [
+      [38, 47, 0.7],
+      [56, 51, 0.42],
+      [76, 91, 0.2],
+    ] as const) {
+      const oscillator = context.createOscillator()
+      oscillator.type = 'sine'
+      oscillator.frequency.setValueAtTime(frequency, at)
+      oscillator.frequency.exponentialRampToValueAtTime(bend, at + 7)
+      oscillator.frequency.exponentialRampToValueAtTime(frequency * 0.84, at + 15.5)
+      const gain = context.createGain()
+      gain.gain.value = level
+      oscillator.connect(gain).connect(bus)
+      oscillator.start(at)
+      oscillator.stop(at + 16.1)
+    }
+
+    const breathBuffer = context.createBuffer(1, Math.ceil(context.sampleRate * 8), context.sampleRate)
+    const breath = breathBuffer.getChannelData(0)
+    for (let i = 0; i < breath.length; i++) breath[i] = deterministicNoise(i + 9059) * 0.18
+    const breathSource = context.createBufferSource()
+    breathSource.buffer = breathBuffer
+    breathSource.loop = true
+    const breathFilter = context.createBiquadFilter()
+    breathFilter.type = 'bandpass'
+    breathFilter.frequency.value = 180
+    breathFilter.Q.value = 0.8
+    breathSource.connect(breathFilter).connect(bus)
+    breathSource.start(at)
+    breathSource.stop(at + 16.1)
   }
 
   /** One 16-bar music-box waltz loop (3/4, ~96 bpm), scheduled ahead. */
