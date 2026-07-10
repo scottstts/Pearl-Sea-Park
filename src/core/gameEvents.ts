@@ -16,5 +16,9 @@ export type GameEvents = {
   'ticket/punched': { ride: string }
   /** Park timetable events (chimes, shows, wildlife passages). */
   'schedule/event': { name: string; phase: 'start' | 'end' }
+  /** Descent Bell drive state (audio hums + door prompts key off this). */
+  'ride/bell-state': { state: 'docked-top' | 'descending' | 'docked-bottom' | 'ascending' }
+  /** Guest boarded/left a Pearl Line cabin (cable hum while riding). */
+  'ride/pearl-riding': { riding: boolean }
 }
 

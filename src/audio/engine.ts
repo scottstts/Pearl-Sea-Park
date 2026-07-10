@@ -32,6 +32,18 @@ export class AudioEngineSystem implements GameSystem {
         )
       }
     })
+    // Ride machinery: cable hums while anything is being winched around.
+    ctx.events.on('ride/bell-state', ({ state }) => {
+      if (state === 'descending' || state === 'ascending') this.startHum('bell', 58, 0.05)
+      else {
+        this.stopHum('bell')
+        this.bell(659.26, (this.context?.currentTime ?? 0) + 0.05, 1.9, 0.09)
+      }
+    })
+    ctx.events.on('ride/pearl-riding', ({ riding }) => {
+      if (riding) this.startHum('pearl', 84, 0.035)
+      else this.stopHum('pearl')
+    })
   }
 
   private start(_ctx: GameContext): void {
@@ -106,6 +118,59 @@ export class AudioEngineSystem implements GameSystem {
       osc.connect(g).connect(out)
       osc.start()
     }
+  }
+
+  private readonly hums = new Map<string, { gain: GainNode; stop: () => void }>()
+
+  /** Machinery hum: low sine + slow-filtered noise, faded in and out. */
+  private startHum(name: string, frequency: number, level: number): void {
+    const context = this.context
+    const master = this.master
+    if (!context || !master || this.hums.has(name)) return
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.0001, context.currentTime)
+    gain.gain.linearRampToValueAtTime(level, context.currentTime + 1.4)
+
+    const osc = context.createOscillator()
+    osc.frequency.value = frequency
+    const oscB = context.createOscillator()
+    oscB.frequency.value = frequency * 1.996 // near-octave beat
+    const noise = context.createBufferSource()
+    const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate)
+    const data = buffer.getChannelData(0)
+    for (let i = 0; i < data.length; i++) data[i] = Math.random() * 2 - 1
+    noise.buffer = buffer
+    noise.loop = true
+    const noiseFilter = context.createBiquadFilter()
+    noiseFilter.type = 'bandpass'
+    noiseFilter.frequency.value = frequency * 4
+    noiseFilter.Q.value = 6
+    const noiseGain = context.createGain()
+    noiseGain.gain.value = 0.3
+    osc.connect(gain)
+    oscB.connect(gain)
+    noise.connect(noiseFilter).connect(noiseGain).connect(gain)
+    gain.connect(master)
+    osc.start()
+    oscB.start()
+    noise.start()
+    this.hums.set(name, {
+      gain,
+      stop: () => {
+        osc.stop()
+        oscB.stop()
+        noise.stop()
+      },
+    })
+  }
+
+  private stopHum(name: string): void {
+    const context = this.context
+    const hum = this.hums.get(name)
+    if (!context || !hum) return
+    this.hums.delete(name)
+    hum.gain.gain.linearRampToValueAtTime(0.0001, context.currentTime + 0.9)
+    window.setTimeout(() => hum.stop(), 1100)
   }
 
   /** FM bell voice. */

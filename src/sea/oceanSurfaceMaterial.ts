@@ -184,12 +184,12 @@ export function createOceanSurfaceMaterial(
     // Jacobian foam: history-driven coverage × bubbly fbm detail, sun/sky lit.
     // Coverage only where the surface genuinely folded; fades with distance
     // so the fbm detail can never read as far-field shimmer.
-    const coverage = float(1).sub(smoothstep(-0.05, 0.38, vFoam))
+    const coverage = float(1).sub(smoothstep(-0.05, 0.26, vFoam))
     const bubbleA = fbm2(vWorldXZ.mul(0.9).add(vec2(0.13, 0.07).mul(timeUniform)))
     const bubbleB = fbm2(vWorldXZ.mul(1.7).sub(vec2(0.11, 0.05).mul(timeUniform)))
     const foamKeep = float(1).sub(smoothstep(90.0, 240.0, vDistance))
     const foamMask = coverage
-      .mul(bubbleA.mul(bubbleB).mul(1.7).add(0.15))
+      .mul(bubbleA.mul(bubbleB).mul(1.7).add(0.06))
       .mul(foamKeep)
       .clamp(0, 1)
     const foamShade = sunColorUniform

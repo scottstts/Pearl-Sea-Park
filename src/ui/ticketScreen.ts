@@ -49,6 +49,8 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     materials: 'Mixing the lacquers',
     atrium: 'Raising the colonnades',
     park: 'Opening the gates',
+    'descent-bell': 'Oiling the winch',
+    'pearl-line': 'Stringing the cable',
     scheduler: 'Winding the timetable',
     wildlife: 'Inviting the fish',
     audio: 'Tuning the music boxes',

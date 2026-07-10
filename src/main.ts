@@ -16,6 +16,8 @@ import { PlayerSystem } from './player/player'
 import { SeatSystem } from './player/seats'
 import { RenderPipelineSystem } from './render/pipeline'
 import { createRenderer, webgpuAvailable } from './render/renderer'
+import { DescentBellSystem } from './rides/descentBell'
+import { PearlLineSystem } from './rides/pearlLine'
 import type { GameContext } from './runtime/context'
 import { GameLoop } from './runtime/loop'
 import { SystemRegistry } from './runtime/registry'
@@ -100,15 +102,16 @@ async function boot(): Promise<void> {
     const medium = registry.add(new SeaMediumSystem(pipeline, sea))
     registry.add(new TerrainSystem(medium))
     registry.add(new FloraSystem(medium))
-    registry.add(new ArrivalSystem())
     const physics = registry.add(new PhysicsSystem())
+    registry.add(new ArrivalSystem(physics))
     const materials = registry.add(new MaterialsSystem(medium))
     const services: DistrictServices = { physics, materials }
+    let player: PlayerSystem | null = null
     if (flags.view) {
       // Fixed validation cameras inspect with orbit controls, not the player.
       registry.add(new DevOrbitSystem())
     } else {
-      const player = registry.add(new PlayerSystem(physics))
+      player = registry.add(new PlayerSystem(physics))
       const interaction = registry.add(new InteractionSystem())
       const seats = registry.add(new SeatSystem(player, interaction))
       services.seats = seats
@@ -117,6 +120,8 @@ async function boot(): Promise<void> {
     }
     registry.add(new AtriumSystem(services))
     registry.add(new ParkAssemblySystem(services))
+    registry.add(new DescentBellSystem(services, player))
+    registry.add(new PearlLineSystem(services, player))
     registry.add(new SchedulerSystem())
     registry.add(new AudioEngineSystem())
   }

@@ -148,6 +148,12 @@ export class PlayerSystem implements GameSystem {
     camera.rotation.set(this.pitch, this.yaw, 0, 'YXZ')
   }
 
+  /** Adopt a camera orientation (ride exits hand back without a snap). */
+  setLook(yaw: number, pitch: number): void {
+    this.yaw = yaw
+    this.pitch = Math.max(-PITCH_LIMIT, Math.min(PITCH_LIMIT, pitch))
+  }
+
   /** Teleport (bell arrivals, ride exits). */
   placeAt(x: number, y: number, z: number, yaw?: number): void {
     this.body?.setTranslation({ x, y: y + CAPSULE_HALF + CAPSULE_RADIUS, z }, true)

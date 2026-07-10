@@ -40,6 +40,7 @@ export function anchorGround(anchor: { x: number; z: number }): number {
  * this list; the flora keep-out reads the same list — one source of truth.
  */
 export const PARK_PATHS: { ax: number; az: number; bx: number; bz: number; width: number }[] = [
+  { ax: PARK_PLAN.arrival.x, az: PARK_PLAN.arrival.z - 6, bx: PARK_PLAN.atrium.x, bz: PARK_PLAN.atrium.z + 21, width: 5 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.wheel.x - 22, bz: PARK_PLAN.wheel.z, width: 8 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.menagerie.x, bz: PARK_PLAN.menagerie.z, width: 8 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.midway.x - 10, bz: PARK_PLAN.midway.z - 4, width: 7 },
@@ -61,6 +62,9 @@ const KEEPOUT_DISCS: { x: number; z: number; r: number }[] = [
   { x: PARK_PLAN.grotto.x, z: PARK_PLAN.grotto.z, r: 12 },
   { x: PARK_PLAN.observatory.x, z: PARK_PLAN.observatory.z, r: 12.5 },
   { x: PARK_PLAN.cafe.x, z: PARK_PLAN.cafe.z, r: 11 },
+  // Pearl Line stations (rides/pearlLine.ts docks).
+  { x: -34, z: 210, r: 9.5 },
+  { x: 146, z: 58, r: 9.5 },
 ]
 
 const KEEPOUT_CAPSULES: { ax: number; az: number; bx: number; bz: number; r: number }[] = [

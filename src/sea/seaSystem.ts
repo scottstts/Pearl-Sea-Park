@@ -8,12 +8,14 @@ import { createOceanSurfaceMaterial } from './oceanSurfaceMaterial'
 import { WaveSim } from './waveSim'
 
 const INNER_SIZE = 700
-const OUTER_SIZE = 9000
+// The skirt must END inside the sky dome (r 3400) — a wider skirt knifes
+// through the dome's triangulation at the horizon as a sawtooth seam.
+const OUTER_SIZE = 6400
 // The inner mesh fades its fine cascades to zero at its edge, so at the seam
 // both surfaces carry identical cascade-0 displacement; the skirt abuts and
 // sits a hair lower to cover the crack.
 const OUTER_HOLE_HALF = 348
-const OUTER_SINK = 0.05
+const OUTER_SINK = 0.14
 
 /** Plane with the inner square removed — the far skirt ring. */
 function createSkirtGeometry(): BufferGeometry {

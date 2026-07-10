@@ -44,3 +44,11 @@
   - Planar reflections: TSL `reflector()` works under our RenderPipeline pass. Blend it via `emissiveNode` over a black-base standard material; Reinhard-squash the mirrored HDR ceiling; Fresnel by plane-facing; set `levelNode` directly (never `.level()`/`.blur()` — clones lose the live RT); keep UV wobble ≤~0.012 or the low-res mirror moirés.
   - Rapier `world.castRay` before the first `world.step()` returns no hits — run raycast self-checks on the first fixedUpdate, not at init.
   - Preview FPS with the full park at tier 2 measured ~27–40 while visible (reflector adds a second scene render when the pool is on screen — S14 lever: pause reflector when hub out of view).
+- 2026-07-10 S8 lessons (rides — see systems/rides-bell-pearl.md for the full set):
+  - Route anything airborne (cables, future coaster track) with explicit point-to-segment clearance vs EVERY dome/building; the first Pearl Line draft flew through the observatory glass. There is no collision check for splines — geometry review is the check.
+  - Aerial structures need lateral standoff: gondola towers 2 m beside the cable (cabins sweep 3.2 m below it); same thinking applies to coaster supports near the track envelope (S10).
+  - Pulse-gondola drive: ONE global dwell timer, per-station pulse cooldowns, short glide-in windows. Commensurate cabin/station spacing produces two failure modes (permanent crawl, swallowed arrivals) that only show up in long simulated runs — test rides with thousands of fixed ticks, not by eyeballing one arrival.
+  - Raised platforms need collider STAIRCASES (≤0.2 m risers); one tall cylinder reads fine visually and walls guests off invisibly (autostep max 0.45).
+  - Above-water aesthetics are their own regime: FFT crests (~1.3 m) swallowed a 1.3 m deck — surface structures need 2.5 m+ freeboard; ocean skirt must end INSIDE the sky dome (sawtooth seam otherwise); near-field foam tuned via coverage threshold, not the fbm floor.
+  - The atrium dome's finial pierces the surface by ~2 m — kept deliberately as the arriving guest's first landmark from the buoy ("the golden spire in the waves").
+  - Timing-sensitive interaction tests (door dwells) must run inside ONE preview_eval — the live loop runs whenever the preview window surfaces between evals and eats timers.

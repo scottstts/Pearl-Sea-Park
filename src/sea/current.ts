@@ -20,3 +20,13 @@ export const currentFlow = /*@__PURE__*/ Fn(([p, t]: [Node<'vec3'>, Node<'float'
     s2.mul(0.45).sub(s1.mul(0.15)),
   )
 })
+
+/** CPU mirror of `currentFlow` — same field, same phase (gondola sway, CPU props). */
+export function currentFlowCpu(px: number, pz: number, t: number): { x: number; y: number; z: number } {
+  const x = px * 0.05
+  const z = pz * 0.05
+  const s1 = Math.sin(x + t * 0.11) * Math.cos(z * 1.3 - t * 0.07)
+  const s2 = Math.sin(z * 0.7 + t * 0.05 + x * 0.4)
+  const s3 = Math.cos(x * 1.7 - z * 0.6 + t * 0.09)
+  return { x: s1 * 0.5 + s2 * 0.2, y: s3 * 0.12, z: s2 * 0.45 - s1 * 0.15 }
+}
