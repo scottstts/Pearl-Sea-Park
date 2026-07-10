@@ -4,7 +4,7 @@ import type { ComputeNode, StorageBufferNode, WebGPURenderer } from 'three/webgp
 import { Fn, Loop, float, fract, instanceIndex, sin, storage, vec4 } from 'three/tsl'
 import { TIERS } from './quality'
 
-const RESULT_KEY = 'the-pearl:auto-quality:v1'
+const RESULT_KEY = 'the-pearl:auto-quality:v2'
 const MODE_KEY = 'the-pearl:quality-mode'
 const SAMPLE_COUNT = 131_072
 const SAMPLE_PASSES = 3
@@ -16,12 +16,17 @@ export interface QualitySelection {
   source: QualitySource
   /** Mean queue-complete time for the representative kernel, when measured. */
   benchmarkMs: number | null
+  /** Runtime-calibrated starting scale from a previous Auto session. */
+  initialRenderScale: number
 }
 
 interface CachedResult {
   tier: number
   benchmarkMs: number
+  renderScale: number
 }
+
+let severeRuntimeSamples = 0
 
 /** Pause-card overrides survive reload; `auto` returns ownership to the benchmark. */
 export function setQualityMode(mode: 'auto' | number): void {
@@ -53,14 +58,26 @@ export async function selectInitialQuality(
   renderer: WebGPURenderer,
   forcedTier: number | null,
 ): Promise<QualitySelection> {
-  if (forcedTier !== null) return { tier: clampTier(forcedTier), source: 'url', benchmarkMs: null }
+  if (forcedTier !== null) {
+    return { tier: clampTier(forcedTier), source: 'url', benchmarkMs: null, initialRenderScale: 1 }
+  }
 
   const mode = getQualityMode()
-  if (mode !== 'auto') return { tier: mode, source: 'override', benchmarkMs: null }
+  if (mode !== 'auto') {
+    return { tier: mode, source: 'override', benchmarkMs: null, initialRenderScale: 1 }
+  }
 
   const cached = readCachedResult()
   if (cached) {
-    return { tier: cached.tier, source: 'cached-auto', benchmarkMs: cached.benchmarkMs }
+    return {
+      tier: cached.tier,
+      source: 'cached-auto',
+      benchmarkMs: cached.benchmarkMs,
+      // Never reopen directly at an emergency floor. A previous session may
+      // have sampled a transient hitch, a backgrounded tab, or a different
+      // viewport. Start near native and let the live controller re-evaluate.
+      initialRenderScale: Math.max(0.95, cached.renderScale),
+    }
   }
 
   const benchmarkMs = await runQualityBenchmark(renderer)
@@ -69,13 +86,43 @@ export async function selectInitialQuality(
   const resolutionPenalty = Math.sqrt(drawingPixels / (2560 * 1440))
   const normalizedMs = benchmarkMs * Math.max(0.75, resolutionPenalty)
   const tier = normalizedMs <= 5.4 ? 2 : normalizedMs <= 11.5 ? 1 : 0
-  const result = { tier, benchmarkMs }
+  const result = { tier, benchmarkMs, renderScale: 1 }
   try {
     localStorage.setItem(RESULT_KEY, JSON.stringify(result))
   } catch {
     // Storage can be unavailable in private contexts; the measured tier still applies.
   }
-  return { ...result, source: 'benchmark' }
+  return { tier, benchmarkMs, initialRenderScale: 1, source: 'benchmark' }
+}
+
+/**
+ * Persist what the representative scene, not just the startup kernel, could
+ * sustain. Severe floor-bound sessions start one feature tier lower on the
+ * next visit; healthy sessions retain their authored tier and a conservative
+ * near-native starting hint.
+ */
+export function recordAutoRuntimeSample(
+  selection: QualitySelection,
+  tier: number,
+  renderScale: number,
+  presentedFrameMs: number,
+): void {
+  if (selection.source === 'url' || selection.source === 'override') return
+  const floor = TIERS[tier].renderScaleMin
+  severeRuntimeSamples = presentedFrameMs > 28 && renderScale <= floor + 0.01
+    ? severeRuntimeSamples + 1
+    : 0
+  const nextTier = severeRuntimeSamples >= 3 && tier > 0 ? tier - 1 : tier
+  const result: CachedResult = {
+    tier: nextTier,
+    benchmarkMs: selection.benchmarkMs ?? 0,
+    renderScale: nextTier === tier ? clamp(renderScale, floor, 1) : 1,
+  }
+  try {
+    localStorage.setItem(RESULT_KEY, JSON.stringify(result))
+  } catch {
+    // Runtime adaptation remains active when persistence is unavailable.
+  }
 }
 
 async function runQualityBenchmark(renderer: WebGPURenderer): Promise<number> {
@@ -108,7 +155,15 @@ function readCachedResult(): CachedResult | null {
     if (!raw) return null
     const value = JSON.parse(raw) as Partial<CachedResult>
     if (!Number.isFinite(value.tier) || !Number.isFinite(value.benchmarkMs)) return null
-    return { tier: clampTier(value.tier!), benchmarkMs: Math.max(0, value.benchmarkMs!) }
+    const tier = clampTier(value.tier!)
+    const storedScale = Number(value.renderScale ?? 1)
+    return {
+      tier,
+      benchmarkMs: Math.max(0, value.benchmarkMs!),
+      renderScale: Number.isFinite(storedScale)
+        ? clamp(storedScale, TIERS[tier].renderScaleMin, 1)
+        : 1,
+    }
   } catch {
     return null
   }
@@ -116,4 +171,8 @@ function readCachedResult(): CachedResult | null {
 
 function clampTier(tier: number): number {
   return Math.max(0, Math.min(TIERS.length - 1, Math.round(tier)))
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value))
 }

@@ -1,5 +1,6 @@
 import type { GameContext } from './context'
 import type { SystemRegistry } from './registry'
+import type { FrameTiming } from '../render/performanceMonitor'
 
 const FIXED_DT = 1 / 60
 const MAX_SUBSTEPS = 5
@@ -13,7 +14,7 @@ export class GameLoop {
   /** Assigned by the render pipeline; called once per frame after updates. */
   renderFrame: () => void = () => {}
   /** Frame-time consumer (dynamic resolution, stats). */
-  onFrameEnd?: (frameMs: number) => void
+  onFrameEnd?: (timing: FrameTiming) => void
 
   private last: number | undefined
   private accumulator = 0
@@ -37,7 +38,8 @@ export class GameLoop {
   private tick(timeMs: number): void {
     const frameStart = performance.now()
     const t = timeMs / 1000
-    let dt = this.last === undefined ? FIXED_DT : t - this.last
+    const rawDt = this.last === undefined ? FIXED_DT : t - this.last
+    let dt = rawDt
     this.last = t
     // Tab-away clamp: never simulate a giant catch-up.
     dt = Math.min(dt, 0.25)
@@ -49,8 +51,8 @@ export class GameLoop {
         this.renderFrame()
         time.frame++
         this.renderedWhilePaused = true
+        this.finishFrame(frameStart, rawDt, timeMs)
       }
-      this.onFrameEnd?.(performance.now() - frameStart)
       return
     }
     this.renderedWhilePaused = false
@@ -61,7 +63,7 @@ export class GameLoop {
       this.registry.update(this.ctx, 0, 0)
       this.renderFrame()
       time.frame++
-      this.onFrameEnd?.(performance.now() - frameStart)
+      this.finishFrame(frameStart, rawDt, timeMs)
       return
     }
     time.elapsed += dt
@@ -79,6 +81,14 @@ export class GameLoop {
     this.registry.update(this.ctx, dt, this.accumulator / FIXED_DT)
     this.renderFrame()
     time.frame++
-    this.onFrameEnd?.(performance.now() - frameStart)
+    this.finishFrame(frameStart, rawDt, timeMs)
+  }
+
+  private finishFrame(frameStart: number, rawDt: number, nowMs: number): void {
+    this.onFrameEnd?.({
+      cpuMs: performance.now() - frameStart,
+      frameIntervalMs: Math.max(1, rawDt * 1000),
+      nowMs,
+    })
   }
 }

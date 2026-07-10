@@ -3,9 +3,9 @@
 ## Schooling fish
 
 - `FishSchoolSystem` owns four GPU storage buffers: vec4 position A/B and
-  velocity A/B. They ping-pong once per rendered frame; the active buffer is
-  sampled directly by three `InstancedMesh` species draws. No fish transforms
-  or animation data return to the CPU.
+  velocity A/B. Simulation advances at a fixed 30 Hz and render frames
+  interpolate the existing ping-pong buffers, so motion remains smooth without
+  recomputing flock forces at display rate. No fish transforms return to CPU.
 - Quality budgets are exact: tier 0 = 5,000 fish / 10 schools; tier 1 = 10,000
   / 20; tier 2 = 15,000 / 30. Every school contains 500 fish. Species counts
   are respectively 2,000/1,500/1,500; 3,500/3,500/3,000; and
@@ -17,9 +17,13 @@
   target, the shared current field, terrain clearance, surface ceiling, and
   attraction forces complete the acceleration model. Speed is bounded at
   0.72–3.4 m/s (4.9 m/s during the hero pass).
-- Fish meshes are authored along local +Z. Per-vertex `morphWeight` drives
+- Fish meshes are authored along local +Z. Each 500-fish school is its own
+  cullable instanced draw with an analytic dynamic bounding sphere; off-camera
+  schools now disappear from main, reflection, and shadow submission instead
+  of forcing all 5k–15k fish through the vertex stage. Per-vertex `morphWeight` drives
   tail flex in TSL, while velocity constructs an orthonormal swim frame in the
-  vertex graph. Three species are therefore three draw calls at every tier.
+  vertex graph. Schooling fish and dense non-hero particles live on the
+  main-detail layer and are omitted from the soft Tidal Court reflection.
   Offline geometry audit: 65 vertices / 105 triangles per fish archetype.
 - The player is a 13.5 m avoidance sphere with a steep inner force. Schools
   open an aisle causally; no fish teleports or uses a scripted split pose.

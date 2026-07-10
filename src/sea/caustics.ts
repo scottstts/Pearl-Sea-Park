@@ -35,9 +35,9 @@ import type { WaveSim } from './waveSim'
 /**
  * Differential-area caustics from the live wave field (water-optics skill):
  * a refracted grid is projected onto a virtual floor; the old/new projected
- * area ratio is the light concentration. Rendered as a repeating 85 m tile
- * (LCM of the 17 m and 5 m cascades, so it wraps), drawn 3×3 instanced so
- * light that refracts across the tile edge wraps back in additively.
+ * area ratio is the light concentration. Rendered as a repeating 17 m tile,
+ * drawn 3×3 instanced so light that refracts across the tile edge wraps back
+ * in additively.
  *
  * This one texture is THE glint source: floor caustics, wall caustics via
  * `receivedShadowNode`, and the god-ray march all sample it.
@@ -125,6 +125,10 @@ export class CausticsPass {
     renderer.setRenderTarget(this.renderTarget)
     void renderer.render(this.scene, this.camera)
     renderer.setRenderTarget(null)
+  }
+
+  dispose(): void {
+    this.renderTarget.dispose()
   }
 }
 

@@ -45,6 +45,12 @@
   `normalNode`.
 - Do **not** call `.level()` / `.blur()` on a ReflectorNode — they clone the
   node and clones never receive the live RT texture. Set `levelNode` directly.
+- The pool reflector has `bounces: false` and reuses its scene texture for one
+  intervening application frame. Animated ripple UVs continue every frame, so
+  the soft mip-3 mirror stays fluid while its secondary scene render is capped
+  at half display cadence. The virtual camera disables the main-detail layer
+  (bulk fish, particulates, bubbles, jellies); architectural silhouettes, sky,
+  lighting, hero wildlife, and the ceiling remain reflected.
 - The basin is a lathed open **ring**; the original capped cylinder put a
   marble lid 3 cm above the water and hid the pool entirely (looked like a
   bright marble disc — cost several debugging rounds).
@@ -57,6 +63,9 @@
   "gold balloon" mass was partly this). Tube radii are constants in meters.
 - `SlotWriter.compile` sets `castShadow = false` on transparent slots — glass
   roofs/domes were throwing fully opaque plywood shadows.
+- Park assembly uses 72 m material-slot chunks. Batching remains bounded by
+  material within each cell, but camera and shadow frusta can reject distant
+  districts instead of submitting one park-wide marble/brass mesh.
 - Benches viewed end-on read as a single iron hoop (both scroll sides line
   up); intentional, but seat-facing choices should consider the main view axis.
 

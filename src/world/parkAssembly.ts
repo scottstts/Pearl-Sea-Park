@@ -15,6 +15,8 @@ import { cameraPosition, float, mix, normalGeometry, normalize, positionWorld, r
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
+import { cadenceReflector } from '../render/cadencedReflector'
+import type { CadencedReflectorSnapshot } from '../render/cadencedReflector'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from './districts/atrium'
@@ -34,6 +36,8 @@ export class ParkAssemblySystem implements GameSystem {
   private readonly timeUniform = uniform(0)
   private poolWater: Mesh | null = null
   private poolReflectionDistance = 180
+  private reflectionSnapshot: (() => CadencedReflectorSnapshot) | null = null
+  private debugCanvas: HTMLCanvasElement | null = null
 
   constructor(services: DistrictServices) {
     this.services = services
@@ -44,7 +48,7 @@ export class ParkAssemblySystem implements GameSystem {
     const lib = materials.lib
     if (!lib) throw new Error('ParkAssemblySystem requires materials')
     const kit = new ArchKit(lib)
-    const w = new SlotWriter()
+    const w = new SlotWriter(72)
     const group = new Object3D()
     const lights: PointLight[] = []
     const lamp = (x: number, y: number, z: number, lit = false) => {
@@ -198,7 +202,10 @@ export class ParkAssemblySystem implements GameSystem {
     const poolReflection = reflector({
       resolutionScale: ctx.quality.params.reflectorResolutionScale,
       generateMipmaps: true,
+      bounces: false,
     })
+    this.reflectionSnapshot = cadenceReflector(poolReflection, 2)
+    if (ctx.flags.debug) this.debugCanvas = ctx.renderer.domElement
     poolReflection.target.rotateX(-Math.PI / 2)
     const reflectionUv = poolReflection.uvNode as unknown as Node<'vec2'>
     // Keep the lookup wobble tiny — big screen-space offsets alias the
@@ -361,10 +368,16 @@ export class ParkAssemblySystem implements GameSystem {
       const dz = ctx.camera.position.z - this.poolWater.position.z
       this.poolWater.visible = dx * dx + dz * dz <= this.poolReflectionDistance ** 2
     }
+    if (this.debugCanvas && ctx.time.frame % 60 === 0) {
+      this.debugCanvas.dataset.poolReflection = JSON.stringify(this.reflectionSnapshot?.())
+    }
   }
 
   dispose(ctx: GameContext): void {
     if (this.group) ctx.scene.remove(this.group)
     this.poolWater = null
+    this.reflectionSnapshot = null
+    if (this.debugCanvas) delete this.debugCanvas.dataset.poolReflection
+    this.debugCanvas = null
   }
 }

@@ -91,7 +91,7 @@ export class WhalePass {
     const bodyMesh = new Mesh(geometry, material)
     bodyMesh.castShadow = true
     bodyMesh.receiveShadow = true
-    bodyMesh.frustumCulled = false
+    bodyMesh.frustumCulled = true
     bodyMesh.name = 'wildlife-whale:body'
 
     const body = new Object3D()

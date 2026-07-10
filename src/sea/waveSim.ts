@@ -18,7 +18,7 @@ import {
   vec4,
 } from 'three/tsl'
 import type { Rng } from '../core/prng'
-import { createButterflyTexture, createFrequencyTexture, PackedIFFT } from './fftCompute'
+import { createFrequencyTexture, PackedIFFT } from './fftCompute'
 import { cascadeBands, createSpectrumTexture, DEFAULT_SEA_STATE } from './oceanSpectrum'
 import type { SeaState } from './oceanSpectrum'
 
@@ -57,8 +57,9 @@ function createMapTexture(n: number): StorageTexture {
 /**
  * Three-cascade spectral wave simulation (spectral-ocean reference).
  * Per frame: evolve h0→h(k,t) packed [height | horizontal], run packed IFFTs
- * with per-stage submission boundaries, then assemble displacement/derivative
- * maps with finite differences, Jacobian, and persistent foam history.
+ * in workgroup memory with one submission per axis, then assemble
+ * displacement/derivative maps with finite differences, Jacobian, and
+ * persistent foam history.
  *
  * The maps drive the ocean surface, the Silver Ceiling, the caustics
  * projector, and god-ray flicker — one wave field, every consumer.
@@ -82,7 +83,6 @@ export class WaveSim {
     const logN = Math.log2(n)
     const mask = uint(n - 1)
     const shift = uint(logN)
-    const butterfly = createButterflyTexture(n)
     const bands = cascadeBands(patchLengths, boundaryFactor)
 
     const cellOf = () => {
@@ -100,7 +100,7 @@ export class WaveSim {
       )
       const freqPing = createFrequencyTexture(n)
       const freqPong = createFrequencyTexture(n)
-      const ifft = new PackedIFFT(butterfly, freqPing, freqPong, n)
+      const ifft = new PackedIFFT(freqPing, freqPong, n)
       const displacementMaps: [StorageTexture, StorageTexture] = [
         createMapTexture(n),
         createMapTexture(n),
@@ -233,7 +233,8 @@ export class WaveSim {
     // Evolve all cascades (independent — one submission).
     renderer.compute(this.cascades.map((c) => c.evolve))
 
-    // FFT stages: batch the same stage across cascades; hard boundary between stages.
+    // Workgroup-shared row/column transforms: one submission per axis, with
+    // explicit barriers between every radix-2 butterfly stage.
     const stageCount = this.cascades[0].ifft.stages.length
     for (let stage = 0; stage < stageCount; stage++) {
       renderer.compute(this.cascades.map((c) => c.ifft.stages[stage]))

@@ -7,7 +7,7 @@ import {
   Vector4,
 } from 'three'
 import type { DirectionalLight, DirectionalLightShadow } from 'three'
-import { ShadowBaseNode, ShadowNode } from 'three/webgpu'
+import { NodeUpdateType, ShadowBaseNode, ShadowNode } from 'three/webgpu'
 import type { Node, NodeBuilder, NodeFrame } from 'three/webgpu'
 import {
   Fn,
@@ -94,11 +94,14 @@ export interface ShadowClipmapOptions {
   updateBudget?: number
   maxCacheAge?: number
   directionEpsilon?: number
+  /** Maximum age of a dynamic near map before moving casters refresh it. */
+  dynamicRefreshFrames?: number
 }
 
 export interface ShadowClipmapSnapshot {
   textureCount: number
   dynamicLevels: number
+  dynamicRefreshFrames: number
   updateBudget: number
   budgetBefore: number
   budgetAfter: number
@@ -159,6 +162,7 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   readonly dynamicLevels: number
   readonly updateBudget: number
   readonly maxCacheAge: number
+  readonly dynamicRefreshFrames: number
 
   private readonly levelMapSizes: readonly number[]
   private readonly halfWidths: number[] = []
@@ -198,7 +202,12 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     this.dynamicLevels = Math.round(clamp(options.dynamicLevels ?? 1, 0, this.levels))
     this.updateBudget = Math.max(1, Math.round(options.updateBudget ?? 1))
     this.maxCacheAge = Math.max(0, Math.round(options.maxCacheAge ?? 180))
+    this.dynamicRefreshFrames = Math.max(1, Math.round(options.dynamicRefreshFrames ?? 2))
     this.directionCos = Math.cos(options.directionEpsilon ?? 0.002)
+    // A planar reflector starts a nested render. These world-space clipmaps
+    // are camera-independent once rendered, so every render in one app frame
+    // must reuse the same committed maps.
+    this.updateBeforeType = NodeUpdateType.FRAME
   }
 
   attach(): this {
@@ -296,7 +305,7 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
         || state.desiredZ !== state.centerZ
       const expired = this.maxCacheAge > 0 && state.age >= this.maxCacheAge
       let dirtyReasons = 0
-      if (dynamic) dirtyReasons |= DIRTY_DYNAMIC
+      if (dynamic && state.age >= this.dynamicRefreshFrames) dirtyReasons |= DIRTY_DYNAMIC
       if (!state.valid) dirtyReasons |= DIRTY_INVALID
       if (state.forceDirty) dirtyReasons |= DIRTY_FORCED
       if (moved) dirtyReasons |= DIRTY_MOVED
@@ -367,6 +376,7 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     return {
       textureCount: this.levels,
       dynamicLevels: this.dynamicLevels,
+      dynamicRefreshFrames: this.dynamicRefreshFrames,
       updateBudget: this.updateBudget,
       budgetBefore: this.budgetBefore,
       budgetAfter: this.budgetAfter,

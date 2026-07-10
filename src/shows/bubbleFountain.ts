@@ -28,6 +28,7 @@ import {
   vec4,
 } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
+import { markMainDetail } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { SeaMediumSystem } from '../sea/medium'
@@ -243,6 +244,7 @@ export class BubbleFountainSystem implements GameSystem {
     bubbles.frustumCulled = false
     bubbles.castShadow = false
     bubbles.receiveShadow = false
+    markMainDetail(bubbles)
     bubbles.name = 'show:bubble-pool'
     this.group.add(bubbles)
   }
@@ -298,6 +300,7 @@ export class BubbleFountainSystem implements GameSystem {
     shafts.frustumCulled = false
     shafts.castShadow = false
     shafts.receiveShadow = false
+    markMainDetail(shafts)
     shafts.name = 'show:light-shafts'
     this.group.add(shafts)
   }

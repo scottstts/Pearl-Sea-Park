@@ -1,16 +1,14 @@
 import {
   AdditiveBlending,
-  HalfFloatType,
   InstancedMesh,
-  RGBAFormat,
   TetrahedronGeometry,
 } from 'three'
 import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu'
 import type { Node } from 'three/webgpu'
 import {
   Fn,
+  If,
   Loop,
-  abs,
   cameraPosition,
   cameraProjectionMatrixInverse,
   cameraWorldMatrix,
@@ -24,8 +22,6 @@ import {
   positionGeometry,
   positionWorld,
   pow,
-  rtt,
-  screenSize,
   screenUV,
   sin,
   smoothstep,
@@ -38,6 +34,7 @@ import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { RenderPipelineSystem } from '../render/pipeline'
+import { markMainDetail } from '../render/layers'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
 import { CausticsPass, causticWorldSample } from './caustics'
 import { currentFlow } from './current'
@@ -85,7 +82,6 @@ export class SeaMediumSystem implements GameSystem {
     this.pipeline.debugNodes.caustics = vec4(caustics.textureNode.rgb, 1)
 
     const godraySteps = ctx.quality.params.godraySteps
-    const rayResolutionScale = ctx.quality.params.godrayResolutionScale
     const submerged = this.submerged
 
     // ── HDR composite: fog + god rays, spliced before bloom ───────────────
@@ -119,9 +115,11 @@ export class SeaMediumSystem implements GameSystem {
         return vec4(mix(scene, fogged, submerged), 1)
       })()
 
-      // Ray contribution is marched into a reduced-resolution RGBA target;
-      // alpha carries linear depth for full-resolution bilateral recovery.
-      const rayPacked = Fn(() => {
+      // Preserve the pre-S14 full-resolution mechanism. The caustic field's
+      // fine separated shafts depend on independent per-output-pixel ray
+      // integration; a reduced target has no velocity/history contract with
+      // which to reconstruct that signal without mud, grain, or tile patterns.
+      const resolvedRays = Fn(() => {
         const dist = viewZ.negate().min(3500).toVar()
         const ndc = vec2(screenUV.x.mul(2).sub(1), float(1).sub(screenUV.y).mul(2).sub(1))
         const far4 = cameraProjectionMatrixInverse.mul(vec4(ndc, 1, 1))
@@ -135,42 +133,25 @@ export class SeaMediumSystem implements GameSystem {
           sin(screenUV.x.mul(1741.37).add(screenUV.y.mul(921.13))).mul(43758.55),
         )
         const shaft = float(0).toVar()
-        Loop({ start: 0, end: godraySteps }, (loopVars) => {
-          const i = (loopVars as { i: Node<'int'> }).i
-          const t = stepLength.mul(float(i).add(jitter))
-          const samplePos = cameraPosition.add(rayDir.mul(t))
-          const light = sampler(samplePos).g
-          shaft.addAssign(light.mul(exp(t.mul(-0.03))))
+        // `submerged` is uniform across the draw, so this is a coherent branch:
+        // it preserves the exact underwater loop while eliminating all caustic
+        // texture samples from above-water frames.
+        If(submerged.greaterThan(0.001), () => {
+          Loop({ start: 0, end: godraySteps }, (loopVars) => {
+            const i = (loopVars as { i: Node<'int'> }).i
+            const t = stepLength.mul(float(i).add(jitter))
+            const samplePos = cameraPosition.add(rayDir.mul(t))
+            const light = sampler(samplePos).g
+            shaft.addAssign(light.mul(exp(t.mul(-0.03))))
+          })
         })
         const interiorKeep = float(1).sub(this.interior.mul(0.94))
         const rays = sunColorUniform
           .mul(shaft.mul(stepLength).mul(0.007))
           .mul(interiorKeep)
           .mul(submerged)
-        return vec4(rays, dist.div(3500).clamp(0, 1))
+        return rays
       })()
-      const rayTarget = rtt(rayPacked, null, null, {
-        type: HalfFloatType,
-        format: RGBAFormat,
-        depthBuffer: false,
-      }).setResolutionScale(rayResolutionScale)
-      rayTarget.setName('godRaysHalfResolution')
-
-      const bilateralRays = Fn(() => {
-        const depth = viewZ.negate().min(3500).div(3500).clamp(0, 1)
-        const texel = vec2(1).div(screenSize.mul(rayResolutionScale))
-        const center = rayTarget.sample(screenUV)
-        const raySum = center.rgb.toVar()
-        const weightSum = float(1).toVar()
-        for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]] as const) {
-          const sample = rayTarget.sample(screenUV.add(texel.mul(vec2(ox, oy))))
-          const weight = exp(abs(sample.a.sub(depth)).mul(-120)).mul(0.68)
-          raySum.addAssign(sample.rgb.mul(weight))
-          weightSum.addAssign(weight)
-        }
-        return vec4(raySum.div(weightSum), 1)
-      })()
-      const resolvedRays = bilateralRays.rgb
       const combined = vec4(foggedNode.rgb.add(resolvedRays), 1)
       this.pipeline.debugNodes.rays = vec4(resolvedRays, 1)
       this.pipeline.debugNodes['no-rays'] = foggedNode
@@ -242,14 +223,15 @@ export class SeaMediumSystem implements GameSystem {
     const mesh = new InstancedMesh(new TetrahedronGeometry(1, 0), material, count)
     mesh.frustumCulled = false
     mesh.visible = false
+    markMainDetail(mesh)
     ctx.scene.add(mesh)
     this.particulates = mesh
   }
 
   update(ctx: GameContext, dt: number): void {
     this.timeUniform.value = ctx.time.elapsed
+    // Always project: caustics stay visible through the surface from above.
     this.caustics?.update(ctx.renderer)
-
     const below = ctx.camera.position.y < 0
     const target = below ? 1 : 0
     const current = this.submerged.value as number
@@ -259,5 +241,7 @@ export class SeaMediumSystem implements GameSystem {
 
   dispose(ctx: GameContext): void {
     if (this.particulates) ctx.scene.remove(this.particulates)
+    this.caustics?.dispose()
+    this.caustics = null
   }
 }

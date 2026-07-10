@@ -30,6 +30,7 @@ import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { Rng } from '../core/prng'
 import type { GameContext } from '../runtime/context'
+import { markMainDetail } from '../render/layers'
 import { currentFlow } from '../sea/current'
 import type { SeaMediumSystem } from '../sea/medium'
 import type { DistrictServices } from '../world/districts/atrium'
@@ -228,7 +229,7 @@ export class AmbientLife {
     const smallMaterial = this.createWingMaterial(vec3(0.18, 0.29, 0.31), 0.14)
     const smallRays = new InstancedMesh(smallGeometry, smallMaterial, 5)
     smallRays.instanceMatrix.setUsage(DynamicDrawUsage)
-    smallRays.frustumCulled = false
+    smallRays.frustumCulled = true
     smallRays.castShadow = true
     smallRays.receiveShadow = true
     smallRays.name = 'wildlife-rays'
@@ -263,7 +264,7 @@ export class AmbientLife {
     const manta = new Mesh(mantaGeometry, mantaMaterial)
     manta.castShadow = true
     manta.receiveShadow = true
-    manta.frustumCulled = false
+    manta.frustumCulled = true
     manta.name = 'wildlife-manta'
     this.manta = manta
     this.group.add(manta)
@@ -304,7 +305,7 @@ export class AmbientLife {
     this.medium.applyCaustics(material, 1)
     const turtles = new InstancedMesh(geometry, material, 8)
     turtles.instanceMatrix.setUsage(DynamicDrawUsage)
-    turtles.frustumCulled = false
+    turtles.frustumCulled = true
     turtles.castShadow = true
     turtles.receiveShadow = true
     turtles.name = 'wildlife-turtles'
@@ -407,10 +408,12 @@ export class AmbientLife {
     material.opacityNode = float(bioluminescent ? 0.78 : 0.58)
     this.medium.applyCaustics(material, bioluminescent ? 0.2 : 0.65)
     mesh.instanceMatrix.needsUpdate = true
-    mesh.frustumCulled = false
+    mesh.computeBoundingSphere()
+    mesh.frustumCulled = true
     mesh.castShadow = false
     mesh.receiveShadow = false
     mesh.name = bioluminescent ? 'wildlife-jellies:grotto' : 'wildlife-jellies:court'
+    markMainDetail(mesh)
     this.group.add(mesh)
     return { mesh, material }
   }
@@ -457,10 +460,12 @@ export class AmbientLife {
     material.colorNode = mix(vec3(0.38, 0.18, 0.08), vec3(0.86, 0.54, 0.18), swayWeight)
     this.medium.applyCaustics(material, 1)
     mesh.instanceMatrix.needsUpdate = true
-    mesh.frustumCulled = false
+    mesh.computeBoundingSphere()
+    mesh.frustumCulled = true
     mesh.castShadow = false
     mesh.receiveShadow = false
     mesh.name = 'wildlife-seahorses'
+    markMainDetail(mesh)
     this.group.add(mesh)
     this.denseDraws.push({ mesh, material })
   }
@@ -486,6 +491,7 @@ export class AmbientLife {
       draw.mesh.setMatrixAt(i, this.matrices)
     }
     draw.mesh.instanceMatrix.needsUpdate = true
+    draw.mesh.computeBoundingSphere()
   }
 
   private updateManta(elapsed: number, amount: number, phase: number): void {
@@ -529,6 +535,7 @@ export class AmbientLife {
       draw.mesh.setMatrixAt(i, this.matrices)
     }
     draw.mesh.instanceMatrix.needsUpdate = true
+    draw.mesh.computeBoundingSphere()
   }
 
   private composeAlong(position: Vector3, tangent: Vector3, uniformScale: number): void {

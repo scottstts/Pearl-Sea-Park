@@ -31,7 +31,10 @@ second show clock.
 
 `render/cachedShadowClipmaps.ts` replaces the old single 180 m camera-following
 box with four ordinary shadow maps covering 28, 84, 252, and 650 m half-widths.
-Only level 0 is dynamic. Cached levels publish committed centers, snap X/Y to
+Only level 0 is dynamic. The clipmap owner is frame-scoped, so nested planar
+reflection renders reuse the same committed maps; the dynamic level refreshes
+at most every two stationary frames while snapped camera movement and explicit
+invalidation remain immediate. Cached levels publish committed centers, snap X/Y to
 their actual texel footprints, quantize Z, stagger maximum ages, cross-fade
 inside a guard band, and consume one ordinary refresh budget per frame.
 Forced spatial invalidation bypasses that budget. Normal bias scales by world
@@ -47,19 +50,26 @@ and render counts. The fixed sun never causes continuous direction refreshes.
   weighted log average, highlight clamp, asymmetric adaptation.
 - `render/grade.ts`: actual generated 32³ RGBA8 LUT after the single AgX+sRGB
   output transform; vignette remains spatial and therefore outside the LUT.
-- God rays march into a tiered reduced-resolution RGBA16F target and recover
-  with depth-aware bilateral taps.
-- Tidal Court's planar reflection uses per-tier resolution and the water draw
-  is distance-gated at 150/185/220 m. Basin geometry remains visible.
-- `canvas.dataset.performance` reports CPU frame EMA, available GPU timestamp,
-  draw/primitive/compute counts, render targets, quality, render scale, and
-  GPU-resource bytes. Debug stats enable GPU tracking.
+- God rays retain their pre-S14 full-output-resolution march. The attempted
+  reduced-resolution target was rejected because its fine caustic shafts cannot
+  be spatially reconstructed without mud or visible sampling structure.
+- Tidal Court's planar reflection uses per-tier resolution, disables recursive
+  bounces, omits main-only bulk detail, reuses its texture every other frame,
+  and remains distance-gated at 150/185/220 m. Basin geometry remains visible.
+- `canvas.dataset.performance` reports CPU submission time, presented frame
+  time/FPS, asynchronous render/compute/combined GPU timestamps, draw and
+  primitive counts, render targets, quality, render scale, and GPU-resource bytes.
 
 ## Quality selection and pause
 
 Before any tier-sized resource exists, `core/autoQuality.ts` runs a real
 131072-element WebGPU storage kernel (one warm compile + three timed queue-
-complete dispatches). Its automatic result is cached. URL `?tier=`, then a
+complete dispatches) only as a starting hint. Auto v2 records the render scale
+the representative scene actually sustains, but reopens at no less than 0.95;
+three severe floor-bound samples lower the next session's feature tier. Live
+control uses presentation cadence, not asynchronous CPU submission time. It
+sheds scale under sustained missed frames, recovers with sparse near-native
+probes, and never falls below the tier's 0.82/0.88/0.90 floor. URL `?tier=`, then a
 persistent pause-card override, take precedence. The pause card applies volume
 live; changing tier reloads because storage counts and render-target sizes are
 construction-time contracts.

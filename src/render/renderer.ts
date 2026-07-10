@@ -12,7 +12,14 @@ export async function webgpuAvailable(): Promise<boolean> {
 }
 
 export async function createRenderer(canvas: HTMLCanvasElement): Promise<WebGPURenderer> {
-  const renderer = new WebGPURenderer({ canvas, antialias: true })
+  const renderer = new WebGPURenderer({
+    canvas,
+    // The scene MRT owns 4x MSAA. Multisampling the final fullscreen canvas
+    // pass would add a second resolve without improving geometry edges.
+    antialias: false,
+    powerPreference: 'high-performance',
+    trackTimestamp: true,
+  })
   await renderer.init()
 
   // WebGPURenderer silently falls back to WebGL2 when WebGPU is missing.

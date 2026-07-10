@@ -95,7 +95,11 @@ Skills: threejs-spectral-ocean, threejs-water-optics, threejs-atmosphere-aerial-
 - **Silver Ceiling (from below):** side-aware Fresnel with total internal reflection outside the critical angle, **Snell's window** overhead (the refracted circle of sky + sun disc), crest scatter glow. Visible from everywhere in the park; the Observatory exists to stare at it.
 - **Aquatic perspective** (`sea/medium`): analytic depth+distance absorption/inscattering (turquoise → deep blue; darker looking down, brighter looking up), applied to every material via a shared TSL fog node. Visibility ~250 m (dream clarity), tuned so the far districts float in haze and the drop-off reads as infinite.
 - **Caustics:** generated from the wave normal field (differential-area method) into a 1024² tile, world-projected along the sun direction over ~40 m tiles, 3-tap chromatic offset, attenuated with depth; modulated by the cascaded shadow system so caustics never crawl through shadowed interiors. This is the signature "glints cast down" feature — it touches every lit surface in the park.
-- **God rays:** low-step volumetric slab raymarch (surface → seabed) with blue-noise + temporal filter, density modulated by the wave field and sun shadowing; composited by depth. Quality-tiered step count.
+- **God rays:** low-step full-output-resolution volumetric slab raymarch
+  (surface → seabed), density modulated by the wave field and sun shadowing;
+  composited by depth with a quality-tiered step count. A future temporal path
+  is acceptable only with owned velocity, history, and disocclusion rejection;
+  spatial downsampling alone fails the reference-image contract.
 - **Particulates:** camera-following 60 m wrap-around volume, ~30 k instanced motes (marine snow, sparkle plankton) + bubble emitters at vents/props; all drift on the current field.
 - **Current field** (`sea/current`): global curl-noise flow sampled by kelp, banners, ropes, jellies, particulates, gondola sway — the "nothing is ever still" pillar.
 - **Waterline crossing** (bell descent, wheel crest, coaster breach): above/below state swap for fog + audio, meniscus distortion band at the interface, droplet streaks sliding down glass after each breach (skill: threejs-precipitation-surfaces patterns).
@@ -174,7 +178,7 @@ The crowd. Skill: WebGPU compute via TSL throughout.
 
 ## 14. Performance plan
 
-Target: 60 fps at 1440p-class output on Apple-Silicon Pro-class / RTX-3070-class hardware, with dynamic resolution scaling (0.7–1.0) and three quality tiers (auto-benchmarked on first load, overridable in pause).
+Target: 60 fps at 1440p-class output on Apple-Silicon Pro-class / RTX-3070-class hardware, with dynamic resolution scaling bounded near native by tier (0.82/0.88/0.90–1.0) and three quality tiers (auto-benchmarked on first load, overridable in pause).
 
 Frame budget (16.6 ms): opaque scene ~5.0 · sea surface + FFT compute ~1.5 · caustics + god rays ~2.5 · GTAO ~1.2 · bloom/grade ~1.0 · shadows (cached, amortized) ~1.8 · wildlife compute ~1.0 · physics (CPU, off-thread where possible) ~1.0 · headroom ~1.5.
 
@@ -226,6 +230,8 @@ Dependency-ordered stages; each lands at final quality for its scope and leaves 
 
 - **TSL/WebGPU API churn** in three releases → pin the installed minor version; upgrade deliberately, never mid-stage; note breakages in notes.md.
 - **Coaster train constraint stability** at 26 m/s → primary approach is spline-constrained dynamics (only longitudinal DOF simulated), which cannot explode; full rigid-body articulation only where it's safe (station, sway). Escalate to Jolt only if needed, after asking.
-- **Caustics + god rays cost** → both are tiered and temporally amortized by design from day one, not retrofitted.
+- **Caustics + god rays cost** → step counts and caustic texture sizes remain
+  tiered, but the ray image stays full output resolution. Recover performance
+  from other systems until a validated temporal reconstruction contract exists.
 - **15 k boids vs. draw overhead** → single instanced draw per species, compute-driven; SDF resolution kept coarse (park-scale avoidance, not per-baluster).
 - **Scope is genuinely large** → the stage gates + postcard contract keep every increment shippable-quality; parkPlan data-driven layout means content grows without code churn.

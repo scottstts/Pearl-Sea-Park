@@ -5,7 +5,12 @@ One wave field, every consumer: `sea/waveSim.ts` produces per-cascade displaceme
 Architecture (spectral-ocean skill, WebGPU/TSL production tier):
 
 - 3 cascades, 256², patches [250, 17, 5] m, boundary factor 6; JONSWAP × TMA × directional spread spectrum built CPU-side per cascade from `rng.fork('ocean-cascade-N')` (deterministic; Gaussian pairs consumed even out-of-band to keep bins seed-stable).
-- Packed IFFT: one texture carries two complex fields (.xy height, .zw horizontal Dx+iDz) through shared butterfly stages; per-stage `renderer.compute()` boundaries, same-stage batching across cascades. Butterfly encodes bottom-wing twiddle as −w so the kernel is branchless.
+- Packed IFFT: one texture carries two complex fields (.xy height, .zw
+  horizontal Dx+iDz). Each 256-point row/column transform lives in one
+  workgroup array with explicit barriers between all radix-2 stages. Horizontal
+  and vertical axes remain separate storage-visibility submissions, batched
+  across cascades. The transform therefore uses two FFT submissions rather
+  than sixteen while preserving the exact centered field and hard-gate tests.
 - Assembly kernel applies the (−1)^(x+y) centering sign (per-texel AND per-neighbor when finite-differencing), builds fold-aware derivatives, Jacobian, and persistent foam history (`min(J, prev + dt·rate/max(J,0.5))`, clamped ≤ 2).
 - **FFT hard gate**: `runFftSelfTest` runs under `?debug` — impulse → constant and one-bin → cos/sin, errors ~1e-8. Readback goes through a **storage buffer** (`getArrayBufferAsync`), never a material blit.
 

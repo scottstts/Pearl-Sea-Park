@@ -18,3 +18,13 @@ Choices beyond the code:
 - **Type boundary:** @types/three TSL generics (`Node<"vec4">` etc.) churn per release — cross-module node handoffs type as `object` and cast once at the boundary (`asColor` in grade.ts). Do not thread precise TSL generic types through system APIs.
 - `?pass=` views: `ao · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`, plus the fountain field modes. `?view`/`?pass` skip the enter button (validation mode).
 - Dynamic resolution = `setPixelRatio(base × quality.renderScale)`; all pass targets follow the drawing-buffer size automatically. The base is capped by DPR 1.7 **and** a 4,000,000-pixel drawing-buffer budget (`recommendedPixelRatio`), recomputed on resize before dynamic scale is applied.
+- Dynamic resolution is driven by the actual animation-frame interval, not CPU
+  command-submission time. It is an emergency pressure valve bounded to
+  0.82/0.88/0.90 by tier so it cannot become the primary performance strategy.
+  The recovery threshold includes healthy 60 Hz v-sync cadence, recovery probes
+  are deliberately sparse, and a cached Auto session never reopens below 0.95.
+  CPU time, presented frame time/FPS, and asynchronous WebGPU render/compute
+  timestamps are separate diagnostics (`render/performanceMonitor.ts`).
+- The scene MRT remains 4× MSAA. The default canvas is deliberately not
+  multisampled because its only geometry is the final fullscreen presentation
+  pass; enabling both would pay for a redundant second resolve.

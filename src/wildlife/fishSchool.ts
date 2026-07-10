@@ -2,8 +2,8 @@ import {
   Color,
   DoubleSide,
   InstancedMesh,
-  Matrix4,
   Object3D,
+  Sphere,
   Vector3,
 } from 'three'
 import {
@@ -38,6 +38,7 @@ import {
 } from 'three/tsl'
 import type { Rng } from '../core/prng'
 import type { GameContext } from '../runtime/context'
+import { markMainDetail } from '../render/layers'
 import { currentFlow } from '../sea/current'
 import type { SeaMediumSystem } from '../sea/medium'
 import { parkFootprintSignedDistance } from '../world/parkPlan'
@@ -51,6 +52,7 @@ const NEIGHBOR_OFFSETS = [1, 7, 19, 43, 89, 157, 271, 389] as const
 
 interface SpeciesDraw {
   species: FishSpecies
+  schoolIndex: number
   offset: number
   count: number
   mesh: InstancedMesh
@@ -75,7 +77,7 @@ export interface FishSchoolSnapshot {
  * a stable, well-spread cohort inside its 500-member school. That preserves
  * separation/alignment/cohesion behavior at 15k without an O(N²) neighbor
  * pass or atomic grid contention. Positions and velocities ping-pong in GPU
- * storage buffers and feed three species draws directly.
+ * storage buffers and feed one independently cullable draw per school.
  */
 export class FishSchoolSystem {
   readonly group = new Object3D()
@@ -91,6 +93,8 @@ export class FishSchoolSystem {
   private readonly groupCenters: StorageBufferNode<'vec4'>
   private readonly computeSteps: [ComputeNode, ComputeNode]
   private readonly draws: SpeciesDraw[] = []
+  private readonly geometries = new Set<ReturnType<typeof createFishGeometry>>()
+  private readonly schoolHomes: Float32Array
   private readonly fields = createWildlifeFieldMaps()
   private readonly timeUniform = uniform(0)
   private readonly dtUniform = uniform(1 / 60)
@@ -103,6 +107,9 @@ export class FishSchoolSystem {
   private readonly attractorRadiusUniform = uniform(1)
   private ping = 0
   private stepCount = 0
+  private simulationAccumulator = 0
+
+  private static readonly SIMULATION_DT = 1 / 30
 
   constructor(ctx: GameContext, medium: SeaMediumSystem) {
     this.medium = medium
@@ -116,6 +123,7 @@ export class FishSchoolSystem {
     }
 
     const initialized = createInitialState(ctx.rng.fork('wildlife-fish'), this.schoolCount)
+    this.schoolHomes = initialized.centers
     this.positions = [
       new StorageInstancedBufferAttribute(initialized.positions.slice(), 4),
       new StorageInstancedBufferAttribute(initialized.positions.slice(), 4),
@@ -285,89 +293,106 @@ export class FishSchoolSystem {
       'candy-stripe': [0.82, 0.2, 0.22],
     }
     const species: FishSpecies[] = ['silverside', 'trevally', 'candy-stripe']
-    let offset = 0
+    let schoolIndex = 0
     for (const name of species) {
-      const count = this.speciesCounts[name]
       const geometry = createFishGeometry(name)
-      const material = new MeshStandardNodeMaterial()
-      material.side = DoubleSide
-      material.roughness = name === 'silverside' ? 0.22 : 0.38
-      material.metalness = name === 'silverside' ? 0.58 : 0.14
-      material.envMapIntensity = 0.8
-      material.color = new Color(0xffffff)
-      const globalIndex = instanceIndex.add(offset)
-      const activePosition = mix(
-        this.positionNodes[0].element(globalIndex),
-        this.positionNodes[1].element(globalIndex),
-        this.readBufferUniform,
-      ).xyz
-      const activeVelocity = mix(
-        this.velocityNodes[0].element(globalIndex),
-        this.velocityNodes[1].element(globalIndex),
-        this.readBufferUniform,
-      ).xyz
-      const morphWeight = attribute('morphWeight', 'float') as unknown as Node<'float'>
-      const phase = hash(globalIndex.add(1031)).mul(Math.PI * 2)
-      const tail = this.timeUniform.mul(name === 'silverside' ? 10.5 : 8.2).add(phase).sin()
-      const local = positionLocal
-        .add(vec3(tail.mul(morphWeight).mul(0.16), 0, 0))
-        .toVar()
-      const forward = normalize(activeVelocity.add(vec3(0.0001, 0, 0.0001)))
-      const right = normalize(cross(vec3(0, 1, 0), forward).add(vec3(0.0001, 0, 0)))
-      const up = normalize(cross(forward, right))
-      material.positionNode = activePosition
-        .add(right.mul(local.x))
-        .add(up.mul(local.y))
-        .add(forward.mul(local.z))
-      material.normalNode = varying(
-        normalize(right.mul(normalLocal.x).add(up.mul(normalLocal.y)).add(forward.mul(normalLocal.z))),
-      )
-
-      const base = vec3(...colors[name])
-      if (name === 'candy-stripe') {
-        const stripe = positionGeometry.z.mul(22).sin().mul(0.5).add(0.5).smoothstep(0.42, 0.58)
-        material.colorNode = mix(base, vec3(0.94, 0.82, 0.58), stripe)
-      } else if (name === 'silverside') {
-        const flash = varying(
-          forward.dot(vec3(0.35, 0.2, 0.91).normalize()).abs().mul(0.22).add(0.82),
+      this.geometries.add(geometry)
+      const metrics = geometryMetrics(geometry)
+      const speciesSchools = this.speciesCounts[name] / SCHOOL_SIZE
+      for (let speciesSchool = 0; speciesSchool < speciesSchools; speciesSchool++) {
+        const offset = schoolIndex * SCHOOL_SIZE
+        const material = new MeshStandardNodeMaterial()
+        material.side = DoubleSide
+        material.roughness = name === 'silverside' ? 0.22 : 0.38
+        material.metalness = name === 'silverside' ? 0.58 : 0.14
+        material.envMapIntensity = 0.8
+        material.color = new Color(0xffffff)
+        const globalIndex = instanceIndex.add(offset)
+        const activePosition = mix(
+          this.positionNodes[0].element(globalIndex),
+          this.positionNodes[1].element(globalIndex),
+          this.readBufferUniform,
+        ).xyz
+        const activeVelocity = mix(
+          this.velocityNodes[0].element(globalIndex),
+          this.velocityNodes[1].element(globalIndex),
+          this.readBufferUniform,
+        ).xyz
+        const morphWeight = attribute('morphWeight', 'float') as unknown as Node<'float'>
+        const phase = hash(globalIndex.add(1031)).mul(Math.PI * 2)
+        const tail = this.timeUniform.mul(name === 'silverside' ? 10.5 : 8.2).add(phase).sin()
+        const local = positionLocal
+          .add(vec3(tail.mul(morphWeight).mul(0.16), 0, 0))
+          .toVar()
+        const forward = normalize(activeVelocity.add(vec3(0.0001, 0, 0.0001)))
+        const right = normalize(cross(vec3(0, 1, 0), forward).add(vec3(0.0001, 0, 0)))
+        const up = normalize(cross(forward, right))
+        material.positionNode = activePosition
+          .add(right.mul(local.x))
+          .add(up.mul(local.y))
+          .add(forward.mul(local.z))
+        material.normalNode = varying(
+          normalize(right.mul(normalLocal.x).add(up.mul(normalLocal.y)).add(forward.mul(normalLocal.z))),
         )
-        material.colorNode = base.mul(flash)
-      } else {
-        material.colorNode = mix(base.mul(0.68), base, positionGeometry.y.add(0.3).clamp(0, 1))
-      }
-      this.medium.applyCaustics(material, 1.05)
 
-      const mesh = new InstancedMesh(geometry, material, count)
-      const identity = new Matrix4()
-      for (let i = 0; i < count; i++) mesh.setMatrixAt(i, identity)
-      mesh.instanceMatrix.needsUpdate = true
-      mesh.frustumCulled = false
-      mesh.castShadow = false
-      mesh.receiveShadow = false
-      mesh.name = `wildlife-fish:${name}`
-      this.group.add(mesh)
-      this.draws.push({
-        species: name,
-        offset,
-        count,
-        mesh,
-        material,
-        metrics: geometryMetrics(geometry),
-      })
-      offset += count
+        const base = vec3(...colors[name])
+        if (name === 'candy-stripe') {
+          const stripe = positionGeometry.z.mul(22).sin().mul(0.5).add(0.5).smoothstep(0.42, 0.58)
+          material.colorNode = mix(base, vec3(0.94, 0.82, 0.58), stripe)
+        } else if (name === 'silverside') {
+          const flash = varying(
+            forward.dot(vec3(0.35, 0.2, 0.91).normalize()).abs().mul(0.22).add(0.82),
+          )
+          material.colorNode = base.mul(flash)
+        } else {
+          material.colorNode = mix(base.mul(0.68), base, positionGeometry.y.add(0.3).clamp(0, 1))
+        }
+        this.medium.applyCaustics(material, 1.05)
+
+        const mesh = new InstancedMesh(geometry, material, SCHOOL_SIZE)
+        mesh.instanceMatrix.needsUpdate = true
+        mesh.boundingSphere = new Sphere(new Vector3(), 32)
+        mesh.frustumCulled = true
+        mesh.castShadow = false
+        mesh.receiveShadow = false
+        mesh.name = `wildlife-fish:${name}:${schoolIndex}`
+        markMainDetail(mesh)
+        this.group.add(mesh)
+        this.draws.push({
+          species: name,
+          schoolIndex,
+          offset,
+          count: SCHOOL_SIZE,
+          mesh,
+          material,
+          metrics,
+        })
+        schoolIndex++
+      }
     }
   }
 
   update(ctx: GameContext, dt: number, heroAmount: number, heroPhase: number): void {
     this.timeUniform.value = ctx.time.elapsed
-    this.dtUniform.value = Math.min(dt, 1 / 30)
     this.playerUniform.value.copy(ctx.camera.position)
     this.heroAmountUniform.value = heroAmount
     this.heroPhaseUniform.value = heroPhase
-    ctx.renderer.compute(this.computeSteps[this.ping])
-    this.ping = this.ping === 0 ? 1 : 0
-    this.readBufferUniform.value = this.ping
-    this.stepCount++
+    this.simulationAccumulator += Math.min(dt, 0.1)
+    let steps = 0
+    while (this.simulationAccumulator >= FishSchoolSystem.SIMULATION_DT && steps < 2) {
+      this.dtUniform.value = FishSchoolSystem.SIMULATION_DT
+      ctx.renderer.compute(this.computeSteps[this.ping])
+      this.ping = this.ping === 0 ? 1 : 0
+      this.simulationAccumulator -= FishSchoolSystem.SIMULATION_DT
+      this.stepCount++
+      steps++
+    }
+    const interpolation = Math.min(
+      1,
+      this.simulationAccumulator / FishSchoolSystem.SIMULATION_DT,
+    )
+    this.readBufferUniform.value = this.ping === 1 ? interpolation : 1 - interpolation
+    this.updateDrawBounds(ctx.time.elapsed, heroAmount, heroPhase)
   }
 
   setAttractor(position: Vector3, strength: number, radius: number): void {
@@ -382,10 +407,31 @@ export class FishSchoolSystem {
 
   dispose(): void {
     for (const draw of this.draws) {
-      draw.mesh.geometry.dispose()
       draw.material.dispose()
     }
+    for (const geometry of this.geometries) geometry.dispose()
     this.fields.dispose()
+  }
+
+  private updateDrawBounds(elapsed: number, heroAmount: number, heroPhase: number): void {
+    for (const draw of this.draws) {
+      const index = draw.schoolIndex * 4
+      const phase = this.schoolHomes[index + 3]
+      const ordinaryX = this.schoolHomes[index] + Math.sin(elapsed * 0.075 + phase) * 7
+      const ordinaryY = this.schoolHomes[index + 1] + Math.sin(elapsed * 0.11 + phase * 1.7) * 1.8
+      const ordinaryZ = this.schoolHomes[index + 2] + Math.cos(elapsed * 0.063 + phase * 0.8) * 7
+      const isHero = draw.schoolIndex % 5 === 0
+      const amount = isHero ? heroAmount : 0
+      const heroX = (draw.schoolIndex % 3 - 1) * 4.2
+        + Math.sin(heroPhase * Math.PI * 4 + phase) * 1.4
+      const heroY = -18.2 + Math.sin(heroPhase * Math.PI * 2 + phase) * 1.2
+      const heroZ = 236 - heroPhase * 126
+      draw.mesh.boundingSphere?.center.set(
+        ordinaryX + (heroX - ordinaryX) * amount,
+        ordinaryY + (heroY - ordinaryY) * amount,
+        ordinaryZ + (heroZ - ordinaryZ) * amount,
+      )
+    }
   }
 
   debugSnapshot(): FishSchoolSnapshot {

@@ -5,7 +5,7 @@ import { getBookmark, parseFlags } from './core/debug'
 import { DebugOverlaySystem } from './core/debugOverlay'
 import { EventBus } from './core/events'
 import type { GameEvents } from './core/gameEvents'
-import { selectInitialQuality } from './core/autoQuality'
+import { recordAutoRuntimeSample, selectInitialQuality } from './core/autoQuality'
 import { Rng } from './core/prng'
 import { QualityState } from './core/quality'
 import { auditPostcardBookmarks } from './core/postcards'
@@ -18,6 +18,8 @@ import { PlayerSystem } from './player/player'
 import { SeatSystem } from './player/seats'
 import { RenderPipelineSystem } from './render/pipeline'
 import { createRenderer, webgpuAvailable } from './render/renderer'
+import { enableMainDetailLayer } from './render/layers'
+import { FramePerformanceMonitor } from './render/performanceMonitor'
 import { CarouselSystem } from './rides/carousel'
 import { DescentBellSystem } from './rides/descentBell'
 import { GreatWheelSystem } from './rides/greatWheel'
@@ -83,6 +85,7 @@ async function boot(): Promise<void> {
   // Far plane covers the sky dome (3400 m) and ocean skirt; near stays tight
   // for held items. WebGPU float depth keeps this ratio artifact-free.
   const camera = new PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 5000)
+  enableMainDetailLayer(camera)
 
   const ctx: GameContext = {
     renderer,
@@ -91,7 +94,7 @@ async function boot(): Promise<void> {
     events: new EventBus<GameEvents>(),
     rng: new Rng(flags.seed ?? DEFAULT_SEED),
     flags,
-    quality: new QualityState(qualitySelection.tier),
+    quality: new QualityState(qualitySelection.tier, qualitySelection.initialRenderScale),
     // The park clock begins at the gate click, not while the ticket waits.
     time: {
       elapsed: flags.fixedTime ?? 0,
@@ -188,15 +191,21 @@ async function boot(): Promise<void> {
 
   const loop = new GameLoop(ctx, registry)
   loop.renderFrame = () => pipeline.render()
-  let frameEma = 1000 / 60
-  loop.onFrameEnd = (frameMs) => {
-    frameEma += (frameMs - frameEma) * 0.05
-    ctx.quality.submitFrame(frameMs)
+  const performanceMonitor = new FramePerformanceMonitor(renderer)
+  loop.onFrameEnd = (timing) => {
+    performanceMonitor.sample(timing, ctx.time.frame)
+    ctx.quality.submitFrame(timing.frameIntervalMs, timing.nowMs)
     if (ctx.time.frame % 60 === 0) {
       const info = renderer.info
+      const performance = performanceMonitor.snapshot()
+      recordAutoRuntimeSample(
+        qualitySelection,
+        ctx.quality.tier,
+        ctx.quality.renderScale,
+        performance.presentedFrameMs,
+      )
       canvas.dataset.performance = JSON.stringify({
-        cpuFrameMs: frameEma,
-        gpuFrameMs: info.render.timestamp || null,
+        ...performance,
         tier: ctx.quality.tier,
         renderScale: ctx.quality.renderScale,
         drawCalls: info.render.drawCalls,

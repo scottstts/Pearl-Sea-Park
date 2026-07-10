@@ -90,7 +90,11 @@
 - 2026-07-10 S14 lessons (Opening Day — see systems/opening-day.md):
   - A quality tier must be chosen before tier-sized resources exist. Changing only `quality.tier` after wildlife/storage/shadow construction is false control; the pause card persists the override and reloads so every budget agrees.
   - Fixed-sun caching is only stable when shader selection reads committed map centers. Desired centers may wait behind a refresh budget; publishing them early makes the sample box drift away from cached content.
-  - The original god-ray mechanism was sound but placed at the wrong resolution. Marching the same field at reduced resolution with depth in alpha and bilateral recovery preserves causal shafts while moving the loss to thin edges.
+  - The original god-ray mechanism is resolution-defining, not merely
+    resolution-sensitive. Commit `e59ca20` moved it into a reduced target and
+    lost the reference image's fine separated shafts. Depth-aware spatial
+    reconstruction cannot recover that signal without temporal history and
+    velocity, so the accepted path is the pre-S14 full-output-resolution march.
   - Exposure readback belongs on a tiny encoded target and must be asynchronous. Reading the HDR scene directly or synchronously would turn eye adaptation into a frame stall.
   - A 3D LUT owns color relationships, not screen position. Keep the vignette after the LUT; baking it into color space is impossible.
   - Scheduled time begins at `park/entered`. Advancing `sim` behind the ticket makes every first visit start at an arbitrary point in the timetable and can consume the opening chime before audio exists.
@@ -100,3 +104,39 @@
   - A Three `Data3DTexture` needs the TSL `texture3D()` accessor. The generic `texture()` accessor declares a 2D binding and WebGPU correctly rejects its 3D view.
   - Do not write `vec3(vec4Node)` in TSL. Select `.rgb`; component-count validation occurs only while the graph is built.
   - rapier3d-compat 0.19.3's own wrapper still invokes wasm-bindgen's deprecated positional initializer (upstream issue #811). Physics filters only that exact known warning during `RAPIER.init()` and restores `console.warn` in `finally`.
+- 2026-07-10 performance pass:
+  - WebGPU command-submission time is not frame time. Dynamic resolution must
+    use animation-frame cadence (plus asynchronous GPU timestamps for evidence)
+    or it will stay at full scale during a GPU-bound single-digit presentation.
+  - A `ShadowBaseNode` is render-scoped by default. Nested reflector renders can
+    refresh custom shadows twice unless world-space cached shadows explicitly
+    switch to `NodeUpdateType.FRAME`.
+  - Reducing a planar reflector's resolution does not reduce its vertex,
+    draw-call, or shadow submission. Cache the soft reflection, disable bounces,
+    and remove bulk main-only detail from its virtual camera.
+  - Material-slot batching must retain a spatial boundary. One mesh per material
+    for an entire park defeats frustum culling in the main, shadow, and reflected
+    views; Sea Park uses 72 m slot chunks.
+  - The 256² caustic grid instanced 3×3 submits 1,179,648 triangles per update,
+    but it is part of the accepted reference mechanism. The expanded-grid rewrite
+    was not visually validated independently, so it was removed during the ray
+    restoration. Optimize this only with fixed-view caustic/ray evidence.
+  - GPU fish need explicit dynamic school bounds before restoring frustum
+    culling. Their existing ping-pong buffers also support a 30 Hz fixed solver
+    with render interpolation at no extra storage cost.
+  - The 256-point FFT now executes all radix stages inside workgroup memory with
+    explicit barriers, retaining a separate horizontal/vertical submission.
+    Never fuse those axes or remove the impulse/frequency hard gate.
+  - Presentation cadence is v-sync quantized: a 60 Hz display cannot satisfy a
+    dynamic-resolution recovery test below 13.7 ms. Keep recovery reachable at
+    healthy ~16.7 ms, probe upward slowly, cap downscaling near native resolution,
+    and never restore a prior emergency floor verbatim on the next launch.
+  - Do not spatially downsample the underwater caustic ray march. Independent
+    jitter becomes grain, spatial filtering becomes mud, shared midpoint phases
+    become coherent sheets, and ordered phases become visible tiles. Preserve
+    the full-resolution pre-`e59ca20` mechanism until the renderer owns a real
+    motion-vector/history/rejection contract for temporal reconstruction.
+  - Full-resolution ray quality does not require paying the march above water:
+    branch on the uniform submerged gate around the loop. This removes every
+    caustic texture sample in above-water frames while leaving underwater pixel
+    positions, jitter, step count, source field, and accumulation unchanged.

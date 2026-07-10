@@ -9,7 +9,6 @@ export interface QualityParams {
   /** One map per cached directional-shadow level, finest to coarsest. */
   shadowMapSizes: readonly number[]
   godraySteps: number
-  godrayResolutionScale: number
   causticsSize: number
   particulateCount: number
   seagrassDensity: number
@@ -20,10 +19,9 @@ export interface QualityParams {
 
 export const TIERS: readonly QualityParams[] = [
   {
-    renderScaleMin: 0.6,
+    renderScaleMin: 0.82,
     shadowMapSizes: [1024, 512, 512, 512],
     godraySteps: 8,
-    godrayResolutionScale: 0.34,
     causticsSize: 512,
     particulateCount: 8_000,
     seagrassDensity: 0.35,
@@ -32,10 +30,9 @@ export const TIERS: readonly QualityParams[] = [
     reflectorResolutionScale: 0.2,
   },
   {
-    renderScaleMin: 0.7,
+    renderScaleMin: 0.88,
     shadowMapSizes: [1024, 1024, 512, 512],
     godraySteps: 14,
-    godrayResolutionScale: 0.42,
     causticsSize: 1024,
     particulateCount: 18_000,
     seagrassDensity: 0.7,
@@ -44,10 +41,9 @@ export const TIERS: readonly QualityParams[] = [
     reflectorResolutionScale: 0.28,
   },
   {
-    renderScaleMin: 0.75,
+    renderScaleMin: 0.9,
     shadowMapSizes: [1024, 1024, 1024, 512],
     godraySteps: 22,
-    godrayResolutionScale: 0.5,
     causticsSize: 1024,
     particulateCount: 30_000,
     seagrassDensity: 1,
@@ -58,16 +54,22 @@ export const TIERS: readonly QualityParams[] = [
 ]
 
 const TARGET_MS = 1000 / 60
-const EMA = 0.06
+const RESPONSE_SECONDS = 0.35
+const DOWNSCALE_THRESHOLD = TARGET_MS * 1.28
+const UPSCALE_THRESHOLD = TARGET_MS * 1.08
+const DOWNSCALE_COOLDOWN_MS = 350
+const UPSCALE_COOLDOWN_MS = 4_000
 
 export class QualityState {
   tier: number
   renderScale = 1
   private frameEma = TARGET_MS
-  private cooldown = 0
+  private downscaleCooldownUntilMs = 0
+  private upscaleCooldownUntilMs = 0
 
-  constructor(initialTier: number) {
+  constructor(initialTier: number, initialRenderScale = 1) {
     this.tier = Math.max(0, Math.min(TIERS.length - 1, initialTier))
+    this.renderScale = Math.min(1, Math.max(this.params.renderScaleMin, initialRenderScale))
   }
 
   get params(): QualityParams {
@@ -78,20 +80,31 @@ export class QualityState {
    * Feed measured frame ms; nudges render scale with hysteresis.
    * Returns true when the scale changed enough that targets must resize.
    */
-  submitFrame(ms: number): boolean {
-    this.frameEma += (Math.min(ms, 100) - this.frameEma) * EMA
-    if (this.cooldown > 0) {
-      this.cooldown--
-      return false
-    }
+  submitFrame(ms: number, nowMs: number): boolean {
+    const sample = Math.min(ms, 100)
+    const alpha = 1 - Math.exp(-sample / (RESPONSE_SECONDS * 1000))
+    this.frameEma += (sample - this.frameEma) * alpha
     const before = this.renderScale
-    if (this.frameEma > TARGET_MS * 1.18) {
-      this.renderScale = Math.max(this.params.renderScaleMin, this.renderScale - 0.05)
-    } else if (this.frameEma < TARGET_MS * 0.82) {
+    if (this.frameEma > DOWNSCALE_THRESHOLD) {
+      if (nowMs < this.downscaleCooldownUntilMs) return false
+      const pressure = this.frameEma / TARGET_MS
+      const step = pressure >= 2.4 ? 0.08 : pressure >= 1.6 ? 0.05 : 0.025
+      this.renderScale = Math.max(this.params.renderScaleMin, this.renderScale - step)
+    } else if (this.frameEma <= UPSCALE_THRESHOLD) {
+      if (nowMs < this.upscaleCooldownUntilMs) return false
       this.renderScale = Math.min(1, this.renderScale + 0.025)
     }
     if (this.renderScale !== before) {
-      this.cooldown = 45
+      // Presentation cadence is v-sync quantized. A healthy 60 Hz frame is
+      // ~16.7 ms, so recovery must be possible near TARGET_MS rather than
+      // requiring an impossible sub-refresh interval. Recovery probes stay
+      // deliberately sparse to avoid visible scale oscillation.
+      if (this.renderScale < before) {
+        this.downscaleCooldownUntilMs = nowMs + DOWNSCALE_COOLDOWN_MS
+        this.upscaleCooldownUntilMs = nowMs + UPSCALE_COOLDOWN_MS
+      } else {
+        this.upscaleCooldownUntilMs = nowMs + UPSCALE_COOLDOWN_MS
+      }
       return true
     }
     return false

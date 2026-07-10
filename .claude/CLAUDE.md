@@ -31,8 +31,8 @@ renderer.setPixelRatio(Math.max(1, dpr));
 - if there are ambiguities or issues during building that you can't solve or you need to clarify, stop the job and ask me and report issues so i can help you (like installing packages, look for assets, etc.). DO NOT fall back to any inferior choices without asking me first!
 - If you have any unresolved questions about standing ambiguities, seemingly contradicting instructions, seeming mistakes on my part, raise them and resolve them explicitly before proceeding to any implementation
 - run lint and typecheck every time you finish a coding task to make sure code is clean
-- run dev server when you need to inspect the in game graphics, but do so sparingly. and when you're done, make sure you close the preview window because 3d render taxing on the gpu
-- commit code regularly when you need to, to main branch
+- don't run dev server for live browser inspection, I will do visual inspection myself
+- do NOT commit code, I will do that myself
 - Use WebGPU instead of WebGL throughout the build
 - most material needed will be procedural, but some can use real PBR texture, if so, you can ask me to supply it
 - pay attention to relevant md docs in `dev_docs/` dir, these can include intentions and design principles derived or surfaced during implementation beyond the code itself that are important for further implementing related features. Make sure you always update relevant docs in dev_docs/ after new implementation to avoid stale and outdated references. During the initial implementation, add separate modular docs to document different parts of the game system
