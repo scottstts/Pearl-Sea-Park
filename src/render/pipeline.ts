@@ -164,7 +164,9 @@ export class RenderPipelineSystem implements GameSystem {
     if (this.context) this.meter?.afterRender(this.context)
   }
 
-  update(ctx: GameContext): void {
+  update(ctx: GameContext, dt: number): void {
+    this.meter?.update(dt)
+
     // Dynamic resolution: quality breathes render scale; pass targets follow
     // the renderer's drawing-buffer size automatically.
     const target = ctx.quality.renderScale

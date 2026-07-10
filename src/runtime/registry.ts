@@ -30,6 +30,10 @@ export class SystemRegistry {
     for (const system of this.systems) system.update?.(ctx, dt, alpha)
   }
 
+  lateUpdate(ctx: GameContext, dt: number, alpha: number): void {
+    for (const system of this.systems) system.lateUpdate?.(ctx, dt, alpha)
+  }
+
   dispose(ctx: GameContext): void {
     for (let i = this.systems.length - 1; i >= 0; i--) {
       this.systems[i].dispose?.(ctx)

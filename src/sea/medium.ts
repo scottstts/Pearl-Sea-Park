@@ -238,10 +238,13 @@ export class SeaMediumSystem implements GameSystem {
     this.timeUniform.value = ctx.time.elapsed
     // Always project: caustics stay visible through the surface from above.
     this.caustics?.update(ctx.renderer)
+  }
+
+  lateUpdate(ctx: GameContext): void {
     // Hard gate, locked to the true wave-displaced waterline: crossing the
-    // surface swaps worlds in the same frame — no smoothing, no lag. The
-    // swell dunks the camera repeatedly during the descent, and every dip
-    // must read as underwater instantly.
+    // surface swaps worlds in the same rendered frame. This runs after every
+    // player/ride camera owner; the shader graph and binary uniform are
+    // deliberately unchanged.
     const below = ctx.camera.position.y < this.sea.surfaceHeightAtCamera
     this.submerged.value = below ? 1 : 0
     if (this.particulates) this.particulates.visible = below

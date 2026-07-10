@@ -269,3 +269,11 @@
     every pass allocates queries and the pool overflows in far fewer than 60
     frames ("Maximum number of queries exceeded" warnings). The monitor now
     resolves continuously with a single resolution in flight.
+- 2026-07-11 waterline and exposure timing:
+  - Keep the undersea medium's authored shader graph and binary `submerged`
+    uniform unchanged. A probe-storage node in the render graph caused
+    above-water sky corruption and underwater gate flicker. The safe fix is
+    to write the existing uniform in a post-camera `lateUpdate` phase.
+  - The exposure readback computes a target only. Applying adaptation inside
+    the 30-frame readback callback creates small brightness steps; adapt the
+    existing EV toward that target every rendered frame instead.

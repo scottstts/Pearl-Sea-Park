@@ -61,6 +61,7 @@ export class GameLoop {
       time.sim = this.ctx.flags.fixedTime
       this.accumulator = 0
       this.registry.update(this.ctx, 0, 0)
+      this.registry.lateUpdate(this.ctx, 0, 0)
       this.renderFrame()
       time.frame++
       this.finishFrame(frameStart, rawDt, timeMs)
@@ -79,6 +80,7 @@ export class GameLoop {
     if (steps === MAX_SUBSTEPS) this.accumulator = 0
 
     this.registry.update(this.ctx, dt, this.accumulator / FIXED_DT)
+    this.registry.lateUpdate(this.ctx, dt, this.accumulator / FIXED_DT)
     this.renderFrame()
     time.frame++
     this.finishFrame(frameStart, rawDt, timeMs)

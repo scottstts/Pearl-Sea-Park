@@ -130,6 +130,11 @@ export class SeaSystem implements GameSystem {
     // The crossing test uses the true displaced surface at the camera XZ —
     // the swell is metres tall and dunks the camera long before y < 0.
     this.probe?.update(ctx.renderer, ctx.camera.position.x, ctx.camera.position.z)
+  }
+
+  lateUpdate(ctx: GameContext): void {
+    // Player and ride systems own the camera later in the regular update
+    // order. Classify only after they settle the pose rendered this frame.
     const nowSubmerged = ctx.camera.position.y < this.surfaceHeightAtCamera
     if (nowSubmerged !== this.submerged) {
       this.submerged = nowSubmerged

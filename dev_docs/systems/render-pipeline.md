@@ -12,8 +12,10 @@ Choices beyond the code:
 - **Exposure is measured, not guessed** (`render/exposureMeter.ts`): a 64×36
   RGBA8 target stores encoded log luminance, center weight, and highlight
   pressure. Asynchronous readback computes weighted log-average exposure with
-  asymmetric adaptation and a peak-preserving clamp. It never synchronously
-  stalls the render loop.
+  a peak-preserving clamp and replaces only the target EV. Asymmetric
+  adaptation of the current EV runs every rendered frame, avoiding
+  readback-cadence brightness steps. It never synchronously stalls the render
+  loop.
 - **Emissive hierarchy contract:** bloom threshold is 1.0 — materials must express glow through genuinely HDR emissive values (sun sparkle strongest, lamps mid, bioluminescence subtle), never by lowering the threshold.
 - **Type boundary:** @types/three TSL generics (`Node<"vec4">` etc.) churn per release — cross-module node handoffs type as `object` and cast once at the boundary (`asColor` in grade.ts). Do not thread precise TSL generic types through system APIs.
 - `?pass=` views: `ao · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`, plus the fountain field modes. `?view`/`?pass` skip the enter button (validation mode).

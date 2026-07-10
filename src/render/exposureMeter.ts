@@ -37,7 +37,6 @@ export class ExposureMeter {
 
   private readonly renderer: WebGPURenderer
   private reading = false
-  private lastReadTime = performance.now()
   private weightedLogAverage = -2.47
   private peakLogLuminance = 0
   private targetEV = 0
@@ -68,13 +67,26 @@ export class ExposureMeter {
     this.reading = true
     void this.renderer
       .readRenderTargetPixelsAsync(target, 0, 0, WIDTH, HEIGHT)
-      .then((pixels) => this.consume(pixels, ctx))
+      .then((pixels) => this.consume(pixels))
       .catch(() => {
         // Some adapters can render the meter but deny asynchronous mapping.
       })
       .finally(() => {
         this.reading = false
       })
+  }
+
+  /** Smooth the current EV every frame; readbacks only replace the target. */
+  update(dt: number): void {
+    if (dt <= 0) return
+    const current = Number(gradeParams.exposureEV.value)
+    const rate = this.targetEV > current ? 0.72 : 1.75
+    const frameDt = Math.min(dt, 0.25)
+    gradeParams.exposureEV.value =
+      current + (this.targetEV - current) * (1 - Math.exp(-rate * frameDt))
+    if (this.debugCanvas) {
+      this.debugCanvas.dataset.exposureState = JSON.stringify(this.debugSnapshot())
+    }
   }
 
   debugSnapshot(): ExposureSnapshot {
@@ -93,7 +105,7 @@ export class ExposureMeter {
     if (this.debugCanvas) delete this.debugCanvas.dataset.exposureState
   }
 
-  private consume(pixels: ArrayBufferView, ctx: GameContext): void {
+  private consume(pixels: ArrayBufferView): void {
     const bytes = new Uint8Array(pixels.buffer, pixels.byteOffset, pixels.byteLength)
     let weightedLog = 0
     let totalWeight = 0
@@ -123,16 +135,6 @@ export class ExposureMeter {
     const highlightEV = 2.25 - this.peakLogLuminance
     this.targetEV = Math.max(-2.5, Math.min(1.8, Math.min(keyEV, highlightEV + 0.55)))
 
-    const now = performance.now()
-    const dt = Math.max(0.01, Math.min(1, (now - this.lastReadTime) / 1000))
-    this.lastReadTime = now
-    const current = Number(gradeParams.exposureEV.value)
-    const rate = this.targetEV > current ? 0.72 : 1.75
-    gradeParams.exposureEV.value = current + (this.targetEV - current) * (1 - Math.exp(-rate * dt))
     this.readbacks++
-    if (this.debugCanvas) {
-      this.debugCanvas.dataset.exposureState = JSON.stringify(this.debugSnapshot())
-    }
-    void ctx
   }
 }

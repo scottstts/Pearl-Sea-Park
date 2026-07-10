@@ -12,5 +12,7 @@ export interface GameSystem {
   fixedUpdate?(ctx: GameContext, dt: number): void
   /** Per rendered frame; `alpha` interpolates between fixed steps. */
   update?(ctx: GameContext, dt: number, alpha: number): void
+  /** Per rendered frame after all regular updates, for final camera-dependent state. */
+  lateUpdate?(ctx: GameContext, dt: number, alpha: number): void
   dispose?(ctx: GameContext): void
 }
