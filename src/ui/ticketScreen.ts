@@ -24,7 +24,6 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
         <div class="ticket-progress"><i></i></div>
       </div>
     </div>
-    <div class="ticket-footnote">webgpu · sound recommended</div>
   `
   parent.appendChild(root)
 

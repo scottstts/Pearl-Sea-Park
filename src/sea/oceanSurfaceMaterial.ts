@@ -81,18 +81,25 @@ export function createOceanSurfaceMaterial(
         )
       : float(0)
 
-  // Spectral LOD applies to vertex displacement too — fine-cascade chop at
-  // grazing distance otherwise aliases into a shimmering silhouette band.
+  // Spectral LOD applies to vertex displacement too, and by PIXEL FOOTPRINT
+  // like the fragment side (the base plane sits at y = 0, so the grazing gap
+  // is just camera height). Displaced geometry aliases at the horizon even
+  // after normals flatten: silhouette teeth, and vHeight-driven body-color
+  // stripes — the residual comb. Cascade 0 fades too; only edgeKeep used to
+  // bound it, which left raw swell geometry out to the mesh diagonals.
   const vertexDistance = cameraPosition.sub(baseWorld).length()
+  const vertexGap = cameraPosition.y.abs().max(0.5)
+  const vertexFootprint = vertexDistance.mul(vertexDistance).mul(0.001).div(vertexGap)
   const vertexKeeps = [
-    float(1),
-    float(1).sub(smoothstep(120.0, 300.0, vertexDistance)),
-    float(1).sub(smoothstep(40.0, 140.0, vertexDistance)),
+    float(1).sub(smoothstep(6.0, 18.0, vertexFootprint)),
+    float(1).sub(smoothstep(0.35, 1.2, vertexFootprint)),
+    float(1).sub(smoothstep(0.1, 0.4, vertexFootprint)),
   ]
 
   let displacement: Node<'vec3'> = sim.displacementNodes[0]
     .sample(xz.div(patch[0]))
     .xyz.mul(edgeKeep)
+    .mul(vertexKeeps[0])
   for (let i = 1; i < cascadeCount; i++) {
     displacement = displacement.add(
       sim.displacementNodes[i].sample(xz.div(patch[i])).xyz.mul(edgeKeep).mul(vertexKeeps[i]),
@@ -118,10 +125,18 @@ export function createOceanSurfaceMaterial(
     cameraPosition.sub(baseWorld.add(displacement)).length(),
   ) as unknown as Node<'float'>
 
-  // Spectral LOD: each finer cascade's normal contribution fades out before
-  // its wavelets drop below pixel size — the real fix for far-field shimmer.
-  const keepCascade1 = float(1).sub(smoothstep(140.0, 420.0, vDistance))
-  const keepCascade2 = float(1).sub(smoothstep(50.0, 170.0, vDistance))
+  // Spectral LOD by PIXEL FOOTPRINT, not distance. The cascade maps carry no
+  // mips; sampling them where one output pixel spans more than a band's
+  // wavelength beats into comb/moiré patterns. At grazing incidence the
+  // vertical footprint on the surface is distance²·pixelAngle / heightGap
+  // (|viewDir.y| = heightGap/distance): a 4.4 m deck eye is under-sampled at
+  // 200 m while a diver sees the same span steeply and keeps full detail —
+  // pure distance fades can never serve both (the "horizon comb" artifact).
+  const heightGap = cameraPosition.y.sub(vWorld.y).abs().max(0.5)
+  const pixelFootprint = vDistance.mul(vDistance).mul(0.001).div(heightGap)
+  // Shortest wavelengths per cascade: ~41 m / ~2.8 m / ~0.83 m.
+  const keepCascade1 = float(1).sub(smoothstep(0.35, 1.2, pixelFootprint))
+  const keepCascade2 = float(1).sub(smoothstep(0.1, 0.4, pixelFootprint))
   const cascadeKeeps = [float(1), keepCascade1, keepCascade2]
 
   let derivatives: Node<'vec4'> = sim.derivativeNodes[0]
@@ -144,11 +159,10 @@ export function createOceanSurfaceMaterial(
   const viewDistance = toCamera.length()
   const viewDir = toCamera.div(viewDistance)
 
-  // Distant normal fade kills specular aliasing at the horizon; the skirt
-  // (coarser tessellation) flattens much sooner.
-  const distanceFade = options.detailed
-    ? smoothstep(220.0, 1500.0, viewDistance)
-    : smoothstep(120.0, 650.0, viewDistance)
+  // Normal flatten rides the same footprint (cascade-0 bottoms out ~41 m):
+  // past it the surface hands off to the smooth mirror + analytic sky. The
+  // 41 m tail still combs above ~λ/8, so complete the flatten by 16.
+  const distanceFade = smoothstep(5.0, 16.0, pixelFootprint)
   const normal = normalize(mix(rawNormal, vec3(0, sideSign, 0), distanceFade))
 
   const sunDir = sunDirectionUniform
@@ -168,11 +182,15 @@ export function createOceanSurfaceMaterial(
   const fresnel = float(0.02).add(
     float(0.98).mul(pow(float(1).sub(max(dot(viewDir, fresnelNormal), 0.0)), 5.0)),
   )
-  const skyReflection = skyRadiance(reflect(viewDir.negate(), fresnelNormal))
+  // discStrength 0: sunGlint below IS the disc's specular response — the
+  // delta-light term. Reflecting the HDR disc through bumpy normals again
+  // would double-count it as sparkling white pixels.
+  const skyReflection = skyRadiance(reflect(viewDir.negate(), fresnelNormal), float(0))
 
   const halfVector = normalize(sunDir.add(viewDir))
-  // Pixel-sized glints shimmer past ~250 m no matter the AA — fade them out.
-  const sparkleKeep = float(1).sub(smoothstep(120.0, 380.0, viewDistance))
+  // Discrete glints are ripple-scale specular: once the footprint passes the
+  // ripple size they must dissolve into the smooth reflected sun lane.
+  const sparkleKeep = float(1).sub(smoothstep(0.08, 0.3, pixelFootprint))
   const glint = smoothstep(0.9, 0.99, pow(max(dot(halfVector, normal), 0.0), 250.0)).mul(
     sparkleKeep,
   )
@@ -187,7 +205,7 @@ export function createOceanSurfaceMaterial(
     const coverage = float(1).sub(smoothstep(-0.05, 0.26, vFoam))
     const bubbleA = fbm2(vWorldXZ.mul(0.9).add(vec2(0.13, 0.07).mul(timeUniform)))
     const bubbleB = fbm2(vWorldXZ.mul(1.7).sub(vec2(0.11, 0.05).mul(timeUniform)))
-    const foamKeep = float(1).sub(smoothstep(90.0, 240.0, vDistance))
+    const foamKeep = float(1).sub(smoothstep(0.25, 0.8, pixelFootprint))
     const foamMask = coverage
       .mul(bubbleA.mul(bubbleB).mul(1.7).add(0.06))
       .mul(foamKeep)
@@ -209,13 +227,18 @@ export function createOceanSurfaceMaterial(
   const refracted = refract(incident, normal, 1.333)
   const insideWindow = step(1e-5, dot(refracted, refracted))
 
-  const skyThrough = skyRadiance(refracted).mul(0.9)
+  const skyThrough = skyRadiance(refracted, float(0)).mul(0.9)
   const windowGlint = pow(max(dot(refracted, sunDir), 0.0), 700.0)
     .mul(24.0)
     .mul(sunColorUniform)
 
-  // Outside the critical angle: total internal reflection — the dark mirror.
-  const tirBody = DEEP.mul(0.55).add(SSS_TINT.mul(crestScatter).mul(0.5))
+  // Outside the critical angle: total internal reflection. The mirror
+  // reflects the UPWELLING water light — silvery teal near the medium's
+  // horizontal ambient (medium.ts AMBIENT_* mix), not the deep body color.
+  // A near-black ceiling here is what carved the bright "gap" band at the
+  // surface silhouette against converged fog: the fogged underside must
+  // start from a radiance close to what the fog converges to.
+  const tirBody = vec3(0.035, 0.14, 0.19).add(SSS_TINT.mul(crestScatter).mul(0.5))
 
   const below = mix(tirBody, skyThrough.add(windowGlint), insideWindow)
 

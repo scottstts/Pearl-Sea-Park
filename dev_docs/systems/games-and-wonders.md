@@ -3,20 +3,19 @@
 ## Throw handoff and held collection
 
 - `GamesSystem` is the one click-to-throw owner. An ordinary contextual `E`
-  interaction takes a ring, pearl, food cone, or wishing coin into the hand
-  rig; the next left click uses the camera's exact forward vector. There is no
-  aim line, reticle, trajectory preview, or vertical correction.
-- Food cones contain eight physical pellets and remain held for eight clicks.
-  Single-use throws return to the ticket. Collected persistent props can be
-  revisited without UI: `1` ticket, `2` velvet penny book, `3` pocket park
-  model, `4` plush kraken; `T` hides/shows the hand rig.
-- The paper hat is a separate camera child. Winning and taking it exposes a
-  curved cardstock brim at the top of first-person view while any other item
-  remains usable. Ice cream is an actual cone+scoop prop whose scoop settles
-  to 28% height over 150 s and does nothing else.
-- `HeldItemSystem` now de-duplicates ride stamps and physically adds them to
-  the ticket face. The six required gates are Bell, Pearl Line, Wheel,
-  Carousel, Torrent, and Grotto; their complete set emits `ticket/completed`.
+  interaction arms a ring, pearl, food cone, or wishing coin as the current
+  item; the next left click uses the camera's exact forward vector. There is
+  no aim line, reticle, trajectory preview, or vertical correction.
+- Food cones contain eight physical pellets and remain armed for eight
+  clicks; single-use throws return the ticket as the current item.
+- **Held items are state-only** (2026-07-10 quality pass): Scott removed the
+  first-person hand rig and every camera-attached prop — the view is a clean
+  POV. `HeldItemSystem` still tracks the current item, ride stamps, pressed
+  pennies, prizes, and the paper hat flag, and the `1–4`/`T` prop-recall keys
+  are gone. Prize/progress feedback is therefore event- and world-side only.
+- `HeldItemSystem` de-duplicates ride stamps. The six required gates are
+  Bell, Pearl Line, Wheel, Carousel, Torrent, and Grotto; their complete set
+  emits `ticket/completed`.
 
 ## The three Midway games
 

@@ -108,10 +108,22 @@ export function terrainHeight(x: number, z: number): number {
     height = height * (1 - plunge) + (ABYSS_Y + ledges) * plunge
   }
 
-  // Soft outer sink east/west/south so the world edge drowns in haze.
+  // Soft outer sink east/west/south so the mid-distance drowns in haze.
   const edge = Math.max(Math.abs(x), z) // z positive = south
   const sink = smoothstepJs(430, 590, edge)
   height -= sink * 34
+
+  // The lagoon saucer (quality walkthrough): far beyond the park the seabed
+  // rises toward the surface — flat at the centre, lifted at the horizon —
+  // so no open-water gap column survives in any direction. The rim crests
+  // at −2.5 m worst case: under every wave trough, never breaching. North it
+  // becomes the trench's far wall, leaving the drop-off's open blue intact.
+  const saucerDistance = Math.hypot(x, z)
+  const saucer = smoothstepJs(680, 1150, saucerDistance)
+  if (saucer > 0) {
+    const rimTop = -3.6 + (fbmCpu(x * 0.006, z * 0.006, 3, 131) - 0.5) * 2.2
+    height = height * (1 - saucer) + rimTop * saucer
+  }
 
   return height
 }
@@ -121,10 +133,7 @@ function smoothstepJs(a: number, b: number, x: number): number {
   return t * t * (3 - 2 * t)
 }
 
-function buildChunk(cx: number, cz: number, verts: number): BufferGeometry {
-  const size = EXTENT / CHUNKS
-  const x0 = -EXTENT / 2 + cx * size
-  const z0 = -EXTENT / 2 + cz * size
+function buildChunk(x0: number, z0: number, size: number, verts: number): BufferGeometry {
   const positions = new Float32Array(verts * verts * 3)
   const normals = new Float32Array(verts * verts * 3)
   const step = size / (verts - 1)
@@ -224,9 +233,25 @@ export class TerrainSystem implements GameSystem {
     const material = createSandMaterial(this.medium)
     material.color = new Color(0xffffff)
 
+    const chunkSize = EXTENT / CHUNKS
     for (let cz = 0; cz < CHUNKS; cz++) {
       for (let cx = 0; cx < CHUNKS; cx++) {
-        const mesh = new Mesh(buildChunk(cx, cz, verts), material)
+        const mesh = new Mesh(
+          buildChunk(-EXTENT / 2 + cx * chunkSize, -EXTENT / 2 + cz * chunkSize, chunkSize, verts),
+          material,
+        )
+        mesh.receiveShadow = true
+        this.group.add(mesh)
+      }
+    }
+    // The saucer ring: coarse far tiles out to ±1400 m carry the seabed's
+    // rise to the horizon (rim features span hundreds of metres — 32 verts
+    // per 400 m tile is plenty). The inner 3×3 of this 7×7 layout is the
+    // detailed grid above.
+    for (let tz = 0; tz < 7; tz++) {
+      for (let tx = 0; tx < 7; tx++) {
+        if (tx >= 2 && tx <= 4 && tz >= 2 && tz <= 4) continue
+        const mesh = new Mesh(buildChunk(-1400 + tx * 400, -1400 + tz * 400, 400, 32), material)
         mesh.receiveShadow = true
         this.group.add(mesh)
       }

@@ -1,6 +1,6 @@
 import { BackSide, DirectionalLight, Mesh, Scene, SphereGeometry } from 'three'
 import { MeshBasicNodeMaterial, PMREMGenerator } from 'three/webgpu'
-import { normalize, positionLocal } from 'three/tsl'
+import { float, normalize, positionLocal } from 'three/tsl'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { CachedShadowClipmapNode } from '../render/cachedShadowClipmaps'
@@ -24,7 +24,7 @@ export class SkySystem implements GameSystem {
     const { scene, renderer, quality } = ctx
 
     const domeMaterial = new MeshBasicNodeMaterial()
-    domeMaterial.colorNode = skyRadiance(normalize(positionLocal))
+    domeMaterial.colorNode = skyRadiance(normalize(positionLocal), float(1))
     domeMaterial.side = BackSide
     domeMaterial.depthWrite = false
     domeMaterial.fog = false

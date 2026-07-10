@@ -17,7 +17,6 @@ export interface PerformanceSnapshot {
 }
 
 const EMA = 0.08
-const GPU_RESOLVE_INTERVAL = 60
 
 /** Non-blocking CPU, presentation-cadence, and WebGPU timestamp telemetry. */
 export class FramePerformanceMonitor {
@@ -26,19 +25,18 @@ export class FramePerformanceMonitor {
   private gpuRenderMs: number | null = null
   private gpuComputeMs: number | null = null
   private resolvePending = false
-  private lastResolveFrame = -GPU_RESOLVE_INTERVAL
   private readonly renderer: WebGPURenderer
 
   constructor(renderer: WebGPURenderer) {
     this.renderer = renderer
   }
 
-  sample(timing: FrameTiming, frame: number): void {
+  sample(timing: FrameTiming, _frame: number): void {
     this.cpuFrameMs += (Math.min(timing.cpuMs, 100) - this.cpuFrameMs) * EMA
     this.presentedFrameMs += (
       Math.min(timing.frameIntervalMs, 100) - this.presentedFrameMs
     ) * EMA
-    this.resolveGpu(frame)
+    this.resolveGpu()
   }
 
   snapshot(): PerformanceSnapshot {
@@ -55,16 +53,15 @@ export class FramePerformanceMonitor {
     }
   }
 
-  private resolveGpu(frame: number): void {
+  private resolveGpu(): void {
     const backend = this.renderer.backend as { trackTimestamp?: boolean }
-    if (
-      backend.trackTimestamp !== true
-      || this.resolvePending
-      || frame - this.lastResolveFrame < GPU_RESOLVE_INTERVAL
-    ) return
+    // Resolve continuously (one resolution in flight at a time): every pass
+    // in the frame allocates timestamp queries, and the pool overflows in
+    // well under 60 frames — three then warns "Maximum number of queries
+    // exceeded" and drops samples. Resolution is asynchronous and cheap.
+    if (backend.trackTimestamp !== true || this.resolvePending) return
 
     this.resolvePending = true
-    this.lastResolveFrame = frame
     void Promise.all([
       this.renderer.resolveTimestampsAsync(TimestampQuery.RENDER),
       this.renderer.resolveTimestampsAsync(TimestampQuery.COMPUTE),

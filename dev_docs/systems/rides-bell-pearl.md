@@ -18,15 +18,23 @@
 ## Descent Bell (`rides/descentBell.ts`)
 
 - The opening: when the session starts without `?view`, the guest begins
-  seated in the bell at the pavilion; `park/entered` (the enter click) starts
-  a 2.4 s hold then a 40 s eased descent. Waterline crossing, god-ray reveal,
-  and audio low-pass all fall out of existing camera-driven systems — nothing
-  is scripted per-frame. Fully interactive throughout (free-look, no cuts).
+  STANDING on the Descent Station deck, free to roam it — there is no
+  auto-descent (Scott's ruling, 2026-07-10). The existing "Descend into the
+  park" interactable (press E at the bell mouth) boards the rig, then a 2.4 s
+  hold and the 40 s eased descent. Waterline crossing, god-ray reveal, and
+  audio low-pass all fall out of existing camera-driven systems — nothing is
+  scripted per-frame. Fully interactive throughout (free-look, no cuts).
 - State machine: docked-top / descending / docked-bottom / ascending, emitted
   as `ride/bell-state` (audio hum + arrival chime key off it). Re-ridable
   forever from both ends; boarding prompts are `enabled`-gated by state.
-- The pavilion deck has a real 3.2 m shaft hole (four slabs), rail colliders,
-  and 2.6 m freeboard — at deck 1.3 m the FFT crests washed over the boards.
+- The station architecture (deck, piles, headframe, sheave, winch, canopy)
+  lives in `world/arrival.ts`, which exports `DECK_TOP_Y` and `CABLE_TOP_Y`;
+  the bell owns only the car, cable, terrace, and drive. The bell mouth is
+  ringed by chained stanchions with a 2.2 m guard collider — boarding is by
+  camera blend (rig), never by walking over the shaft; without the guard a
+  guest can step through the open mouth while the bell is down.
+- Deck freeboard stays ≥ 2.5 m — at deck 1.3 m the FFT crests washed over the
+  boards.
 - Terrace = the bell's own SlotWriter build (plaza, steps, lamps, landing
   ring); the arrival→atrium path lives in `PARK_PATHS`.
 

@@ -5,6 +5,7 @@ import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { runFftSelfTest } from './fftCompute'
 import { createOceanSurfaceMaterial } from './oceanSurfaceMaterial'
+import { WaterlineProbe } from './waterlineProbe'
 import { WaveSim } from './waveSim'
 
 const INNER_SIZE = 700
@@ -51,6 +52,7 @@ export class SeaSystem implements GameSystem {
   sim: WaveSim | null = null
   private inner: Mesh | null = null
   private outer: Mesh | null = null
+  private probe: WaterlineProbe | null = null
   private readonly timeUniform = uniform(0)
   private submerged = false
   private followStep = 1
@@ -58,6 +60,7 @@ export class SeaSystem implements GameSystem {
   init(ctx: GameContext): void {
     const sim = new WaveSim(ctx.rng)
     this.sim = sim
+    this.probe = new WaterlineProbe(sim)
 
     const segments = [256, 384, 448][ctx.quality.tier] ?? 384
     this.followStep = INNER_SIZE / segments
@@ -112,7 +115,10 @@ export class SeaSystem implements GameSystem {
     this.inner?.position.set(qx, 0, qz)
     this.outer?.position.set(qx, -OUTER_SINK, qz)
 
-    const nowSubmerged = ctx.camera.position.y < 0
+    // The crossing test uses the true displaced surface at the camera XZ —
+    // the swell is metres tall and dunks the camera long before y < 0.
+    this.probe?.update(ctx.renderer, ctx.camera.position.x, ctx.camera.position.z)
+    const nowSubmerged = ctx.camera.position.y < this.surfaceHeightAtCamera
     if (nowSubmerged !== this.submerged) {
       this.submerged = nowSubmerged
       ctx.events.emit('sea/waterline-crossed', { submerged: nowSubmerged })
@@ -121,6 +127,11 @@ export class SeaSystem implements GameSystem {
 
   get isSubmerged(): boolean {
     return this.submerged
+  }
+
+  /** True wave-displaced surface height above/below the camera (world m). */
+  get surfaceHeightAtCamera(): number {
+    return this.probe?.height ?? 0
   }
 
   dispose(ctx: GameContext): void {

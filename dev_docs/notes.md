@@ -140,3 +140,120 @@
     branch on the uniform submerged gate around the loop. This removes every
     caustic texture sample in above-water frames while leaving underwater pixel
     positions, jitter, step count, source field, and accumulation unchanged.
+- 2026-07-10 quality walkthrough (arrival & waterline — Scott's rulings):
+  - **No player body, no camera-attached props, ever.** The held-item hand rig
+    (ticket card in the view corner) read as an artifact; `heldItems.ts` is now
+    state-only (stamps/pennies/prizes still tracked, `ticket/completed` still
+    fires). Don't re-parent meshes to the camera without asking Scott.
+  - **The waterline is `SeaSystem.surfaceHeightAtCamera`, never y<0.** A
+    1-thread compute (`sea/waterlineProbe.ts`) samples the three displacement
+    cascades at the camera XZ with fixed-point horizontal correction + async
+    storage readback. The medium's `submerged` uniform is a hard binary flip —
+    smoothing it made every swell-dunk during the descent lag visibly.
+  - TSL `.sample()` inside compute compiles to `textureSampleLevel(…, 0)`
+    automatically — sampling render textures from compute is fine.
+  - `skyRadiance(dir, discStrength)`: physical 0.53° limb-darkened HDR disc.
+    The ocean passes 0 — its analytic glint terms ARE the disc's specular
+    response; sampling the hot disc through wavy normals double-counts as
+    sparkle noise.
+  - The underwater "gap" (bright band between the far ceiling silhouette and
+    the seabed horizon) is closed by a near-surface scattering layer (exp(y/3)
+    weighted analytic path integral) in the medium fog — NOT by raising global
+    SIGMA (kills 250 m park clarity) and NOT by background-depth hacks (the
+    band was real converged inscatter, discontinuous against the near-dark
+    surface underside).
+  - `world/arrival.ts` is the Descent Station's architecture authority (deck,
+    braced piles to the seabed via per-pile `terrainHeight`, headframe, sheave,
+    winch, canopy) and exports `DECK_TOP_Y`/`CABLE_TOP_Y`; the bell keeps only
+    car/cable/terrace/drive. Bell mouth = chained stanchions + 2.2 m guard
+    collider; boarding is by rig camera-blend, never on foot.
+  - **The opening no longer auto-descends**: the guest spawns standing on the
+    deck and presses E at the bell. Any future "cinematic" opening must stay
+    guest-triggered.
+  - Lens water (`render/lensDrips.ts`) hangs on the pipeline's `lensTransform`
+    hook (pre-bloom): droplets/streaks/film refract by offset-resampling the
+    scene texture; re-armed by every `sea/waterline-crossed` emergence. Above
+    water the medium hook is identity, so offset resampling needs no fog
+    recomputation — keep lens effects pre-fog-aware if that ever changes.
+- 2026-07-10 walkthrough round 2 (horizon band, saucer, calm sea, bell polish):
+  - **A "screen-space filter" complaint can be a coarse lathe on mirror
+    glass.** The bell shell's 6-point profile gave each flat segment its own
+    env-reflection tone; seated INSIDE, the segment break at eye height read
+    as a hard full-screen horizontal tint mask. Any glass that encloses the
+    camera needs a smooth sampled curve (CatmullRom → 20+ profile points),
+    never a handful of straight profile segments.
+  - **Analytic in-scatter integrals must attenuate the scattered light back
+    to the camera.** The near-surface layer's ∫e^(y/h) glow, composited
+    unattenuated after base fog, painted a bright band pinned to the exact
+    view horizon from deep viewpoints (glow ramps over ~0.4° where grazing
+    rays' surface-clip distance explodes). Fix is one term: fold −σ_base·t
+    into the same exponent (u −= σ_base·wetLength) — closed form survives,
+    shallow-depth gap masking unchanged, deep horizon clean.
+  - The world is now a **lagoon saucer**: terrainHeight rises to −3.6 ± 1.1 m
+    beyond hypot 680→1150 (never breaching; wave troughs at amplitude 0.35
+    reach only ~−0.5). A coarse 7×7 ring of 400 m tiles (inner 3×3 skipped)
+    extends the mesh to ±1400 — before this the seabed simply ENDED at ±600,
+    which was most of the visible "gap". Physics/`TERRAIN_EXTENT` still ±600.
+  - Ocean `amplitude` is 0.35 by ruling (calm glassy swell). The arrival deck
+    (2.6 m freeboard) can no longer be dipped by waves — underwater only ever
+    begins by starting the descent.
+  - Partial-arc lathe furniture (the bell banquette) needs FINISHED ENDS:
+    LatheGeometry with phiStart/phiLength leaves open tube cross-sections —
+    cap them with end panels/posts or it reads as a raw half-tube (the exact
+    complaint against the old torus-arc bench).
+  - Scott edits the tree between agent turns (favicon/logo.png, title,
+    ticket footnote removal this time). If the build breaks in a file you
+    never touched, `git diff` FIRST and finish his intent (here: an orphaned
+    CSS rule tail after `.ticket-footnote` was removed) — don't revert his
+    changes.
+- 2026-07-10 walkthrough round 3 (the band's true root; drips as dashes):
+  - **The near-surface scattering layer is DEAD — do not resurrect it.** Any
+    luminous slab above the camera creates an up/down asymmetry across the
+    view horizon (up-grazing rays integrate along it, down-grazing rays exit
+    it) → a brightness step pinned to the view horizon that users read as a
+    fixed screen mask. Attenuated single scatter only cures deep cameras;
+    at descent depths the step is inherent to the model.
+  - The horizon "gap" root cause was the ocean's TIR underside: `tirBody`
+    was `DEEP·0.55` (near-black), ~6× darker than what the fog converges to,
+    so the surface silhouette always cut a bright band. TIR reflects the
+    UPWELLING light — it must sit near the medium's horizontal ambient
+    (now (0.035, 0.14, 0.19)). With that + the saucer, base fog alone closes
+    the gap at every depth.
+  - Screen-space refraction effects are invisible over flat backgrounds and
+    SHATTER the horizon edge into dashes — screen-locked, self-animating,
+    instantly read as artifacts. Any lens-water effect must (a) be brief
+    (droplets dry in ~2–3 s, not 10) and (b) carry visible drop BODIES
+    (Fresnel-dark rim + meniscus glint) so it reads as water, not pattern.
+  - Verified conventions while chasing the band: three r185 WGSL builder has
+    `isFlipY() = false` → `screenUV` origin is TOP-left on WebGPU, so
+    `ndc.y = (1 − screenUV.y)·2 − 1` in medium.ts is CORRECT — the fog/ray
+    world-ray reconstruction was never mirrored. Don't "fix" it.
+- 2026-07-10 walkthrough round 4 (horizon comb; bell ribs):
+  - The "patterns on the ocean at the horizon" were MOIRÉ from sampling the
+    mip-less cascade maps at grazing incidence. All the anti-shimmer fades
+    were distance-keyed, but the controlling variable is the projected pixel
+    footprint = distance²·pixelAngle/heightGap: from the 4.4 m deck the
+    surface is under-sampled from ~150 m (cascade-1 λ 2.8–17 m vs 9 m
+    footprint at 200 m) while a deep diver keeps detail on the same span.
+    The calm 0.35-amplitude sea exposed what the old storm chop had masked.
+    All fragment-side ocean LOD (cascade keeps, normal flatten, glints,
+    foam) now fades on `pixelFootprint`; never revert to distance-only.
+  - Small-rotation composition bugs read as "detached props": the bell's old
+    staves tilted with transposed sin/cos phases (rotation.z = cos·θ,
+    rotation.x = −sin·θ) so every pole leaned sideways off the rig. For
+    anything that must visibly connect two parts, build it as point-to-point
+    struts (quaternion setFromUnitVectors between real anchor points), not
+    as positioned primitives with hand-tuned Euler leans — the bell now has
+    three-segment external cage ribs seated on the bottom ring and reaching
+    the crown base.
+  - Footprint LOD round two: flattening NORMALS is not enough — cascade-0
+    VERTEX displacement still writes vHeight (body-color stripes, crest
+    scatter) and silhouette teeth, a fainter comb that survives to the mesh
+    diagonals (~495 m) where only edgeKeep bounded it. All three vertex
+    keeps now ride the same footprint (gap = |camera.y| since the base plane
+    is y = 0). The skirt always had zero derivatives (vEdgeKeep = 0), so the
+    entire comb ever lived on the inner 700 m mesh.
+  - `trackTimestamp` needs `resolveTimestampsAsync` essentially every frame:
+    every pass allocates queries and the pool overflows in far fewer than 60
+    frames ("Maximum number of queries exceeded" warnings). The monitor now
+    resolves continuously with a single resolution in flight.

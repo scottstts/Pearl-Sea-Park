@@ -1,9 +1,12 @@
 import {
+  BoxGeometry,
+  CatmullRomCurve3,
   CylinderGeometry,
   LatheGeometry,
   Mesh,
   Object3D,
   PointLight,
+  SphereGeometry,
   TorusGeometry,
   Vector2,
   Vector3,
@@ -14,7 +17,7 @@ import { registerBookmark } from '../core/debug'
 import type { PlayerSystem } from '../player/player'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
-import { ARRIVAL_POSITION } from '../world/arrival'
+import { ARRIVAL_POSITION, CABLE_TOP_Y, DECK_TOP_Y } from '../world/arrival'
 import type { DistrictServices } from '../world/districts/atrium'
 import { terrainHeight } from '../world/terrain'
 import { VehicleSeatRig } from './vehicleSeat'
@@ -63,9 +66,9 @@ export class DescentBellSystem implements GameSystem {
     const { x, z } = ARRIVAL_POSITION
 
     this.terraceY = terrainHeight(x, z) + 0.12
-    this.topY = 2.62 // car floor rests level with the pavilion deck
+    this.topY = 2.62 // car floor rests level with the station deck
     this.bottomY = this.terraceY + 0.06
-    this.cableTopY = 7.75
+    this.cableTopY = CABLE_TOP_Y // the station headframe's sheave
 
     // ── Arrival Terrace: where the bell lands on the seabed ──────────────
     const w = new SlotWriter()
@@ -87,38 +90,25 @@ export class DescentBellSystem implements GameSystem {
     pad.position.set(x, this.terraceY + 0.03, z)
     this.group.add(pad)
 
-    // ── Winch over the pavilion shaft mouth ───────────────────────────────
-    const frame = new Object3D()
-    for (const side of [-1, 1]) {
-      const leg = new Mesh(new CylinderGeometry(0.09, 0.12, 4.6, 12), lib.iron)
-      leg.position.set(x + side * 1.9, 4.85, z)
-      leg.rotation.z = side * 0.38
-      frame.add(leg)
-    }
-    const crossbeam = new Mesh(new CylinderGeometry(0.09, 0.09, 2.6, 12), lib.iron)
-    crossbeam.rotation.z = Math.PI / 2
-    crossbeam.position.set(x, 6.95, z)
-    frame.add(crossbeam)
-    const sheave = new Mesh(new TorusGeometry(0.5, 0.09, 10, 30), lib.brass)
-    sheave.position.set(x, 6.95, z)
-    frame.add(sheave)
-    this.group.add(frame)
+    // (The headframe, sheave, and winch live in ArrivalSystem — the station
+    // owns the architecture; the bell owns the car, cable, and drive.)
 
     // ── The bell car ──────────────────────────────────────────────────────
-    const shell = new Mesh(
-      new LatheGeometry(
-        [
-          new Vector2(1.22, 0.16),
-          new Vector2(1.3, 0.7),
-          new Vector2(1.26, 1.5),
-          new Vector2(1.02, 2.15),
-          new Vector2(0.55, 2.52),
-          new Vector2(0.12, 2.66),
-        ],
-        40,
-      ),
-      lib.glass,
-    )
+    // The glass is mirror-smooth: a coarse faceted profile paints sharp
+    // full-screen reflection bands for the guest seated INSIDE it (each flat
+    // lathe segment carries one env-reflection tone). Sample a smooth curve
+    // through the same envelope so the sheen grades continuously.
+    const shellProfile = new CatmullRomCurve3([
+      new Vector3(1.22, 0.16, 0),
+      new Vector3(1.3, 0.7, 0),
+      new Vector3(1.26, 1.5, 0),
+      new Vector3(1.02, 2.15, 0),
+      new Vector3(0.55, 2.52, 0),
+      new Vector3(0.12, 2.66, 0),
+    ])
+      .getPoints(26)
+      .map((p) => new Vector2(p.x, p.y))
+    const shell = new Mesh(new LatheGeometry(shellProfile, 48), lib.glass)
     const floor = new Mesh(new CylinderGeometry(1.22, 1.28, 0.1, 32), lib.brass)
     floor.position.y = 0.1
     const bottomRing = new Mesh(new TorusGeometry(1.26, 0.07, 10, 40), lib.brass)
@@ -132,21 +122,82 @@ export class DescentBellSystem implements GameSystem {
     const hook = new Mesh(new TorusGeometry(0.12, 0.035, 8, 18), lib.brass)
     hook.position.y = 3.02
     this.car.add(shell, floor, bottomRing, midRing, crown, hook)
-    // Four brass staves from bottom ring toward the crown.
+    // Four external cage ribs hugging the glass from the bottom ring to the
+    // crown: three struts each, knuckled with sphere joints, seated on the
+    // ring and reaching the crown base. (The old single tilted staves had
+    // their lean phases transposed and floated free of everything.)
+    const ribGeometry = new CylinderGeometry(1, 1, 1, 10)
+    const ribUp = new Vector3(0, 1, 0)
+    const ribProfile: Array<[number, number]> = [
+      [1.28, 0.24],
+      [1.325, 1.45],
+      [1.05, 2.2],
+      [0.45, 2.6],
+    ]
+    const ribRadii = [0.042, 0.038, 0.032]
     for (let i = 0; i < 4; i++) {
       const angle = (i / 4) * Math.PI * 2 + Math.PI / 4
-      const stave = new Mesh(new CylinderGeometry(0.035, 0.045, 2.3, 8), lib.brass)
-      stave.position.set(Math.sin(angle) * 1.06, 1.32, Math.cos(angle) * 1.06)
-      stave.rotation.z = Math.cos(angle) * 0.14
-      stave.rotation.x = -Math.sin(angle) * 0.14
-      this.car.add(stave)
+      const points = ribProfile.map(
+        ([r, y]) => new Vector3(Math.sin(angle) * r, y, Math.cos(angle) * r),
+      )
+      for (let s = 0; s < 3; s++) {
+        const direction = new Vector3().subVectors(points[s + 1], points[s])
+        const length = direction.length()
+        const rib = new Mesh(ribGeometry, lib.brass)
+        rib.position.copy(points[s]).add(points[s + 1]).multiplyScalar(0.5)
+        rib.quaternion.setFromUnitVectors(ribUp, direction.normalize())
+        rib.scale.set(ribRadii[s], length, ribRadii[s])
+        this.car.add(rib)
+      }
+      for (const knuckle of [points[1], points[2]]) {
+        const joint = new Mesh(new SphereGeometry(0.052, 10, 8), lib.brass)
+        joint.position.copy(knuckle)
+        this.car.add(joint)
+      }
     }
-    // Interior bench ring (door gap faces the park, -z).
-    const bench = new Mesh(new TorusGeometry(0.86, 0.14, 8, 30, Math.PI * 1.4), lib.woodDark)
-    bench.rotation.x = Math.PI / 2
-    bench.rotation.z = Math.PI * 0.3
-    bench.position.y = 0.52
+    // Interior banquette (door gap faces the park, −z): a sculpted curved
+    // seat — dished top, raked backrest with a rolled edge, finished end
+    // panels, brass end posts and feet — revolved as a partial lathe. (The
+    // old torus arc read as a raw half-tube with open ends.)
+    const benchProfile = [
+      [0.66, 0.3],
+      [0.64, 0.38],
+      [0.68, 0.47],
+      [0.76, 0.52],
+      [0.9, 0.535],
+      [1.02, 0.52],
+      [1.08, 0.55],
+      [1.12, 0.68],
+      [1.145, 0.8],
+      [1.12, 0.84],
+      [1.08, 0.8],
+      [1.065, 0.62],
+      [1.05, 0.42],
+      [1.03, 0.3],
+    ].map(([r, y]) => new Vector2(r, y))
+    const bench = new Mesh(
+      new LatheGeometry(benchProfile, 48, Math.PI * 1.25, Math.PI * 1.5),
+      lib.woodDark,
+    )
     this.car.add(bench)
+    for (const phi of [Math.PI * 1.25, Math.PI * 2.75]) {
+      const dirX = Math.sin(phi)
+      const dirZ = Math.cos(phi)
+      const panel = new Mesh(new BoxGeometry(0.05, 0.56, 0.49), lib.woodDark)
+      panel.position.set(dirX * 0.885, 0.53, dirZ * 0.885)
+      panel.rotation.y = phi
+      const post = new Mesh(new CylinderGeometry(0.042, 0.05, 0.52, 12), lib.brass)
+      post.position.set(dirX * 0.7, 0.42, dirZ * 0.7)
+      const ball = new Mesh(new SphereGeometry(0.055, 12, 9), lib.brass)
+      ball.position.set(dirX * 0.7, 0.71, dirZ * 0.7)
+      this.car.add(panel, post, ball)
+    }
+    for (let leg = 0; leg < 5; leg++) {
+      const phi = Math.PI * (1.35 + (1.3 * leg) / 4)
+      const foot = new Mesh(new CylinderGeometry(0.032, 0.04, 0.16, 10), lib.brass)
+      foot.position.set(Math.sin(phi) * 0.85, 0.23, Math.cos(phi) * 0.85)
+      this.car.add(foot)
+    }
     const bellLightMesh = new Mesh(new CylinderGeometry(0.09, 0.12, 0.1, 10), lib.lampGlobe)
     bellLightMesh.position.y = 2.45
     this.car.add(bellLightMesh)
@@ -186,7 +237,7 @@ export class DescentBellSystem implements GameSystem {
       const interaction = this.services.interaction
       const seatEye = new Vector3(0, 1.45, 0.32)
       const terraceExit = new Vector3(x, this.terraceY + 0.1, z - 2.4)
-      const deckExit = new Vector3(x, 2.62, z - 2.6)
+      const deckExit = new Vector3(x, DECK_TOP_Y, z - 2.9)
 
       // Ride up from the terrace.
       interaction.register({
@@ -202,10 +253,11 @@ export class DescentBellSystem implements GameSystem {
         },
         enabled: () => this.state === 'docked-bottom' && !rig.seated,
       })
-      // Ride down from the pavilion deck.
+      // Ride down from the station deck (also the opening move: the guest
+      // spawns a step away and boards whenever they choose).
       interaction.register({
         position: new Vector3(x, 3.6, z),
-        radius: 3.2,
+        radius: 3.9,
         prompt: 'Descend into the park',
         onInteract: () => {
           if (this.state !== 'docked-top' || rig.seated) return
@@ -232,17 +284,11 @@ export class DescentBellSystem implements GameSystem {
         enabled: () => rig.seated && rig.canExit && this.state === 'docked-top',
       })
 
-      // The opening: the visit begins seated in the bell above the sea.
+      // The opening: the visit begins standing on the station deck, free to
+      // linger over the waves. Nothing moves until the guest walks to the
+      // bell and presses E ("Descend into the park") — no auto-descent.
       if (!ctx.flags.view) {
-        this.player.controlEnabled = false
-        this.player.placeAt(terraceExit.x, terraceExit.y, terraceExit.z, 0)
-        rig.attachImmediate(this.car, seatEye, 0)
-        ctx.events.on('park/entered', () => {
-          if (this.state === 'docked-top' && rig.seated) {
-            this.pendingRun = 'descend'
-            this.stateTime = 0
-          }
-        })
+        this.player.placeAt(x, DECK_TOP_Y, z + 3.4, 0)
       }
     }
   }

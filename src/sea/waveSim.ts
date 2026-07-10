@@ -28,8 +28,10 @@ export const OCEAN_PRESET = {
   boundaryFactor: 6,
   choppiness: 1.3,
   foamRecovery: 0.35,
-  /** Global art-direction scale on displacement (dream lever: slightly calm). */
-  amplitude: 0.9,
+  /** Global art-direction scale on displacement (dream lever). 0.35 keeps a
+   * living glassy swell (~0.5 m crests) — the 0.9 sea read as a storm and
+   * dunked the arrival platform's sightlines (walkthrough ruling). */
+  amplitude: 0.35,
 }
 
 interface Cascade {

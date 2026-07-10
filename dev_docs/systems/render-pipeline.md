@@ -1,7 +1,7 @@
 # Render pipeline (S1)
 
 Signal order (one owner of the final image, `render/pipeline.ts`):
-scene pass (MSAA 4×, MRT color+view-normal, depth) → GTAO at 0.5 res (RedFormat — multiply by `.r`, never the vec4) → `hdrTransform` hook (S3 medium splices aquatic fog/god rays here) → bloom (HDR, pre-tonemap; threshold 1.0 so only true emitters bloom) → measured exposure EV → `renderOutput` (AgX + sRGB, placed manually; `outputColorTransform = false`) → 32³ dream LUT → spatial vignette.
+scene pass (MSAA 4×, MRT color+view-normal, depth) → GTAO at 0.5 res (RedFormat — multiply by `.r`, never the vec4) → `hdrTransform` hook (S3 medium splices aquatic fog/god rays here) → `lensTransform` hook (`render/lensDrips.ts`: water on the lens after surfacing — droplets/streaks/film refract via true offset resampling of the scene texture; placed pre-bloom so warped highlights bloom; a coherent uniform branch makes it free once dry) → bloom (HDR, pre-tonemap; threshold 1.0 so only true emitters bloom) → measured exposure EV → `renderOutput` (AgX + sRGB, placed manually; `outputColorTransform = false`) → 32³ dream LUT → spatial vignette.
 
 Choices beyond the code:
 

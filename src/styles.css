@@ -183,18 +183,6 @@ canvas#scene {
   letter-spacing: 0.05em;
 }
 
-.ticket-footnote {
-  position: absolute;
-  bottom: 1.4rem;
-  left: 0;
-  right: 0;
-  text-align: center;
-  font-size: 0.68rem;
-  letter-spacing: 0.28em;
-  text-transform: uppercase;
-  opacity: 0.32;
-}
-
 /* ── Contextual prompt (the only in-game UI) ───────────── */
 
 .prompt {

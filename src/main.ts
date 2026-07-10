@@ -16,6 +16,7 @@ import { HeldItemSystem } from './player/heldItems'
 import { InteractionSystem } from './player/interact'
 import { PlayerSystem } from './player/player'
 import { SeatSystem } from './player/seats'
+import { LensDripSystem } from './render/lensDrips'
 import { RenderPipelineSystem } from './render/pipeline'
 import { createRenderer, webgpuAvailable } from './render/renderer'
 import { enableMainDetailLayer } from './render/layers'
@@ -124,11 +125,12 @@ async function boot(): Promise<void> {
     registry.add(new SkySystem())
     const sea = registry.add(new SeaSystem())
     const medium = registry.add(new SeaMediumSystem(pipeline, sea))
+    registry.add(new LensDripSystem(pipeline))
     registry.add(new TerrainSystem(medium))
     registry.add(new FloraSystem(medium))
     const physics = registry.add(new PhysicsSystem())
-    registry.add(new ArrivalSystem(physics))
     const materials = registry.add(new MaterialsSystem(medium))
+    registry.add(new ArrivalSystem(physics, materials))
     const services: DistrictServices = { physics, materials }
     let player: PlayerSystem | null = null
     let heldItems: HeldItemSystem | null = null

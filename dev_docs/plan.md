@@ -150,7 +150,7 @@ All real physics toys (Rapier), all diegetic:
 - **Ring the Narwhal** — toss brass rings onto narwhal horns (grab, aim, throw with arc assist off).
 - **Pearl Diver** — skee-ball: rolling pearls up a lacquered ramp into shell pockets.
 - **Kraken Bell** — timing-swing hammer, puck up the rail, bell actually rings the zone's audio.
-- Prizes appear on the counter: paper hat (wearable — visible brim edge in first person), tiny plush kraken (held item).
+- Prizes appear on the counter: paper hat, tiny plush kraken. *(Amended 2026-07-10: won prizes are tracked state-only — Scott ruled out all camera-attached props/player-body meshes; the view is a clean first-person POV.)*
 - **Turtle feeding** at the lagoon (pellets toss, wildlife responds), **wishing well** (real small water sim reused from grotto tech; coin ripples + caustics), **penny press machines** (8 across the park, each with a unique park motif; crank interaction, coin drops into the velvet book), **sweets kiosk** (ice cream), **punch ticket** stamped at every ride gate.
 
 ## 11. Wildlife

@@ -1,3 +1,5 @@
-# Sea Park
+# Pearl Sea Park
 
-This is an amusement park built under the sea. beautiful visual, player can participate all kinds of facilities, enjoy the fun land.
+For one golden day, you are the only guest in the most beautiful place humans ever built — and they built it at the bottom of the sea.
+
+![Pearl Sea Park](assets/pearl.jpeg)

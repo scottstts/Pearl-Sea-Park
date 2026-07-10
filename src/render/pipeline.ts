@@ -48,6 +48,14 @@ export class RenderPipelineSystem implements GameSystem {
    */
   hdrTransform: (hdrColor: object, extras: { viewZNode: object }) => object = (c) => c
 
+  /**
+   * Lens hook, applied after the medium and before bloom: screen-space water
+   * on the camera lens (droplets, streaks, the draining film after the camera
+   * breaks the surface). `extras.sceneColorNode` is the resolved scene texture
+   * for arbitrary-UV refraction sampling.
+   */
+  lensTransform: (hdrColor: object, extras: { sceneColorNode: object }) => object = (c) => c
+
   init(ctx: GameContext): void {
     const { renderer, scene, camera, flags } = ctx
     this.context = ctx
@@ -81,8 +89,9 @@ export class RenderPipelineSystem implements GameSystem {
     const aoAmount = mix(aoTexture.r, float(1), smoothstep(60.0, 160.0, aoDistance))
     const occluded = sceneColor.mul(aoAmount)
     const withMedium = this.hdrTransform(occluded, { viewZNode }) as typeof occluded
-    const bloomNode = bloom(withMedium, 0.35, 0.55, 1.0)
-    const hdr = withMedium.add(bloomNode)
+    const withLens = this.lensTransform(withMedium, { sceneColorNode: sceneColor }) as typeof occluded
+    const bloomNode = bloom(withLens, 0.35, 0.55, 1.0)
+    const hdr = withLens.add(bloomNode)
     const meter = new ExposureMeter(renderer, hdr, flags.debug)
     this.meter = meter
 

@@ -44,6 +44,12 @@ import type { SeaSystem } from './seaSystem'
 const SIGMA = vec3(0.026, 0.0085, 0.005)
 const AMBIENT_DOWN = vec3(0.01, 0.075, 0.14)
 const AMBIENT_UP = vec3(0.1, 0.32, 0.37)
+// NOTE: a "near-surface scattering layer" was tried here twice to mask the
+// horizon gap and REMOVED. For any camera below such a slab, up-grazing rays
+// integrate along it while down-grazing rays exit it — a brightness step
+// pinned to the exact view horizon, which reads as a screen-space artifact.
+// The gap's real fixes: the lagoon saucer (terrain) and a physically bright
+// TIR underside on the ocean surface (oceanSurfaceMaterial tirBody).
 
 /**
  * The undersea medium (plan §5): aquatic-perspective fog + volumetric god
@@ -228,15 +234,17 @@ export class SeaMediumSystem implements GameSystem {
     this.particulates = mesh
   }
 
-  update(ctx: GameContext, dt: number): void {
+  update(ctx: GameContext): void {
     this.timeUniform.value = ctx.time.elapsed
     // Always project: caustics stay visible through the surface from above.
     this.caustics?.update(ctx.renderer)
-    const below = ctx.camera.position.y < 0
-    const target = below ? 1 : 0
-    const current = this.submerged.value as number
-    this.submerged.value = current + (target - current) * Math.min(1, dt * 8)
-    if (this.particulates) this.particulates.visible = this.submerged.value > 0.02
+    // Hard gate, locked to the true wave-displaced waterline: crossing the
+    // surface swaps worlds in the same frame — no smoothing, no lag. The
+    // swell dunks the camera repeatedly during the descent, and every dip
+    // must read as underwater instantly.
+    const below = ctx.camera.position.y < this.sea.surfaceHeightAtCamera
+    this.submerged.value = below ? 1 : 0
+    if (this.particulates) this.particulates.visible = below
   }
 
   dispose(ctx: GameContext): void {
