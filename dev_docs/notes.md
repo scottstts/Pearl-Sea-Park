@@ -243,9 +243,11 @@
     rotation.x = −sin·θ) so every pole leaned sideways off the rig. For
     anything that must visibly connect two parts, build it as point-to-point
     struts (quaternion setFromUnitVectors between real anchor points), not
-    as positioned primitives with hand-tuned Euler leans — the bell now has
-    three-segment external cage ribs seated on the bottom ring and reaching
-    the crown base.
+    as positioned primitives with hand-tuned Euler leans. The bell's
+    three-segment external cage ribs seat on the bottom ring; their upper
+    endpoints derive from the crown dimensions, penetrate 4 cm into its solid
+    base, and carry a partially embedded socket knuckle so no view exposes a
+    floating gap.
   - Footprint LOD round two: flattening NORMALS is not enough — cascade-0
     VERTEX displacement still writes vHeight (body-color stripes, crest
     scatter) and silhouette teeth, a fainter comb that survives to the mesh
@@ -253,6 +255,16 @@
     keeps now ride the same footprint (gap = |camera.y| since the base plane
     is y = 0). The skirt always had zero derivatives (vEdgeKeep = 0), so the
     entire comb ever lived on the inner 700 m mesh.
+- 2026-07-10 underwater surface refraction:
+  - An analytic-sky-only Snell window necessarily erases every above-water
+    structure behind the opaque ocean sheet. The ocean now draws first in the
+    transparent queue while remaining alpha-opaque/depth-writing, samples the
+    completed opaque framebuffer along the true water→air refracted direction,
+    and depth-reconstructs the source to accept only above-water geometry.
+  - Keep the analytic sky/window-glint fallback for the sky dome: sampling its
+    sub-pixel HDR sun through live wave normals aliases into white sparkles.
+    Exact dielectric Fresnel, not Schlick or a binary mask, owns the fade into
+    total internal reflection at the edge of Snell's window.
   - `trackTimestamp` needs `resolveTimestampsAsync` essentially every frame:
     every pass allocates queries and the pool overflows in far fewer than 60
     frames ("Maximum number of queries exceeded" warnings). The monitor now

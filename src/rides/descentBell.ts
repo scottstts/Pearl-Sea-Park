@@ -117,8 +117,16 @@ export class DescentBellSystem implements GameSystem {
     const midRing = new Mesh(new TorusGeometry(1.29, 0.05, 8, 40), lib.brass)
     midRing.rotation.x = Math.PI / 2
     midRing.position.y = 1.1
-    const crown = new Mesh(new CylinderGeometry(0.16, 0.3, 0.35, 14), lib.brass)
-    crown.position.y = 2.78
+    const crownTopRadius = 0.16
+    const crownBaseRadius = 0.3
+    const crownHeight = 0.35
+    const crownCenterY = 2.78
+    const crownBaseY = crownCenterY - crownHeight / 2
+    const crown = new Mesh(
+      new CylinderGeometry(crownTopRadius, crownBaseRadius, crownHeight, 14),
+      lib.brass,
+    )
+    crown.position.y = crownCenterY
     const hook = new Mesh(new TorusGeometry(0.12, 0.035, 8, 18), lib.brass)
     hook.position.y = 3.02
     this.car.add(shell, floor, bottomRing, midRing, crown, hook)
@@ -127,12 +135,17 @@ export class DescentBellSystem implements GameSystem {
     // ring and reaching the crown base. (The old single tilted staves had
     // their lean phases transposed and floated free of everything.)
     const ribGeometry = new CylinderGeometry(1, 1, 1, 10)
+    const ribJointGeometry = new SphereGeometry(0.052, 10, 8)
     const ribUp = new Vector3(0, 1, 0)
+    // Terminate inside the solid crown rather than merely aiming at its
+    // silhouette. The partially embedded end knuckle then reads as a welded
+    // socket and guarantees overlap from every camera angle.
+    const crownAttachmentInset = 0.04
     const ribProfile: Array<[number, number]> = [
       [1.28, 0.24],
       [1.325, 1.45],
       [1.05, 2.2],
-      [0.45, 2.6],
+      [crownBaseRadius - crownAttachmentInset, crownBaseY + crownAttachmentInset],
     ]
     const ribRadii = [0.042, 0.038, 0.032]
     for (let i = 0; i < 4; i++) {
@@ -149,8 +162,8 @@ export class DescentBellSystem implements GameSystem {
         rib.scale.set(ribRadii[s], length, ribRadii[s])
         this.car.add(rib)
       }
-      for (const knuckle of [points[1], points[2]]) {
-        const joint = new Mesh(new SphereGeometry(0.052, 10, 8), lib.brass)
+      for (const knuckle of [points[1], points[2], points[3]]) {
+        const joint = new Mesh(ribJointGeometry, lib.brass)
         joint.position.copy(knuckle)
         this.car.add(joint)
       }

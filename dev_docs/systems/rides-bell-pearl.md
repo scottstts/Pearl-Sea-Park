@@ -35,6 +35,10 @@
   guest can step through the open mouth while the bell is down.
 - Deck freeboard stays ≥ 2.5 m — at deck 1.3 m the FFT crests washed over the
   boards.
+- The four three-segment cage ribs are point-to-point members. Their upper
+  anchors derive from the crown's base radius/height and terminate 4 cm inside
+  the solid crown with a partially embedded brass knuckle; an endpoint merely
+  aligned to the crown silhouette leaves a visible air gap from oblique views.
 - Terrace = the bell's own SlotWriter build (plaza, steps, lamps, landing
   ring); the arrival→atrium path lives in `PARK_PATHS`.
 

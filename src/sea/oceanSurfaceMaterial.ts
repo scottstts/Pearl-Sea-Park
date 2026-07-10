@@ -1,10 +1,16 @@
 import { DoubleSide } from 'three'
 import { MeshBasicNodeMaterial } from 'three/webgpu'
 import {
+  cameraProjectionMatrix,
+  cameraProjectionMatrixInverse,
   cameraPosition,
+  cameraViewMatrix,
+  cameraWorldMatrix,
   dot,
   faceDirection,
   float,
+  getScreenPosition,
+  getViewPosition,
   max,
   mix,
   modelWorldMatrix,
@@ -19,6 +25,8 @@ import {
   vec2,
   vec3,
   vec4,
+  viewportDepthTexture,
+  viewportSafeUV,
 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
 import { fbm2 } from '../render/tslNoise'
@@ -35,6 +43,10 @@ const MIST = vec3(0.38, 0.5, 0.58)
 export interface OceanMaterialOptions {
   /** Full three-cascade sampling + foam; false = far skirt (cascade 0 only). */
   detailed: boolean
+  /** One shared opaque-frame copy, sampled at each surface's refracted UV. */
+  sceneBackdrop: {
+    sample: (uv: Node<'vec2'>) => Node<'vec4'>
+  }
   /**
    * Half-size of the detailed mesh: fine cascades fade to zero approaching
    * this edge so the surface exactly matches the cascade-0-only skirt at the
@@ -58,6 +70,16 @@ export function createOceanSurfaceMaterial(
   const material = new MeshBasicNodeMaterial()
   material.side = DoubleSide
   material.fog = false
+  // The viewport copy used by underwater refraction must be taken after the
+  // opaque scene has rendered but before this surface shades. Alpha remains
+  // one and depth still writes, so the ocean is visually/depth-wise opaque;
+  // the transparent queue is only render-order ownership for the backdrop.
+  material.transparent = true
+  material.depthWrite = true
+  // A transparent DoubleSide material normally draws back and front in two
+  // passes. This is a single geometric sheet, and a second pass would copy
+  // the first pass's water result into its own refraction backdrop.
+  material.forceSinglePass = true
 
   const patch = sim.patchLengths
   const cascadeCount = options.detailed ? 3 : 1
@@ -232,6 +254,55 @@ export function createOceanSurfaceMaterial(
     .mul(24.0)
     .mul(sunColorUniform)
 
+  // Reproject the physically refracted world direction into the opaque
+  // framebuffer that exists immediately before the ocean draws. This makes
+  // real structures above the interface participate in Snell's window. The
+  // source depth is reconstructed back to world space so submerged geometry,
+  // foreground objects, and the camera-following sky dome cannot leak into
+  // the transmitted structural silhouette.
+  const refractedView = cameraViewMatrix.mul(vec4(refracted, 0)).xyz
+  const refractedUv = getScreenPosition(refractedView, cameraProjectionMatrix)
+  const uvInside = step(0.002, refractedUv.x)
+    .mul(step(refractedUv.x, 0.998))
+    .mul(step(0.002, refractedUv.y))
+    .mul(step(refractedUv.y, 0.998))
+  const guardedUv = refractedUv.clamp(vec2(0.002), vec2(0.998))
+  const safeUv = viewportSafeUV(guardedUv)
+  const refractedScene = options.sceneBackdrop.sample(safeUv as Node<'vec2'>).rgb
+  const sourceDepth = viewportDepthTexture(safeUv).r
+  const sourceView = getViewPosition(safeUv, sourceDepth, cameraProjectionMatrixInverse)
+  const sourceWorld = cameraWorldMatrix.mul(vec4(sourceView, 1)).xyz
+  const aboveWaterStructure = step(0.05, sourceWorld.y)
+    // The sky dome is camera-centred at 3400 m. Keep the established analytic
+    // sky/glint path for it so the sub-pixel HDR sun is not sampled as noise.
+    .mul(step(sourceView.length(), 3200.0))
+    .mul(uvInside)
+  const transmittedScene = mix(
+    skyThrough.add(windowGlint),
+    refractedScene,
+    aboveWaterStructure,
+  )
+
+  // Exact unpolarised dielectric Fresnel for water -> air. Schlick alone
+  // does not rise correctly into the critical angle, so it would let the
+  // structure remain pasted over what should become total internal reflection.
+  const cosIncident = max(dot(viewDir, normal), 0.0)
+  const eta = float(1.333)
+  const cosTransmitted = float(1)
+    .sub(eta.mul(eta).mul(float(1).sub(cosIncident.mul(cosIncident))))
+    .max(0.0)
+    .sqrt()
+  const rs = eta
+    .mul(cosIncident)
+    .sub(cosTransmitted)
+    .div(eta.mul(cosIncident).add(cosTransmitted).max(1e-4))
+  const rp = eta
+    .mul(cosTransmitted)
+    .sub(cosIncident)
+    .div(eta.mul(cosTransmitted).add(cosIncident).max(1e-4))
+  const interfaceFresnel = rs.mul(rs).add(rp.mul(rp)).mul(0.5)
+  const interfaceTransmission = insideWindow.mul(float(1).sub(interfaceFresnel))
+
   // Outside the critical angle: total internal reflection. The mirror
   // reflects the UPWELLING water light — silvery teal near the medium's
   // horizontal ambient (medium.ts AMBIENT_* mix), not the deep body color.
@@ -240,7 +311,7 @@ export function createOceanSurfaceMaterial(
   // start from a radiance close to what the fog converges to.
   const tirBody = vec3(0.035, 0.14, 0.19).add(SSS_TINT.mul(crestScatter).mul(0.5))
 
-  const below = mix(tirBody, skyThrough.add(windowGlint), insideWindow)
+  const below = mix(tirBody, transmittedScene, interfaceTransmission)
 
   material.colorNode = vec4(mix(below, above, isAbove), 1.0)
   return material

@@ -1,5 +1,5 @@
 import { BufferAttribute, BufferGeometry, Mesh, PlaneGeometry } from 'three'
-import { uniform } from 'three/tsl'
+import { uniform, viewportTexture } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
@@ -66,6 +66,10 @@ export class SeaSystem implements GameSystem {
     this.followStep = INNER_SIZE / segments
 
     const timeNode = this.timeUniform as unknown as import('three/webgpu').Node<'float'>
+    // Both ocean sheets sample one framebuffer copy. A shared base
+    // ViewportTextureNode makes its per-surface samples resolve to the same
+    // render-scoped texture instead of copying the 4 MP HDR target twice.
+    const sceneBackdrop = viewportTexture()
     const innerGeometry = new PlaneGeometry(INNER_SIZE, INNER_SIZE, segments, segments)
     innerGeometry.rotateX(-Math.PI / 2)
     const inner = new Mesh(
@@ -73,17 +77,25 @@ export class SeaSystem implements GameSystem {
       createOceanSurfaceMaterial(sim, timeNode, {
         detailed: true,
         edgeFadeHalfSize: INNER_SIZE / 2,
+        sceneBackdrop,
       }),
     )
     inner.frustumCulled = false
+    // Transparent queue only so the material can capture the completed opaque
+    // scene for refraction. Draw before normal transparent effects (particles,
+    // glass, foam), which must remain able to appear in front of the surface.
+    inner.renderOrder = -100
     ctx.scene.add(inner)
     this.inner = inner
 
     const outer = new Mesh(
       createSkirtGeometry(),
-      createOceanSurfaceMaterial(sim, timeNode, { detailed: false }),
+      createOceanSurfaceMaterial(sim, timeNode, { detailed: false, sceneBackdrop }),
     )
     outer.frustumCulled = false
+    // The skirt goes first so the detailed sheet's backdrop is never replaced
+    // by a previous draw over the central refraction region.
+    outer.renderOrder = -101
     ctx.scene.add(outer)
     this.outer = outer
 
