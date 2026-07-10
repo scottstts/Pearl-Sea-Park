@@ -20,6 +20,7 @@ import { CarouselSystem } from './rides/carousel'
 import { DescentBellSystem } from './rides/descentBell'
 import { GreatWheelSystem } from './rides/greatWheel'
 import { PearlLineSystem } from './rides/pearlLine'
+import { TorrentSystem } from './rides/torrent'
 import type { GameContext } from './runtime/context'
 import { GameLoop } from './runtime/loop'
 import { SystemRegistry } from './runtime/registry'
@@ -125,6 +126,7 @@ async function boot(): Promise<void> {
     registry.add(new DescentBellSystem(services, player))
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))
+    registry.add(new TorrentSystem(services, player))
     const carousel = registry.add(new CarouselSystem(services, player))
     registry.add(new SchedulerSystem())
     const audio = registry.add(new AudioEngineSystem())

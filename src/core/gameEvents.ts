@@ -24,5 +24,7 @@ export type GameEvents = {
   'ride/wheel-riding': { riding: boolean }
   /** Guest mounted/left the carousel. */
   'ride/carousel-riding': { riding: boolean }
+  /** Torrent lap-bar down / raised (rattle + roar while riding). */
+  'ride/torrent-riding': { riding: boolean }
 }
 

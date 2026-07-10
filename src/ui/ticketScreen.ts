@@ -53,6 +53,7 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     'pearl-line': 'Stringing the cable',
     'great-wheel': 'Turning the great wheel',
     carousel: 'Winding the music box',
+    torrent: 'Priming the torrent',
     scheduler: 'Winding the timetable',
     wildlife: 'Inviting the fish',
     audio: 'Tuning the music boxes',

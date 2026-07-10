@@ -59,6 +59,10 @@ export class AudioEngineSystem implements GameSystem {
       if (riding) this.startHum('carousel', 36, 0.02)
       else this.stopHum('carousel')
     })
+    ctx.events.on('ride/torrent-riding', ({ riding }) => {
+      if (riding) this.startHum('torrent', 52, 0.06)
+      else this.stopHum('torrent')
+    })
   }
 
   private start(_ctx: GameContext): void {

@@ -60,3 +60,9 @@
   - VehicleSeatRig look requires pointer lock now — unlocked mousemove (preview window, OS cursor) was silently drifting ride cameras. Any future camera-offset input must gate on pointerLockElement.
   - The interaction view-cone gates ride EXIT prompts too — automated tests must aim the look (rig.lookYaw) at the gate before dispatching KeyE, exactly like a real guest looking at the door.
   - Composed music lives fine as inline note arrays in the audio engine (16-bar waltz loop, scheduled ahead, re-armed from update()); distance mixing = gain 1/d² + closing low-pass on one bus.
+- 2026-07-10 S10 lessons (the Torrent — see systems/ride-torrent.md):
+  - Energy-correct ride dynamics FIND layout bugs: every stall/insta-dock had a real cause (brake zone enclosing the launch point, spline sag off a helix, an honest energy shortfall). Trust the integrator; fix the track, never fudge the physics.
+  - Zone-based accelerations (launch/surge/boost/brake) keyed to arc positions found via nearest-sample lookup of authoring landmarks — robust against re-authoring; but remember tail-indexed lookups (`points.length − k`) break if points are inserted after them.
+  - Helix→straight handoffs need explicit unwind waypoints along the exit tangent; CatmullRom otherwise balloons downward and the design speed profile silently absorbs it.
+  - Run the SAME integrator as a design pass before building banking/geometry — banked frames must match the speeds the train will actually carry.
+  - For automated ride tests, call `interactable.onInteract()` directly; synthetic KeyE is view-cone dependent and fails silently at the wrong look angle.
