@@ -363,13 +363,16 @@
     viewing distance changed. Use the opaque depth sample to estimate subject
     distance, then reproject from the actual surface point and depth-reject
     samples off the ray or on the wrong side of the interface.
-  - The first pale near-waterline "bubble" diagnosis was wrong: it was not a
-    missing air→water body-colour transmission path. The surface selected its
-    optical regime with per-fragment `faceDirection`, so steep nearby displaced
-    triangles could show backfaces and enter the underwater/Snell shading path
-    while the camera and medium were still above water. Surface and medium now
-    share one camera-level submerged uniform from the displaced waterline; an
-    above-water frame cannot contain a local patch of underwater optics.
+  - The pale near-waterline "bubble" was not an ocean or Snell effect. The
+    camera rides inside the Descent Bell's lathed glass shell, but that shell
+    reused constant-alpha DoubleSide architectural glass. Its backfaces and
+    open lower edge overlaid a smooth curved region on the passenger view;
+    changing water colour merely made that camera-enclosing overlay obvious.
+    The lathe winding is outward (all radial normal dots are positive), so a
+    bell-only FrontSide clone preserves exterior glazing and removes the entire
+    interior overlay. The ocean still shares one camera-level submerged uniform
+    with the medium; that is correct optical-state hygiene, but was not the
+    source of this artifact.
   - A fixed-sun cache cannot use periodic full-world expiry to service moving
     casters: four staggered 180-frame ages produced one broad shadow render
     every 45–90 frames, matching the residual roaming hitch, while cabins

@@ -176,7 +176,7 @@ export function createOceanSurfaceMaterial(
   // Fold-aware normal (slope / (1 + λ·dD/dx)). Optical side is a camera
   // medium state, never a per-triangle facing test: right at the crossing a
   // displaced sheet can expose nearby backfaces before the camera itself is
-  // submerged, which previously painted a local bright Snell-window bubble.
+  // submerged. The surface must not mix two optical media in one frame.
   const slopeX = derivatives.x.div(max(0.18, derivatives.z.add(1)))
   const slopeZ = derivatives.y.div(max(0.18, derivatives.w.add(1)))
   const upNormal = normalize(vec3(slopeX.negate(), 1, slopeZ.negate()))

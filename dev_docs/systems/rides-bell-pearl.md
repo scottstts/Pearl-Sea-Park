@@ -39,6 +39,12 @@
   anchors derive from the crown's base radius/height and terminate 4 cm inside
   the solid crown with a partially embedded brass knuckle; an endpoint merely
   aligned to the crown silhouette leaves a visible air gap from oblique views.
+- The lathed glass shell clones the shared decorative glass but renders
+  `FrontSide` only. Its winding is outward, so the bell remains glazed from
+  exterior views while a seated camera cannot see the shell's backfaces. A
+  constant-alpha DoubleSide shell overlays its open edge across the passenger
+  view; against the changing waterline that reads as a smooth camera-centred
+  pale bubble unrelated to the ocean waves.
 - Terrace = the bell's own SlotWriter build (plaza, steps, lamps, landing
   ring); the arrival→atrium path lives in `PARK_PATHS`.
 

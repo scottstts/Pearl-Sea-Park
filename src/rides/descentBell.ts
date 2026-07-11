@@ -2,6 +2,7 @@ import {
   BoxGeometry,
   CatmullRomCurve3,
   CylinderGeometry,
+  FrontSide,
   LatheGeometry,
   Mesh,
   Object3D,
@@ -11,6 +12,7 @@ import {
   Vector2,
   Vector3,
 } from 'three'
+import type { MeshStandardNodeMaterial } from 'three/webgpu'
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
@@ -44,6 +46,7 @@ export class DescentBellSystem implements GameSystem {
   private readonly group = new Object3D()
   private readonly car = new Object3D()
   private cable: Mesh | null = null
+  private shellMaterial: MeshStandardNodeMaterial | null = null
 
   private state: BellState = 'docked-top'
   private stateTime = 0
@@ -95,10 +98,15 @@ export class DescentBellSystem implements GameSystem {
     // owns the architecture; the bell owns the car, cable, and drive.)
 
     // ── The bell car ──────────────────────────────────────────────────────
-    // The glass is mirror-smooth: a coarse faceted profile paints sharp
-    // full-screen reflection bands for the guest seated INSIDE it (each flat
-    // lathe segment carries one env-reflection tone). Sample a smooth curve
-    // through the same envelope so the sheen grades continuously.
+    // The shared decorative glass is DoubleSide for thin architectural panes.
+    // That is wrong for this camera-enclosing shell: its backfaces laid a
+    // smooth, solid-edged tint over the passenger view, which became especially
+    // conspicuous against the ocean at the waterline and looked like a pale
+    // camera-centred bubble. Keep the exterior glass for observers, but cull it
+    // automatically from inside the outward-wound lathe.
+    const shellMaterial = lib.glass.clone()
+    shellMaterial.side = FrontSide
+    this.shellMaterial = shellMaterial
     const shellProfile = new CatmullRomCurve3([
       new Vector3(1.22, 0.16, 0),
       new Vector3(1.3, 0.7, 0),
@@ -109,7 +117,7 @@ export class DescentBellSystem implements GameSystem {
     ])
       .getPoints(26)
       .map((p) => new Vector2(p.x, p.y))
-    const shell = new Mesh(new LatheGeometry(shellProfile, 48), lib.glass)
+    const shell = new Mesh(new LatheGeometry(shellProfile, 48), shellMaterial)
     const floor = new Mesh(new CylinderGeometry(1.22, 1.28, 0.1, 32), lib.brass)
     floor.position.y = 0.1
     const bottomRing = new Mesh(new TorusGeometry(1.26, 0.07, 10, 40), lib.brass)
@@ -229,7 +237,11 @@ export class DescentBellSystem implements GameSystem {
 
     this.group.add(w.compile())
     this.group.traverse((node) => {
-      if ((node as Mesh).isMesh && (node as Mesh).material !== lib.glass) {
+      if (
+        (node as Mesh).isMesh &&
+        (node as Mesh).material !== lib.glass &&
+        (node as Mesh).material !== shellMaterial
+      ) {
         node.castShadow = true
         node.receiveShadow = true
       }
@@ -363,5 +375,7 @@ export class DescentBellSystem implements GameSystem {
 
   dispose(ctx: GameContext): void {
     ctx.scene.remove(this.group)
+    this.shellMaterial?.dispose()
+    this.shellMaterial = null
   }
 }
