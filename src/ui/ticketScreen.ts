@@ -45,6 +45,7 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     player: 'Pressing your ticket',
     'pause-card': 'Printing the ticket reverse',
     interaction: 'Polishing the levers',
+    teleport: 'Charting the tide-lines',
     seats: 'Plumping the cushions',
     'held-items': 'Gilding the ticket',
     materials: 'Mixing the lacquers',

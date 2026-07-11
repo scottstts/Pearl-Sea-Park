@@ -23,7 +23,9 @@ import type { DistrictServices } from './districts/atrium'
 import { FACILITY_ENTRANCE_SIGNS, PARK_PATHS } from './parkLayout.ts'
 
 const ATLAS_COLUMNS = 4
-const ATLAS_ROWS = 4
+// Rows follow the roster so the marker count is free to grow (the teleport
+// network added the park-entrance node) without re-hand-tuning the grid.
+const ATLAS_ROWS = Math.ceil(FACILITY_ENTRANCE_SIGNS.length / ATLAS_COLUMNS)
 const TILE_WIDTH = 256
 const TILE_HEIGHT = 128
 const FACE_WIDTH = 3.08
@@ -39,8 +41,8 @@ type SignPrototype = {
 
 /**
  * A single authored entrance-marker kit for the whole park. Structural parts
- * are three instanced draws and all sixteen named faces share one atlas mesh,
- * so adding legibility does not multiply the frame's draw-call burden.
+ * are three instanced draws and every named face shares one atlas mesh, so
+ * adding legibility does not multiply the frame's draw-call burden.
  */
 export class FacilitySignsSystem implements GameSystem {
   readonly id = 'facility-signs'
@@ -337,8 +339,8 @@ export function auditFacilitySigns(): {
   minimumFacingDot: number
   minimumPathClearance: number
 } {
-  if (FACILITY_ENTRANCE_SIGNS.length !== ATLAS_COLUMNS * ATLAS_ROWS) {
-    throw new Error('Facility entrance sign atlas must be exactly full')
+  if (FACILITY_ENTRANCE_SIGNS.length > ATLAS_COLUMNS * ATLAS_ROWS) {
+    throw new Error('Facility entrance sign atlas overflows its grid')
   }
   const ids = new Set(FACILITY_ENTRANCE_SIGNS.map((sign) => sign.id))
   if (ids.size !== FACILITY_ENTRANCE_SIGNS.length) {

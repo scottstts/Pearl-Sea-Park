@@ -316,3 +316,43 @@
   - Facility wayfinding is one system, not one-off boards. Sixteen entrance
     signs share three instanced frame slots and one 2 MB name atlas. Their plan
     records an approach target and the offline audit verifies exact facing.
+- 2026-07-11 movement, underwater jump, and the teleport network (see
+  systems/player.md for the full set):
+  - **"Walking through mesh" is never a controller bug.** The kinematic capsule
+    already collides with every registered collider, so the fix is always a
+    missing collider on a solid mesh — and the gaps are the ride superstructures
+    built inline without one (Great Wheel raking legs, Torrent track piers).
+    Scott's ruling: solid structures only — flora, coral, wildlife, and tabletop
+    props stay walk-through; do not blanket-collider organic shapes.
+  - **The angled leg problem.** `addStaticBox`/`addStaticCylinder` only take a
+    yaw, so a raked strut (wheel legs) cannot be matched exactly. A vertical
+    pier over the reachable lowest few metres at the foot is the right envelope;
+    don't chase the tilt up into an unreachable machine.
+  - **Underwater jump = gravity that follows the medium.** `submerged` →
+    `SWIM_GRAVITY` 2.6, above → 9.81; the leap is a slow diver's push-off, not a
+    hop. This deliberately bends the "sea is air / normal physics" canon *for the
+    airborne arc only* (grounded walking is unchanged), on Scott's explicit
+    request. Gate = `submerged && grounded && controlEnabled`, which already
+    means "in the park, outside the elevator, not in a ride car". Drive
+    `submerged` from `sea/waterline-crossed`, never a y-test.
+  - **Rapier snap-to-ground eats a naive jump.** Must `disableSnapToGround()`
+    for the arc and re-enable on landing (and in `placeAt`), or the upward move
+    is glued back to the floor. Edge-trigger the jump (`event.repeat`) and drop
+    any buffered jump on the borrowed-control path, or the Space that leaves a
+    bench seat launches a jump the instant the guest stands.
+  - **Modal freeze must not ride on `controlEnabled`.** The teleport menu uses a
+    new `PlayerSystem.inputFrozen` (freezes walk+look only). Layering another
+    owner on `controlEnabled` strands control: a pause captured mid-freeze (Esc,
+    alt-tab) restores the borrowed `false`. Rides/seats/pause own
+    `controlEnabled`; modals own `inputFrozen`.
+  - **A live (non-paused) modal must mute contextual interaction.** The teleport
+    menu does not pause the loop, so `InteractionSystem.suspended` gates both the
+    prompt and the key handler — otherwise an E press meant for the menu fires a
+    nearby bench/gate. Esc unavoidably releases the pointer → the pause card
+    opens; accepted, since Esc is the game's universal "out".
+  - **Teleport lands in front of the sign, not at its approach point.** A sign's
+    `approach` can be far (the Atrium's is the surface drop-off); spawn is
+    `SPAWN_DIST` along the approach *ray* from the sign, turned to face the
+    board. The added `park-entrance` marker (beside the bell landing) is the
+    network's home node and the 17th sign — the atlas grid is now count-derived
+    (`ceil(n/cols)`) and the audit checks "must not overflow", not "exactly full".

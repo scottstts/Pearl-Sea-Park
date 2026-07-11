@@ -90,6 +90,10 @@ export class GreatWheelSystem implements GameSystem {
         leg.lookAt(top)
         leg.rotateX(Math.PI / 2)
         this.group.add(leg)
+        // The legs rake inward toward the submerged hub; a guest reaching the
+        // basin floor meets their splayed feet. A vertical pier over the lowest
+        // few metres blocks that without chasing the tilt up into the machine.
+        physics.addStaticCylinder(footX, footY + 2.5, footZ, 2.5, 0.85)
       }
       // Bracing beam between the leg pair.
       const brace = new Mesh(new CylinderGeometry(0.22, 0.22, 15, 10), lib.iron)

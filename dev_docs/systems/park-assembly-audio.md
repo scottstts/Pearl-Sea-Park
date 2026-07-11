@@ -65,10 +65,13 @@
   while Atrium and Observatory rings face their own centers. The offline audit
   rejects any placement whose forward/target dot product is not effectively 1.
 - `FacilitySignsSystem` places one rooted, brass-framed marker at every facility
-  threshold. All sixteen frames share three instanced material draws and all
-  sixteen names share one 1024×512 (2 MB) atlas mesh, for four draws total.
-  `parkLayout.ts` owns positions and arrival targets; the geometry audit checks
-  unique coverage, approach-facing orientation, and walking-lane clearance.
+  threshold (17 as of the teleport network's `park-entrance` node). All frames
+  share three instanced material draws and all names share one count-derived
+  atlas mesh — the grid is `ceil(n/4)` rows (now 1024×640, ~2.5 MB) so the roster
+  can grow without re-hand-tuning, for four draws total. `parkLayout.ts` owns
+  positions and arrival targets; the geometry audit checks unique coverage,
+  approach-facing orientation, walking-lane clearance, and atlas non-overflow.
+  Each marker also anchors a teleport node (see systems/player.md).
 - Facility finish is plan-driven in `world/parkFacilities.ts`: Esplanade owns a
   continuous entablature and threshold urns; Tidal Court a pearl-pedestal rim;
   Midway an arched/corniced hall and built counter rhythm; Café Méduse a full

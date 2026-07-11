@@ -137,4 +137,11 @@ export const FACILITY_ENTRANCE_SIGNS: readonly FacilityEntranceSign[] = [
     id: 'pearl-line-wheel', title: 'PEARL LINE', subtitle: 'WHEEL PIER',
     x: 139.2, z: 63.2, approachX: PARK_PLAN.tidalCourt.x, approachZ: PARK_PLAN.tidalCourt.z,
   },
+  // The park threshold beside the Descent Bell's undersea landing. It reads as
+  // the arrival marker and anchors the teleport network's home node; the
+  // approach faces the bell so guests stepping off read it head-on.
+  {
+    id: 'park-entrance', title: 'PARK ENTRANCE', subtitle: 'DESCENT BELL',
+    x: -6, z: 311, approachX: PARK_PLAN.arrival.x, approachZ: PARK_PLAN.arrival.z,
+  },
 ] as const

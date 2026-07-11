@@ -22,6 +22,9 @@ export interface Interactable {
 export class InteractionSystem implements GameSystem {
   readonly id = 'interaction'
 
+  /** Modals (the teleport menu) raise this to mute contextual prompts + keys. */
+  suspended = false
+
   private readonly interactables = new Set<Interactable>()
   private active: Interactable | null = null
   private promptElement: HTMLDivElement | null = null
@@ -40,7 +43,7 @@ export class InteractionSystem implements GameSystem {
     this.promptElement = prompt
 
     window.addEventListener('keydown', (event) => {
-      if (!this.active) return
+      if (this.suspended || !this.active) return
       if (event.code === (this.active.key ?? 'KeyE')) {
         this.active.onInteract()
       }
@@ -48,6 +51,13 @@ export class InteractionSystem implements GameSystem {
   }
 
   update(ctx: GameContext): void {
+    if (this.suspended) {
+      if (this.active) {
+        this.active = null
+        this.promptElement?.classList.remove('is-visible')
+      }
+      return
+    }
     const camera = ctx.camera
     camera.getWorldDirection(this.forward)
     let best: Interactable | null = null

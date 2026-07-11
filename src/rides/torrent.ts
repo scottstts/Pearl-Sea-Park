@@ -307,6 +307,10 @@ export class TorrentSystem implements GameSystem {
       column.position.set(frame.position.x, ground + height / 2, frame.position.z)
       column.castShadow = true
       this.group.add(column)
+      // A guest crossing the basin floor should meet these piers, not pass
+      // through them. Radius 0.34 hugs the 0.3 m base; the full height is a
+      // thin pillar so the airborne remainder is harmless.
+      physics.addStaticCylinder(frame.position.x, ground + height / 2, frame.position.z, height / 2, 0.34)
     }
 
     // ── Station ───────────────────────────────────────────────────────────

@@ -16,6 +16,7 @@ import { HeldItemSystem } from './player/heldItems'
 import { InteractionSystem } from './player/interact'
 import { PlayerSystem } from './player/player'
 import { SeatSystem } from './player/seats'
+import { TeleportSystem } from './player/teleport'
 import { LensDripSystem } from './render/lensDrips'
 import { RenderPipelineSystem } from './render/pipeline'
 import { createRenderer, webgpuAvailable } from './render/renderer'
@@ -152,6 +153,10 @@ async function boot(): Promise<void> {
     registry.add(new AtriumSystem(services))
     registry.add(new ParkAssemblySystem(services))
     registry.add(new FacilitySignsSystem(services, terrainHeight))
+    // Every facility marker doubles as a teleport node (guest with a player only).
+    if (player && services.interaction) {
+      registry.add(new TeleportSystem(player, services.interaction, terrainHeight))
+    }
     registry.add(new DescentBellSystem(services, player))
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))

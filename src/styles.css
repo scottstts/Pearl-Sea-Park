@@ -347,3 +347,196 @@ canvas#scene {
     grid-template-columns: repeat(2, 1fr);
   }
 }
+
+/* ── Teleport network ──────────────────────────────────── */
+
+.teleport {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: radial-gradient(
+    120% 90% at 50% 30%,
+    rgba(11, 46, 60, 0.62) 0%,
+    rgba(7, 30, 40, 0.72) 55%,
+    rgba(4, 22, 29, 0.82) 100%
+  );
+  backdrop-filter: blur(8px) saturate(0.8);
+  z-index: 80;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s ease;
+  user-select: none;
+}
+
+.teleport.is-open {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.teleport-panel {
+  position: relative;
+  width: min(440px, calc(100vw - 3rem));
+  max-height: min(76vh, 640px);
+  display: flex;
+  flex-direction: column;
+  padding: 2.2rem 2.4rem 1.5rem;
+  text-align: center;
+  color: var(--foam);
+  background: color-mix(in srgb, var(--ink) 62%, transparent);
+  border: 1px solid color-mix(in srgb, var(--gold) 42%, transparent);
+  border-radius: 4px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.5);
+}
+
+.teleport-panel::before {
+  content: '';
+  position: absolute;
+  inset: 7px;
+  border: 1px solid color-mix(in srgb, var(--gold) 20%, transparent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.teleport-eyebrow {
+  font-size: 0.68rem;
+  letter-spacing: 0.34em;
+  text-transform: uppercase;
+  color: var(--gold);
+  margin-bottom: 0.5rem;
+}
+
+.teleport-heading {
+  font-weight: 400;
+  font-size: 1.5rem;
+  letter-spacing: 0.05em;
+  margin-bottom: 1.1rem;
+  color: var(--foam);
+}
+
+.teleport-list {
+  list-style: none;
+  margin: 0;
+  padding: 0.2rem;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  scrollbar-width: thin;
+  scrollbar-color: var(--gold-dim) transparent;
+}
+
+.teleport-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.05rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid transparent;
+  border-radius: 2px;
+  transition:
+    background 0.14s ease,
+    border-color 0.14s ease;
+}
+
+.teleport-item-title {
+  font-size: 1rem;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--foam) 78%, transparent);
+}
+
+.teleport-item-sub {
+  font-size: 0.66rem;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--foam) 42%, transparent);
+}
+
+.teleport-item.is-active {
+  background: color-mix(in srgb, var(--gold) 16%, transparent);
+  border-color: color-mix(in srgb, var(--gold) 55%, transparent);
+}
+
+.teleport-item.is-active .teleport-item-title {
+  color: var(--foam);
+}
+
+.teleport-item.is-active .teleport-item-sub {
+  color: var(--gold);
+}
+
+.teleport-hint {
+  display: flex;
+  justify-content: center;
+  gap: 1.1rem;
+  flex-wrap: wrap;
+  margin-top: 1.1rem;
+  padding-top: 0.9rem;
+  border-top: 1px solid color-mix(in srgb, var(--gold) 18%, transparent);
+  font-size: 0.72rem;
+  font-style: italic;
+  color: color-mix(in srgb, var(--foam) 55%, transparent);
+}
+
+.teleport-hint b {
+  font-style: normal;
+  color: var(--gold);
+  letter-spacing: 0.08em;
+  margin-right: 0.3rem;
+}
+
+/* The move itself: a full-screen dissolve to the deep-blue field the visit
+   opens on. Opacity is driven per frame from the transition state machine. */
+.teleport-fade {
+  position: fixed;
+  inset: 0;
+  display: none;
+  place-items: center;
+  background: radial-gradient(
+    130% 100% at 50% 42%,
+    #0b2e3c 0%,
+    #071e28 55%,
+    #04161d 100%
+  );
+  z-index: 95;
+  opacity: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.teleport-fade.is-active {
+  display: grid;
+}
+
+.teleport-fade-inner {
+  text-align: center;
+  color: var(--foam);
+}
+
+.teleport-fade-title {
+  font-family: var(--serif);
+  font-size: clamp(1.8rem, 5vw, 2.8rem);
+  letter-spacing: 0.32em;
+  text-transform: uppercase;
+  color: var(--foam);
+  animation: teleport-pulse 1.7s ease-in-out infinite;
+}
+
+.teleport-fade-sub {
+  margin-top: 0.9rem;
+  font-style: italic;
+  font-size: 0.95rem;
+  letter-spacing: 0.14em;
+  color: var(--gold);
+}
+
+@keyframes teleport-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
