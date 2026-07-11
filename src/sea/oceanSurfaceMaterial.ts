@@ -30,7 +30,7 @@ import {
   viewportSafeUV,
 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
-import { fbm2 } from '../render/tslNoise'
+import { fbm2, valueNoise2 } from '../render/tslNoise'
 import { skyRadiance } from '../sky/skyRadiance'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
 import type { WaveSim } from './waveSim'
@@ -116,7 +116,11 @@ export function createOceanSurfaceMaterial(
   const vertexGap = cameraPosition.y.abs().max(0.5)
   const vertexFootprint = vertexDistance.mul(vertexDistance).mul(0.001).div(vertexGap)
   const vertexKeeps = [
-    float(1).sub(smoothstep(6.0, 18.0, vertexFootprint)),
+    // Match the above-water cascade-0 normal cutoff. Keeping coarse vertex
+    // displacement to 18 m/pixel left sub-pixel triangle rows even after the
+    // fragment normal and height response had flattened, producing both the
+    // dark comb and the faint gray band at the inner-mesh transition.
+    float(1).sub(smoothstep(2.5, 5.5, vertexFootprint)),
     float(1).sub(smoothstep(0.35, 1.2, vertexFootprint)),
     float(1).sub(smoothstep(0.1, 0.4, vertexFootprint)),
   ]
@@ -160,18 +164,27 @@ export function createOceanSurfaceMaterial(
   const heightGap = cameraPosition.y.sub(vWorld.y).abs().max(0.5)
   const pixelFootprint = vDistance.mul(vDistance).mul(0.001).div(heightGap)
   // Shortest wavelengths per cascade: ~41 m / ~2.8 m / ~0.83 m.
+  // Cascade 0 needs a stricter keep for the narrow above-water GGX lobe:
+  // attenuate while its shortest wave still spans ~16 pixels and finish by
+  // ~8 pixels. Sampling first and flattening the reconstructed normal later
+  // preserves the alias, which is what produced the visible horizon comb.
+  const keepCascade0Above = float(1).sub(smoothstep(2.5, 5.5, pixelFootprint))
   const keepCascade1 = float(1).sub(smoothstep(0.35, 1.2, pixelFootprint))
   const keepCascade2 = float(1).sub(smoothstep(0.1, 0.4, pixelFootprint))
   const cascadeKeeps = [float(1), keepCascade1, keepCascade2]
 
-  let derivatives: Node<'vec4'> = sim.derivativeNodes[0]
+  const derivative0 = sim.derivativeNodes[0]
     .sample(vWorldXZ.div(patch[0]))
     .mul(vEdgeKeep)
+  let derivatives: Node<'vec4'> = derivative0
   for (let i = 1; i < cascadeCount; i++) {
     derivatives = derivatives.add(
       sim.derivativeNodes[i].sample(vWorldXZ.div(patch[i])).mul(vEdgeKeep).mul(cascadeKeeps[i]),
     )
   }
+  const aboveDerivatives = derivatives.sub(
+    derivative0.mul(float(1).sub(keepCascade0Above)),
+  )
 
   // Fold-aware normal (slope / (1 + λ·dD/dx)). Optical side is a camera
   // medium state, never a per-triangle facing test: right at the crossing a
@@ -262,32 +275,107 @@ export function createOceanSurfaceMaterial(
   const refractedSceneValid = refractedSample.a
 
   // ── Above-surface shading ──────────────────────────────────────────────
-  const heightMask = smoothstep(-1.7, 1.5, vHeight)
+  // The FFT resolves down to ~0.83 m. Add two weak, independently advected
+  // capillary bands below that limit so close water carries real small-scale
+  // slope variation without rewriting the swell. Each band disappears once
+  // its shortest structure is below the current pixel footprint.
+  const aboveSlopeX = aboveDerivatives.x.div(max(0.18, aboveDerivatives.z.add(1)))
+  const aboveSlopeZ = aboveDerivatives.y.div(max(0.18, aboveDerivatives.w.add(1)))
+  let aboveNormal: Node<'vec3'> = normalize(
+    vec3(aboveSlopeX.negate(), 1, aboveSlopeZ.negate()),
+  )
+  if (options.detailed) {
+    const detailUvA = vWorldXZ
+      .mul(1.7)
+      .add(vec2(0.11, -0.07).mul(timeUniform))
+    const detailUvB = vWorldXZ
+      .mul(4.7)
+      .add(vec2(-0.19, 0.13).mul(timeUniform))
+    const heightA = valueNoise2(detailUvA)
+    const detailA = vec2(
+      valueNoise2(detailUvA.add(vec2(0.12, 0))).sub(heightA),
+      valueNoise2(detailUvA.add(vec2(0, 0.12))).sub(heightA),
+    ).div(0.12)
+    const heightB = valueNoise2(detailUvB)
+    const detailB = vec2(
+      valueNoise2(detailUvB.add(vec2(0.08, 0))).sub(heightB),
+      valueNoise2(detailUvB.add(vec2(0, 0.08))).sub(heightB),
+    ).div(0.08)
+    const detailKeepA = float(1)
+      .sub(smoothstep(0.025, 0.12, pixelFootprint))
+      .mul(vEdgeKeep)
+    const detailKeepB = float(1)
+      .sub(smoothstep(0.008, 0.035, pixelFootprint))
+      .mul(vEdgeKeep)
+    const capillarySlope = detailA
+      .mul(detailKeepA)
+      .add(detailB.mul(detailKeepB).mul(0.35))
+    aboveNormal = normalize(
+      normal.add(vec3(capillarySlope.x, 0, capillarySlope.y).mul(0.045)),
+    )
+  }
+
+  const aboveHeight = vHeight.mul(keepCascade0Above)
+  const heightMask = smoothstep(-1.7, 1.5, aboveHeight)
   const bodyBase = mix(DEEP, SHALLOW, heightMask)
 
+  // Keep this original resolved-wave scatter for the underwater TIR body.
+  // Above-water optics use the capillary-enriched normal below.
   const crestLight = normalize(sunDir.negate().add(normal.mul(0.4)))
   const crestScatter = pow(max(dot(viewDir, crestLight), 0.0), 4.5)
     .mul(1.0)
     .mul(smoothstep(-0.1, 1.1, vHeight))
-  const body = bodyBase.add(SSS_TINT.mul(crestScatter))
 
-  const fresnelNormal = normalize(mix(normal, vec3(0, 1, 0), 0.5))
-  const fresnel = float(0.02).add(
-    float(0.98).mul(pow(float(1).sub(max(dot(viewDir, fresnelNormal), 0.0)), 5.0)),
+  const noV = max(dot(viewDir, aboveNormal), 0.001)
+  const noL = max(dot(aboveNormal, sunDir), 0.0)
+  const fresnelF0 = float(0.02037)
+  const fresnel = fresnelF0.add(
+    float(1)
+      .sub(fresnelF0)
+      .mul(pow(float(1).sub(noV), 5.0)),
   )
+  const aboveCrestLight = normalize(sunDir.negate().add(aboveNormal.mul(0.4)))
+  const aboveCrestScatter = pow(max(dot(viewDir, aboveCrestLight), 0.0), 4.5)
+    .mul(smoothstep(-0.1, 1.1, aboveHeight))
+  const forwardScatter = pow(max(dot(viewDir, sunDir.negate()), 0.0), 4.0)
+    .mul(smoothstep(-0.15, 0.9, aboveHeight))
+    .mul(float(1).sub(fresnel))
+    .mul(0.32)
+  const scatterLight = noL.mul(0.5).add(0.5)
+  const body = bodyBase.add(
+    SSS_TINT.mul(aboveCrestScatter.add(forwardScatter)).mul(scatterLight),
+  )
+
   // discStrength 0: sunGlint below IS the disc's specular response — the
-  // delta-light term. Reflecting the HDR disc through bumpy normals again
-  // would double-count it as sparkling white pixels.
-  const skyReflection = skyRadiance(reflect(viewDir.negate(), fresnelNormal), float(0))
+  // delta-light term. The aureole remains in the shared reflected sky.
+  const skyReflection = skyRadiance(reflect(viewDir.negate(), aboveNormal), float(0))
 
   const halfVector = normalize(sunDir.add(viewDir))
-  // Discrete glints are ripple-scale specular: once the footprint passes the
-  // ripple size they must dissolve into the smooth reflected sun lane.
-  const sparkleKeep = float(1).sub(smoothstep(0.08, 0.3, pixelFootprint))
-  const glint = smoothstep(0.9, 0.99, pow(max(dot(halfVector, normal), 0.0), 250.0)).mul(
-    sparkleKeep,
+  const noH = max(dot(aboveNormal, halfVector), 0.0)
+  const voH = max(dot(viewDir, halfVector), 0.0)
+  // GGX replaces the old thresholded sparkle mask. The resolved FFT slopes
+  // shape the sun lane; capillary slopes break it into near-field facets.
+  const roughness = float(0.075)
+  const alpha2 = roughness.mul(roughness)
+  const distributionDenominator = noH.mul(noH).mul(alpha2.sub(1)).add(1)
+  const distribution = alpha2.div(
+    distributionDenominator.mul(distributionDenominator).mul(Math.PI),
   )
-  const sunGlint = sunColorUniform.mul(glint).mul(6.0)
+  const smithK = roughness.add(1).mul(roughness.add(1)).div(8)
+  const geometryV = noV.div(noV.mul(float(1).sub(smithK)).add(smithK))
+  const geometryL = noL.div(noL.mul(float(1).sub(smithK)).add(smithK).max(1e-4))
+  const microFresnel = fresnelF0.add(
+    float(1)
+      .sub(fresnelF0)
+      .mul(pow(float(1).sub(voH), 5.0)),
+  )
+  const directSpecular = distribution
+    .mul(geometryV)
+    .mul(geometryL)
+    .mul(microFresnel)
+    .mul(noL)
+    .div(max(noV.mul(noL).mul(4), 0.02))
+  const sunGlint = sunColorUniform.mul(directSpecular).mul(3.4)
 
   let above = mix(body, skyReflection, fresnel).add(sunGlint)
 
@@ -303,9 +391,10 @@ export function createOceanSurfaceMaterial(
       .mul(bubbleA.mul(bubbleB).mul(1.7).add(0.06))
       .mul(foamKeep)
       .clamp(0, 1)
-    const foamShade = sunColorUniform
-      .mul(max(dot(normal, sunDir), 0.0).mul(0.9).add(0.35))
-      .mul(1.15)
+    const foamAmbient = skyRadiance(aboveNormal, float(0)).mul(0.22)
+    const foamShade = foamAmbient.add(
+      sunColorUniform.mul(noL.mul(0.9).add(0.3)).mul(0.9),
+    )
     above = mix(above, foamShade, foamMask)
   }
 

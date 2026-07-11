@@ -13,6 +13,22 @@ Architecture (spectral-ocean skill, WebGPU/TSL production tier):
   across cascades. The transform therefore uses two FFT submissions rather
   than sixteen while preserving the exact centered field and hard-gate tests.
 - Assembly kernel applies the (−1)^(x+y) centering sign (per-texel AND per-neighbor when finite-differencing), builds fold-aware derivatives, Jacobian, and persistent foam history (`min(J, prev + dt·rate/max(J,0.5))`, clamped ≤ 2).
+- The above-water material adds two weak procedural capillary slope bands below
+  the finest FFT wavelength. Both bands fade by pixel footprint before they
+  alias, and only perturb the resolved fold-aware normal; swell direction and
+  displacement remain owned by the FFT. Above-water reflection uses the full
+  resulting normal, physical water F0 (0.02037), and a GGX/Smith direct-sun
+  lobe instead of a thresholded sparkle mask. Foam receives both shared-sky
+  ambient and direct sun. The below-surface Snell/TIR path deliberately keeps
+  the original resolved FFT normal and scatter response.
+- Cascade 0 has a separate conservative above-water footprint keep (2.5–5.5 m
+  per pixel). Apply it to the derivative field *before* the fold denominator
+  and use the same interval for cascade-0 vertex displacement and
+  height-driven color/scatter. A post-reconstruction normal flatten cannot
+  remove texture aliasing, while leaving vertex displacement alive to the old
+  6–18 m/pixel interval collapses displaced triangle rows into a second comb
+  near the square inner-mesh fade. The stricter shared geometry LOD removes
+  that residual; it must not replace or modify the underwater optical normal.
 - **FFT hard gate**: `runFftSelfTest` runs under `?debug` — impulse → constant and one-bin → cos/sin, errors ~1e-8. Readback goes through a **storage buffer** (`getArrayBufferAsync`), never a material blit.
 
 Hard-won lessons (do not re-learn these):

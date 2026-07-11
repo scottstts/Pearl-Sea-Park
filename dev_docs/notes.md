@@ -400,3 +400,32 @@
     hitch feedback loop. It now requires time-based sustained pressure, rejects
     isolated outliers, and recovers slowly. Auto-quality runtime persistence also
     skips identical `localStorage` writes instead of blocking once per second.
+- 2026-07-11 above-water ocean fidelity and emergence lens:
+  - Preserve the representation boundary: FFT displacement/derivatives own all
+    resolved waves; sub-grid capillary detail may perturb only the above-water
+    shading normal and must fade by pixel footprint. Reflection uses the shared
+    analytic sky with its disc suppressed, while the fixed sun enters once via
+    a GGX/Smith microfacet lobe. The underwater Snell/TIR path continues to use
+    the unmodified resolved normal and scatter.
+  - `refs/water_off_lens.html` is the droplet-field contract: retain its
+    Heartfelt/Rain static/running drops, finite-difference normals, and
+    five-second envelope. Scott explicitly rejected its full-frame stochastic
+    blur, cool multiplication, and extra vignette because their fade fights the
+    game's warm grade. Mix one refracted scene sample only through drop/trail
+    coverage. Arm it on displaced-waterline emergence, gate it with the
+    same-frame submerged texture, and skip its sample when dry.
+  - A mip-less cascade can alias even when its reconstructed normal is faded
+    later. The GGX pass exposed cascade 0 as a horizontal comb because that
+    cascade had no pre-reconstruction keep. For above-water shading, attenuate
+    the sampled derivative before the nonlinear fold denominator while the
+    shortest wave still spans 16–8 pixels; keep the underwater normal on its
+    established path.
+  - Fragment-only LOD was insufficient: cascade-0 vertex displacement remained
+    live to 18 m/pixel, so grazing triangle rows collapsed into the original
+    intermittent comb plus a fainter gray pattern near the inner-mesh fade.
+    Cascade-0 vertex, above-water derivative, and height-response keeps must
+    share the conservative 2.5–5.5 m/pixel interval.
+  - Fullscreen coordinate conventions are part of a shader port. Reference
+    plane UVs increase upward; WebGPU `screenUV` increases downward. Evaluate
+    the rain field with flipped Y and negate the refraction Y offset on the
+    return to screen space, or running drops travel upward.
