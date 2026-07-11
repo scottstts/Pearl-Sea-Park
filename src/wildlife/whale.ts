@@ -19,6 +19,7 @@ import {
   vec3,
 } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
+import { markDynamicShadowCasters } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { SeaMediumSystem } from '../sea/medium'
 import { terrainHeight } from '../world/terrain'
@@ -93,6 +94,7 @@ export class WhalePass {
     bodyMesh.receiveShadow = true
     bodyMesh.frustumCulled = true
     bodyMesh.name = 'wildlife-whale:body'
+    markDynamicShadowCasters(bodyMesh)
 
     const body = new Object3D()
     body.add(bodyMesh)

@@ -14,6 +14,7 @@ import {
   abs,
   float,
   max,
+  min,
   reference,
   renderGroup,
   shadowPositionWorld,
@@ -21,6 +22,7 @@ import {
   uniform,
   vec4,
 } from 'three/tsl'
+import { MAIN_DETAIL_LAYER } from './layers'
 
 const ORIGIN = new Vector3()
 const WORLD_UP = new Vector3(0, 1, 0)
@@ -96,6 +98,10 @@ export interface ShadowClipmapOptions {
   directionEpsilon?: number
   /** Maximum age of a dynamic near map before moving casters refresh it. */
   dynamicRefreshFrames?: number
+  /** Object layer isolated into a cheap continuously refreshed shadow map. */
+  dynamicCasterLayer?: number
+  dynamicCasterHalfWidth?: number
+  dynamicCasterMapSize?: number
 }
 
 export interface ShadowClipmapSnapshot {
@@ -106,6 +112,14 @@ export interface ShadowClipmapSnapshot {
   budgetBefore: number
   budgetAfter: number
   directionDelta: number
+  dynamicCaster: null | {
+    layer: number
+    halfWidth: number
+    mapSize: number
+    texelWidth: number
+    committed: [number, number, number]
+    renderCount: number
+  }
   levels: Array<{
     index: number
     renderedHalfWidth: number
@@ -163,6 +177,9 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   readonly updateBudget: number
   readonly maxCacheAge: number
   readonly dynamicRefreshFrames: number
+  readonly dynamicCasterLayer: number | null
+  readonly dynamicCasterHalfWidth: number
+  readonly dynamicCasterMapSize: number
 
   private readonly levelMapSizes: readonly number[]
   private readonly halfWidths: number[] = []
@@ -172,7 +189,12 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   private readonly lights: ClipmapLight[] = []
   private readonly worldToLight = new Matrix4()
   private readonly lastDirection = new Vector3()
+  private readonly dynamicCenter = new Vector3(Number.NaN, Number.NaN, Number.NaN)
   private readonly directionCos: number
+  private dynamicLight: ClipmapLight | null = null
+  private dynamicShadowNode: BoundedShadowNode | null = null
+  private dynamicRenderCount = 0
+  private dynamicTexelWidth = 0
   private baseBias = 0
   private baseNormalBias = 0
   private firstUpdate = true
@@ -203,6 +225,15 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     this.updateBudget = Math.max(1, Math.round(options.updateBudget ?? 1))
     this.maxCacheAge = Math.max(0, Math.round(options.maxCacheAge ?? 180))
     this.dynamicRefreshFrames = Math.max(1, Math.round(options.dynamicRefreshFrames ?? 2))
+    this.dynamicCasterLayer = options.dynamicCasterLayer ?? null
+    this.dynamicCasterHalfWidth = Math.max(
+      firstRadius,
+      options.dynamicCasterHalfWidth ?? firstRadius * 4,
+    )
+    this.dynamicCasterMapSize = Math.max(
+      128,
+      Math.round(options.dynamicCasterMapSize ?? this.levelMapSizes[0]),
+    )
     this.directionCos = Math.cos(options.directionEpsilon ?? 0.002)
     // These world-space clipmaps are camera-independent once rendered, so
     // every render pass in one app frame must reuse the committed maps.
@@ -251,7 +282,13 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
         accumulated.addAssign(shadowSample.mul(weight))
         remaining.mulAssign(float(1).sub(fade))
       }
-      return accumulated.add(vec4(remaining))
+      const staticShadow = accumulated.add(vec4(remaining))
+      if (this.dynamicShadowNode) {
+        // One sun, two caster sets: the union is the darker visibility, not
+        // multiplication (which would double-darken overlapping penumbrae).
+        return min(staticShadow, this.dynamicShadowNode as unknown as Node<'float'>)
+      }
+      return staticShadow
     })()
   }
 
@@ -262,6 +299,10 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       if (levelLight.parent) continue
       this.light.parent.add(levelLight.target)
       this.light.parent.add(levelLight)
+    }
+    if (this.dynamicLight && !this.dynamicLight.parent) {
+      this.light.parent.add(this.dynamicLight.target)
+      this.light.parent.add(this.dynamicLight)
     }
 
     LIGHT_DIRECTION.subVectors(this.light.target.position, this.light.position).normalize()
@@ -299,9 +340,19 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       const zQuantum = state.halfWidth * 0.5
       state.desiredZ = Math.round(CAMERA_LIGHT.z / zQuantum) * zQuantum
       const dynamic = index < this.dynamicLevels
-      const moved = state.desiredX !== state.centerX
-        || state.desiredY !== state.centerY
-        || state.desiredZ !== state.centerZ
+      // Cached levels own a guard band precisely so their committed map can
+      // remain valid while the camera moves. Refreshing on every one-texel
+      // shift defeated that cache and caused broad full-world shadow spikes.
+      // The near dynamic level still follows its texel grid immediately.
+      const recenterDistance = state.halfWidth * this.guardBand * 0.5
+      const moved = dynamic
+        ? state.desiredX !== state.centerX
+          || state.desiredY !== state.centerY
+          || state.desiredZ !== state.centerZ
+        : !state.valid
+          || Math.abs(state.desiredX - state.centerX) >= recenterDistance
+          || Math.abs(state.desiredY - state.centerY) >= recenterDistance
+          || state.desiredZ !== state.centerZ
       const expired = this.maxCacheAge > 0 && state.age >= this.maxCacheAge
       let dirtyReasons = 0
       if (dynamic && state.age >= this.dynamicRefreshFrames) dirtyReasons |= DIRTY_DYNAMIC
@@ -349,6 +400,7 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
         )
       }
     }
+    this.updateDynamicCasterShadow(frame)
     this.budgetAfter = budget
     return undefined
   }
@@ -373,13 +425,23 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
 
   debugSnapshot(): ShadowClipmapSnapshot {
     return {
-      textureCount: this.levels,
+      textureCount: this.levels + (this.dynamicShadowNode ? 1 : 0),
       dynamicLevels: this.dynamicLevels,
       dynamicRefreshFrames: this.dynamicRefreshFrames,
       updateBudget: this.updateBudget,
       budgetBefore: this.budgetBefore,
       budgetAfter: this.budgetAfter,
       directionDelta: this.directionDelta,
+      dynamicCaster: this.dynamicCasterLayer === null
+        ? null
+        : {
+            layer: this.dynamicCasterLayer,
+            halfWidth: this.dynamicCasterHalfWidth,
+            mapSize: this.dynamicCasterMapSize,
+            texelWidth: this.dynamicTexelWidth,
+            committed: [this.dynamicCenter.x, this.dynamicCenter.y, this.dynamicCenter.z],
+            renderCount: this.dynamicRenderCount,
+          },
       levels: this.levelStates.map((state, index) => ({
         index,
         renderedHalfWidth: state.halfWidth,
@@ -407,6 +469,10 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       levelLight.parent?.remove(levelLight)
       levelLight.target.parent?.remove(levelLight.target)
     }
+    this.dynamicShadowNode?.dispose()
+    this.dynamicLight?.shadow.dispose()
+    this.dynamicLight?.parent?.remove(this.dynamicLight)
+    this.dynamicLight?.target.parent?.remove(this.dynamicLight.target)
     super.dispose()
   }
 
@@ -430,6 +496,10 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
         Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2),
       )
       shadow.camera.updateProjectionMatrix()
+      // A non-default mask prevents Three from replacing this with the main
+      // camera mask during the shadow render. Static maps retain ordinary and
+      // main-detail casters while excluding the dedicated moving-caster layer.
+      if (this.dynamicCasterLayer !== null) shadow.camera.layers.enable(MAIN_DETAIL_LAYER)
       shadow.autoUpdate = false
       shadow.needsUpdate = false
       const levelLight = Object.assign(new Object3D(), {
@@ -456,6 +526,69 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
         dirtyReasons: DIRTY_INVALID,
         renderCount: 0,
       })
+    }
+    this.initDynamicCasterShadow()
+  }
+
+  private initDynamicCasterShadow(): void {
+    if (this.dynamicCasterLayer === null || this.dynamicLight) return
+    const target = new Object3D()
+    const shadow = this.light.shadow.clone()
+    const halfWidth = this.dynamicCasterHalfWidth
+    shadow.mapSize.set(this.dynamicCasterMapSize, this.dynamicCasterMapSize)
+    shadow.camera.left = -halfWidth
+    shadow.camera.right = halfWidth
+    shadow.camera.top = halfWidth
+    shadow.camera.bottom = -halfWidth
+    shadow.camera.near = this.shadowCameraNear
+    shadow.camera.far = Math.max(
+      this.shadowCameraNear + 1,
+      Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2),
+    )
+    shadow.camera.layers.set(this.dynamicCasterLayer)
+    shadow.camera.updateProjectionMatrix()
+    shadow.autoUpdate = false
+    shadow.needsUpdate = false
+    const light = Object.assign(new Object3D(), {
+      target,
+      castShadow: true as const,
+      shadow,
+    }) as ClipmapLight
+    this.dynamicLight = light
+    this.dynamicShadowNode = new BoundedShadowNode(light, shadow)
+  }
+
+  private updateDynamicCasterShadow(frame: NodeFrame): void {
+    const levelLight = this.dynamicLight
+    const shadowNode = this.dynamicShadowNode as InternalShadowNode | null
+    if (!levelLight || !shadowNode) return
+    const shadow = levelLight.shadow
+    const halfWidth = this.dynamicCasterHalfWidth
+    const texelWidth = (halfWidth * 2) / this.dynamicCasterMapSize
+    this.dynamicTexelWidth = texelWidth
+    this.dynamicCenter.set(
+      Math.round(CAMERA_LIGHT.x / texelWidth) * texelWidth,
+      Math.round(CAMERA_LIGHT.y / texelWidth) * texelWidth,
+      Math.round(CAMERA_LIGHT.z / (halfWidth * 0.5)) * (halfWidth * 0.5),
+    )
+    shadow.bias = this.baseBias
+    shadow.normalBias = this.baseNormalBias * (
+      texelWidth / Math.max(1e-6, this.levelStates[0].texelWidth)
+    )
+    LEVEL_CENTER.set(
+      this.dynamicCenter.x,
+      this.dynamicCenter.y,
+      this.dynamicCenter.z + halfWidth + this.lightMargin,
+    ).applyMatrix4(LIGHT_ORIENTATION)
+    levelLight.position.copy(LEVEL_CENTER)
+    levelLight.target.position.copy(LEVEL_CENTER).add(LIGHT_DIRECTION)
+    levelLight.updateMatrixWorld(true)
+    levelLight.target.updateMatrixWorld(true)
+    shadow.needsUpdate = true
+    if (shadowNode.shadowMap) {
+      shadowNode.updateShadow(frame)
+      shadow.needsUpdate = false
+      this.dynamicRenderCount++
     }
   }
 }

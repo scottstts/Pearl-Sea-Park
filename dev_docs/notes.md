@@ -356,3 +356,24 @@
     board. The added `park-entrance` marker (beside the bell landing) is the
     network's home node and the 17th sign — the atlas grid is now count-derived
     (`ceil(n/cols)`) and the audit checks "must not overflow", not "exactly full".
+- 2026-07-11 water-interface, shadow-cadence, and residual hitch corrections:
+  - A refraction direction is not a refracted ray. Projecting water→air from
+    the camera origin omitted the displaced interface hit point, so an
+    above-water tower silhouette drifted away from its submerged pillars as
+    viewing distance changed. Use the opaque depth sample to estimate subject
+    distance, then reproject from the actual surface point and depth-reject
+    samples off the ray or on the wrong side of the interface.
+  - The pale near-waterline "bubble" from above was the low-Fresnel share of
+    a uniform body colour, not an underwater-medium transition. Air→water now
+    uses the same side-aware surface-origin reprojection and applies
+    Beer–Lambert extinction to real underwater scene colour.
+  - A fixed-sun cache cannot use periodic full-world expiry to service moving
+    casters: four staggered 180-frame ages produced one broad shadow render
+    every 45–90 frames, matching the residual roaming hitch, while cabins
+    still stepped between captures. Static levels now have no age expiry and
+    recenter only after consuming guard margin. Moving rides, wildlife, and
+    physics props render continuously into one bounded layer-isolated map.
+  - Async GPU readback is non-blocking to JavaScript but still synchronizes
+    the queue. Keep the waterline probe per-frame within 3 m of the interface;
+    safely deep/above, a 5 Hz safety poll preserves crossing correctness while
+    removing needless roaming readback pressure.

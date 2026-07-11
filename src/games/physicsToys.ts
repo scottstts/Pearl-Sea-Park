@@ -11,6 +11,7 @@ import {
   Vector3,
 } from 'three'
 import { registerBookmark } from '../core/debug'
+import { markDynamicShadowCasters } from '../render/layers'
 import { SlotWriter } from '../archkit/writer'
 import type { GameContext } from '../runtime/context'
 import type { DistrictServices } from '../world/districts/atrium'
@@ -146,6 +147,7 @@ export class PhysicsToys {
     const mesh = new Mesh(ringGeometry, lib.brass)
     mesh.castShadow = true
     mesh.receiveShadow = true
+    markDynamicShadowCasters(mesh)
     this.group.add(mesh)
     this.props.push({ body, mesh, age: 0, scored: false, kind: 'ring' })
     this.trimProps('ring', 8)
@@ -235,6 +237,7 @@ export class PhysicsToys {
     )
     const mesh = new Mesh(new SphereGeometry(0.14, 22, 14), lib.nacre)
     mesh.castShadow = true
+    markDynamicShadowCasters(mesh)
     this.group.add(mesh)
     this.props.push({ body, mesh, age: 0, scored: false, kind: 'pearl' })
     this.trimProps('pearl', 8)

@@ -66,6 +66,12 @@
   saddle→yoke→clamp→twin-sheave suspension. The eight moving cabins share five
   instanced material draws; their empty `Object3D` anchors remain only for seat
   transforms. Do not return to per-cabin primitive part meshes.
+- Cabin caster meshes live on the dedicated dynamic-shadow layer. Their map
+  refreshes every rendered frame while the four static-world clipmaps stay
+  cached, so seabed shadows follow the continuously moving cable instead of
+  advancing at cache-refresh cadence. Fleet-wide frustum culling is disabled:
+  the eight instances span the kilometre loop, so rebuilding five aggregate
+  bounds per frame cannot reject the fleet in practical park views.
 - Glazing remains thin panes rather than a solid glass box (a box renders a fat
   refractive seam across the guest's view). `audit:geometry` verifies finite
   bounds, nontrivial body profile, five draw slots, and zero roof/yoke gaps.

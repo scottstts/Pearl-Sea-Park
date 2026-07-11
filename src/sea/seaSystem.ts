@@ -129,7 +129,13 @@ export class SeaSystem implements GameSystem {
 
     // The crossing test uses the true displaced surface at the camera XZ —
     // the swell is metres tall and dunks the camera long before y < 0.
-    this.probe?.update(ctx.renderer, ctx.camera.position.x, ctx.camera.position.z)
+    this.probe?.update(
+      ctx.renderer,
+      ctx.camera.position.x,
+      ctx.camera.position.z,
+      ctx.camera.position.y,
+      ctx.time.frame,
+    )
   }
 
   lateUpdate(ctx: GameContext): void {

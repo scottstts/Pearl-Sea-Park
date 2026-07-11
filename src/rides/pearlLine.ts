@@ -12,6 +12,7 @@ import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { PlayerSystem } from '../player/player'
+import { markDynamicShadowCasters } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { currentFlowCpu } from '../sea/current'
@@ -206,6 +207,7 @@ export class PearlLineSystem implements GameSystem {
     // ── Cabins ────────────────────────────────────────────────────────────
     const cabinFleet = new PearlLineCabinFleet(lib, CABIN_COUNT)
     this.cabinFleet = cabinFleet
+    markDynamicShadowCasters(cabinFleet.group)
     this.group.add(cabinFleet.group)
     for (let i = 0; i < CABIN_COUNT; i++) {
       // Transform/seat anchor. Visible geometry is the shared instanced fleet.

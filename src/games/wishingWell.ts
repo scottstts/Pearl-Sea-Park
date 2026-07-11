@@ -23,6 +23,7 @@ import {
   vec3,
 } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
+import { markDynamicShadowCasters } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { SeaMediumSystem } from '../sea/medium'
 import type { DistrictServices } from '../world/districts/atrium'
@@ -209,6 +210,7 @@ export class WishingWell {
     )
     const mesh = new Mesh(new CylinderGeometry(0.12, 0.12, 0.036, 28), lib.brass)
     mesh.castShadow = true
+    markDynamicShadowCasters(mesh)
     this.group.add(mesh)
     this.coins.push({ body, mesh, age: 0, scored: false, previousY: origin.y, splashed: false })
     if (this.coins.length > 18) {

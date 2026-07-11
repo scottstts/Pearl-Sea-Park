@@ -30,7 +30,7 @@ import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { Rng } from '../core/prng'
 import type { GameContext } from '../runtime/context'
-import { markMainDetail } from '../render/layers'
+import { markDynamicShadowCasters, markMainDetail } from '../render/layers'
 import { currentFlow } from '../sea/current'
 import type { SeaMediumSystem } from '../sea/medium'
 import type { DistrictServices } from '../world/districts/atrium'
@@ -273,6 +273,7 @@ export class AmbientLife {
     smallRays.castShadow = true
     smallRays.receiveShadow = true
     smallRays.name = 'wildlife-rays'
+    markDynamicShadowCasters(smallRays)
     this.smallRays = { mesh: smallRays, material: smallMaterial }
     this.group.add(smallRays)
 
@@ -306,6 +307,7 @@ export class AmbientLife {
     manta.receiveShadow = true
     manta.frustumCulled = true
     manta.name = 'wildlife-manta'
+    markDynamicShadowCasters(manta)
     this.manta = manta
     this.group.add(manta)
   }
@@ -349,6 +351,7 @@ export class AmbientLife {
     turtles.castShadow = true
     turtles.receiveShadow = true
     turtles.name = 'wildlife-turtles'
+    markDynamicShadowCasters(turtles)
     this.turtles = { mesh: turtles, material }
     this.group.add(turtles)
     for (let i = 0; i < 8; i++) this.turtlePhases.push((i / 8 + rng.range(-0.025, 0.025) + 1) % 1)

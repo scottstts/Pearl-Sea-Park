@@ -56,11 +56,7 @@ export class PearlLineCabinFleet {
   }
 
   commit(): void {
-    for (const slot of this.slots) {
-      slot.mesh.instanceMatrix.needsUpdate = true
-      slot.mesh.computeBoundingBox()
-      slot.mesh.computeBoundingSphere()
-    }
+    for (const slot of this.slots) slot.mesh.instanceMatrix.needsUpdate = true
   }
 
   dispose(): void {
@@ -76,6 +72,11 @@ export class PearlLineCabinFleet {
   ): CabinSlot {
     const mesh = new InstancedMesh(geometry, material, this.count)
     mesh.instanceMatrix.setUsage(DynamicDrawUsage)
+    // The eight cabins span the kilometre-long loop, so the fleet-wide bound
+    // intersects practically every park view. Rebuilding five aggregate
+    // bounds every frame bought no useful culling and added CPU work exactly
+    // while the camera was moving.
+    mesh.frustumCulled = false
     mesh.name = name
     mesh.castShadow = castShadow
     mesh.receiveShadow = true

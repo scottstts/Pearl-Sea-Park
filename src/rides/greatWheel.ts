@@ -18,6 +18,7 @@ import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { PlayerSystem } from '../player/player'
+import { markDynamicShadowCasters } from '../render/layers'
 import { fbm2 } from '../render/tslNoise'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
@@ -254,6 +255,7 @@ export class GreatWheelSystem implements GameSystem {
         mesh.receiveShadow = true
       }
     })
+    markDynamicShadowCasters(this.rotor)
     ctx.scene.add(this.group)
     this.updateRotor(0)
 

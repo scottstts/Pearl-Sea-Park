@@ -4,6 +4,7 @@ import { float, normalize, positionLocal } from 'three/tsl'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { CachedShadowClipmapNode } from '../render/cachedShadowClipmaps'
+import { DYNAMIC_SHADOW_LAYER } from '../render/layers'
 import { skyRadiance } from './skyRadiance'
 import { SUN_LIGHT_INTENSITY, sunColor, sunDirection } from './sun'
 
@@ -50,9 +51,15 @@ export class SkySystem implements GameSystem {
       firstRadius: 28,
       scaleFactor: 3,
       maxDistance: 650,
-      dynamicLevels: 1,
+      // The fixed world never expires. Moving rides/wildlife live on their
+      // own small map below, so broad cached levels no longer force a
+      // full-scene refresh every 45–90 frames.
+      dynamicLevels: 0,
       updateBudget: 1,
-      maxCacheAge: 180,
+      maxCacheAge: 0,
+      dynamicCasterLayer: DYNAMIC_SHADOW_LAYER,
+      dynamicCasterHalfWidth: 112,
+      dynamicCasterMapSize: quality.params.shadowMapSizes[0],
     }).attach()
     if (ctx.flags.debug) this.debugCanvas = renderer.domElement
 

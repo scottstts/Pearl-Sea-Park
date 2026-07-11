@@ -15,6 +15,7 @@ import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { PlayerSystem } from '../player/player'
+import { markDynamicShadowCasters } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { ARRIVAL_POSITION, CABLE_TOP_Y, DECK_TOP_Y } from '../world/arrival'
@@ -233,6 +234,8 @@ export class DescentBellSystem implements GameSystem {
         node.receiveShadow = true
       }
     })
+    markDynamicShadowCasters(this.car)
+    markDynamicShadowCasters(cable)
     ctx.scene.add(this.group)
     this.updateCable()
 

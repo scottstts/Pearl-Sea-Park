@@ -28,19 +28,24 @@ is scheduled ahead on one HRTF bus while the show event is active.
 ## Fixed-sun cached shadows
 
 `render/cachedShadowClipmaps.ts` replaces the old single 180 m camera-following
-box with four ordinary shadow maps covering 28, 84, 252, and 650 m half-widths.
-Only level 0 is dynamic. The clipmap owner is frame-scoped, so multiple render
-passes in one application frame reuse the same committed maps; the dynamic
-level refreshes at most every two stationary frames while snapped camera movement and explicit
-invalidation remain immediate. Cached levels publish committed centers, snap X/Y to
-their actual texel footprints, quantize Z, stagger maximum ages, cross-fade
-inside a guard band, and consume one ordinary refresh budget per frame.
-Forced spatial invalidation bypasses that budget. Normal bias scales by world
-texel size.
+box with four ordinary static-world shadow maps covering 28, 84, 252, and
+650 m half-widths, plus one 112 m moving-caster map. The clipmap owner is
+frame-scoped, so multiple render passes in one application frame reuse the
+same committed maps. Static levels publish committed centers, snap X/Y to
+their actual texel footprints, quantize Z, cross-fade inside a guard band, and
+consume one ordinary refresh budget per frame. They recenter only after camera
+drift consumes half the guard margin; a one-texel desired-center change is not
+an invalidation. With the fixed sun they have no age expiry: the old staggered
+180-frame expiry forced a broad full-world render every 45–90 frames. Rides,
+wildlife, and physics props occupy a dedicated camera-visible caster layer
+rendered every frame into the small fifth map, so their shadows remain
+continuous without recapturing the park. Forced spatial invalidation still
+bypasses the static budget. Normal bias scales by world texel size.
 
 `canvas.dataset.shadowClipmaps` exposes desired/committed centers, coverage,
 map/texel sizes, dirty bits, age, update budget, direction delta, scaled bias,
-and render counts. The fixed sun never causes continuous direction refreshes.
+static render counts, and the dynamic-caster map/layer/render count. The fixed
+sun never causes continuous static-world refreshes.
 
 ## Measured image and performance path
 
