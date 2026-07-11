@@ -23,10 +23,14 @@ Choices beyond the code:
 - Dynamic resolution is driven by the actual animation-frame interval, not CPU
   command-submission time. It is an emergency pressure valve bounded to
   0.82/0.88/0.90 by tier so it cannot become the primary performance strategy.
-  The recovery threshold includes healthy 60 Hz v-sync cadence, recovery probes
-  are deliberately sparse, and a cached Auto session never reopens below 0.95.
-  CPU time, presented frame time/FPS, and asynchronous WebGPU render/compute
-  timestamps are separate diagnostics (`render/performanceMonitor.ts`).
+  Isolated long frames are rejected unless they form a consecutive hitch run;
+  downscale requires sustained pressure and recovery requires a longer healthy
+  interval, preventing a single hitch from triggering render-target reallocations.
+  The recovery threshold includes healthy 60 Hz v-sync cadence, and a cached Auto
+  session never reopens below 0.95. CPU time and presented frame time/FPS remain
+  normal-play diagnostics. WebGPU render/compute timestamp queries are enabled
+  only under `?debug`, because resolving and mapping them is itself queue work
+  (`render/performanceMonitor.ts`).
 - The scene MRT remains 4× MSAA. The default canvas is deliberately not
   multisampled because its only geometry is the final fullscreen presentation
   pass; enabling both would pay for a redundant second resolve.

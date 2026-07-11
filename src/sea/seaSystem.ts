@@ -54,6 +54,7 @@ export class SeaSystem implements GameSystem {
   private outer: Mesh | null = null
   private probe: WaterlineProbe | null = null
   private readonly timeUniform = uniform(0)
+  private readonly submergedUniform = uniform(0)
   private submerged = false
   private followStep = 1
 
@@ -66,6 +67,7 @@ export class SeaSystem implements GameSystem {
     this.followStep = INNER_SIZE / segments
 
     const timeNode = this.timeUniform as unknown as import('three/webgpu').Node<'float'>
+    const submergedNode = this.submergedUniform as unknown as import('three/webgpu').Node<'float'>
     // Both ocean sheets sample one framebuffer copy. A shared base
     // ViewportTextureNode makes its per-surface samples resolve to the same
     // render-scoped texture instead of copying the 4 MP HDR target twice.
@@ -78,6 +80,7 @@ export class SeaSystem implements GameSystem {
         detailed: true,
         edgeFadeHalfSize: INNER_SIZE / 2,
         sceneBackdrop,
+        submerged: submergedNode,
       }),
     )
     inner.frustumCulled = false
@@ -90,7 +93,11 @@ export class SeaSystem implements GameSystem {
 
     const outer = new Mesh(
       createSkirtGeometry(),
-      createOceanSurfaceMaterial(sim, timeNode, { detailed: false, sceneBackdrop }),
+      createOceanSurfaceMaterial(sim, timeNode, {
+        detailed: false,
+        sceneBackdrop,
+        submerged: submergedNode,
+      }),
     )
     outer.frustumCulled = false
     // The skirt goes first so the detailed sheet's backdrop is never replaced
@@ -134,7 +141,6 @@ export class SeaSystem implements GameSystem {
       ctx.camera.position.x,
       ctx.camera.position.z,
       ctx.camera.position.y,
-      ctx.time.frame,
     )
   }
 
@@ -142,6 +148,7 @@ export class SeaSystem implements GameSystem {
     // Player and ride systems own the camera later in the regular update
     // order. Classify only after they settle the pose rendered this frame.
     const nowSubmerged = ctx.camera.position.y < this.surfaceHeightAtCamera
+    this.submergedUniform.value = nowSubmerged ? 1 : 0
     if (nowSubmerged !== this.submerged) {
       this.submerged = nowSubmerged
       ctx.events.emit('sea/waterline-crossed', { submerged: nowSubmerged })

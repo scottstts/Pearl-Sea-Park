@@ -20,7 +20,6 @@ export class WaterlineProbe {
   private readonly probe: ComputeNode
   private readonly buffer: StorageBufferAttribute
   private reading = false
-  private lastDispatchFrame = -Infinity
 
   constructor(sim: WaveSim) {
     this.buffer = new StorageBufferAttribute(1, 4)
@@ -46,16 +45,13 @@ export class WaterlineProbe {
   }
 
   /** Dispatch the one-thread probe and (re)arm the asynchronous readback. */
-  update(renderer: WebGPURenderer, x: number, z: number, cameraY: number, frame: number): void {
-    // Mapping a GPU buffer is asynchronous but still introduces a queue
-    // synchronization point. Near the interface we retain the every-frame
-    // probe required for exact crossings; deep in the park (or safely above
-    // the sea) a 5 Hz safety poll is sufficient and removes pointless
-    // readback pressure while roaming.
-    const nearInterface = Math.abs(cameraY - this.height) <= 3
-    const interval = nearInterface ? 1 : 12
-    if (frame - this.lastDispatchFrame < interval) return
-    this.lastDispatchFrame = frame
+  update(renderer: WebGPURenderer, x: number, z: number, cameraY: number): void {
+    // The authored 0.35 sea cannot approach ±3 m. Outside that safety band a
+    // crossing is impossible, so dispatching and mapping a storage buffer only
+    // injects needless GPU queue synchronization while roaming the deep park.
+    // Ascent/descent enters the band several seconds before the true surface;
+    // from there the authoritative probe remains every-frame.
+    if (Math.abs(cameraY) > 3) return
     this.probeXZ.value.set(x, z)
     renderer.compute(this.probe)
     if (this.reading) return

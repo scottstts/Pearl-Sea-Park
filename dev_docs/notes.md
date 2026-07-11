@@ -363,17 +363,30 @@
     viewing distance changed. Use the opaque depth sample to estimate subject
     distance, then reproject from the actual surface point and depth-reject
     samples off the ray or on the wrong side of the interface.
-  - The pale near-waterline "bubble" from above was the low-Fresnel share of
-    a uniform body colour, not an underwater-medium transition. Air→water now
-    uses the same side-aware surface-origin reprojection and applies
-    Beer–Lambert extinction to real underwater scene colour.
+  - The first pale near-waterline "bubble" diagnosis was wrong: it was not a
+    missing air→water body-colour transmission path. The surface selected its
+    optical regime with per-fragment `faceDirection`, so steep nearby displaced
+    triangles could show backfaces and enter the underwater/Snell shading path
+    while the camera and medium were still above water. Surface and medium now
+    share one camera-level submerged uniform from the displaced waterline; an
+    above-water frame cannot contain a local patch of underwater optics.
   - A fixed-sun cache cannot use periodic full-world expiry to service moving
     casters: four staggered 180-frame ages produced one broad shadow render
     every 45–90 frames, matching the residual roaming hitch, while cabins
     still stepped between captures. Static levels now have no age expiry and
     recenter only after consuming guard margin. Moving rides, wildlife, and
     physics props render continuously into one bounded layer-isolated map.
-  - Async GPU readback is non-blocking to JavaScript but still synchronizes
-    the queue. Keep the waterline probe per-frame within 3 m of the interface;
-    safely deep/above, a 5 Hz safety poll preserves crossing correctness while
-    removing needless roaming readback pressure.
+  - Async GPU readback is non-blocking to JavaScript but still adds queue resolve,
+    copy, and map work. Keep the waterline probe per-frame within 3 m of mean sea
+    level; safely outside that band, skip it entirely because the camera cannot
+    cross the ~0.5 m displaced surface before re-entering the band.
+  - Normal play also no longer enables WebGPU timestamp tracking. Resolving and
+    mapping render/compute queries every frame was diagnostic synchronization,
+    and the continuously refreshed dynamic-caster shadow pass made that query
+    workload larger. Timestamp evidence remains available explicitly under
+    `?debug`.
+  - Dynamic resolution must not treat one long frame as sustained GPU pressure:
+    that creates a hitch → pixel-ratio change → render-target reallocation →
+    hitch feedback loop. It now requires time-based sustained pressure, rejects
+    isolated outliers, and recovers slowly. Auto-quality runtime persistence also
+    skips identical `localStorage` writes instead of blocking once per second.

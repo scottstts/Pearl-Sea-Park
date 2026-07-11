@@ -60,8 +60,10 @@ sun never causes continuous static-world refreshes.
   single-draw analytic glossy surface; this removes the nested full-park render
   that froze the Atrium-to-Esplanade north-facing view.
 - `canvas.dataset.performance` reports CPU submission time, presented frame
-  time/FPS, asynchronous render/compute/combined GPU timestamps, draw and
-  primitive counts, render targets, quality, render scale, and GPU-resource bytes.
+  time/FPS, draw and primitive counts, render targets, quality, render scale,
+  dynamic-resolution state, and GPU-resource bytes. Asynchronous
+  render/compute/combined GPU timestamps are diagnostic-only under `?debug`;
+  normal play does not submit timestamp resolve/copy/map work every frame.
 
 ## Quality selection and pause
 
@@ -71,8 +73,9 @@ complete dispatches) only as a starting hint. Auto v2 records the render scale
 the representative scene actually sustains, but reopens at no less than 0.95;
 three severe floor-bound samples lower the next session's feature tier. Live
 control uses presentation cadence, not asynchronous CPU submission time. It
-sheds scale under sustained missed frames, recovers with sparse near-native
-probes, and never falls below the tier's 0.82/0.88/0.90 floor. URL `?tier=`, then a
+rejects isolated long frames, sheds scale only after sustained pressure,
+recovers after a longer healthy interval, and never falls below the tier's
+0.82/0.88/0.90 floor. URL `?tier=`, then a
 persistent pause-card override, take precedence. The pause card applies volume
 live; changing tier reloads because storage counts and render-target sizes are
 construction-time contracts.

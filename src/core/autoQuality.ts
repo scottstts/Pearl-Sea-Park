@@ -27,6 +27,7 @@ interface CachedResult {
 }
 
 let severeRuntimeSamples = 0
+let lastPersistedRuntimeSignature: string | null = null
 
 /** Pause-card overrides survive reload; `auto` returns ownership to the benchmark. */
 export function setQualityMode(mode: 'auto' | number): void {
@@ -88,7 +89,9 @@ export async function selectInitialQuality(
   const tier = normalizedMs <= 5.4 ? 2 : normalizedMs <= 11.5 ? 1 : 0
   const result = { tier, benchmarkMs, renderScale: 1 }
   try {
-    localStorage.setItem(RESULT_KEY, JSON.stringify(result))
+    const signature = JSON.stringify(result)
+    localStorage.setItem(RESULT_KEY, signature)
+    lastPersistedRuntimeSignature = signature
   } catch {
     // Storage can be unavailable in private contexts; the measured tier still applies.
   }
@@ -119,7 +122,10 @@ export function recordAutoRuntimeSample(
     renderScale: nextTier === tier ? clamp(renderScale, floor, 1) : 1,
   }
   try {
-    localStorage.setItem(RESULT_KEY, JSON.stringify(result))
+    const signature = JSON.stringify(result)
+    if (signature === lastPersistedRuntimeSignature) return
+    localStorage.setItem(RESULT_KEY, signature)
+    lastPersistedRuntimeSignature = signature
   } catch {
     // Runtime adaptation remains active when persistence is unavailable.
   }
@@ -157,13 +163,15 @@ function readCachedResult(): CachedResult | null {
     if (!Number.isFinite(value.tier) || !Number.isFinite(value.benchmarkMs)) return null
     const tier = clampTier(value.tier!)
     const storedScale = Number(value.renderScale ?? 1)
-    return {
+    const result = {
       tier,
       benchmarkMs: Math.max(0, value.benchmarkMs!),
       renderScale: Number.isFinite(storedScale)
         ? clamp(storedScale, TIERS[tier].renderScaleMin, 1)
         : 1,
     }
+    lastPersistedRuntimeSignature = raw
+    return result
   } catch {
     return null
   }

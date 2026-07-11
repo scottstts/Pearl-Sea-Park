@@ -11,14 +11,21 @@ export async function webgpuAvailable(): Promise<boolean> {
   }
 }
 
-export async function createRenderer(canvas: HTMLCanvasElement): Promise<WebGPURenderer> {
+export async function createRenderer(
+  canvas: HTMLCanvasElement,
+  trackTimestamp = false,
+): Promise<WebGPURenderer> {
   const renderer = new WebGPURenderer({
     canvas,
     // The scene MRT owns 4x MSAA. Multisampling the final fullscreen canvas
     // pass would add a second resolve without improving geometry edges.
     antialias: false,
     powerPreference: 'high-performance',
-    trackTimestamp: true,
+    // Resolving WebGPU timestamps submits a query resolve/copy and maps a
+    // readback buffer. Keep that diagnostic path for explicit debug sessions;
+    // continuously serializing it during normal play can turn a transient GPU
+    // backlog into a visible presentation hitch.
+    trackTimestamp,
   })
   await renderer.init()
 

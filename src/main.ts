@@ -72,7 +72,7 @@ async function boot(): Promise<void> {
   ticket.setProgress('render-pipeline', 0.05)
   let renderer
   try {
-    renderer = await createRenderer(canvas)
+    renderer = await createRenderer(canvas, flags.debug)
   } catch {
     ticket.showError(
       'This experience requires WebGPU',
@@ -219,6 +219,7 @@ async function boot(): Promise<void> {
         ...performance,
         tier: ctx.quality.tier,
         renderScale: ctx.quality.renderScale,
+        dynamicResolution: ctx.quality.debugSnapshot(),
         drawCalls: info.render.drawCalls,
         triangles: info.render.triangles,
         points: info.render.points,

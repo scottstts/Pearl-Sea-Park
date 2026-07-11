@@ -1,13 +1,14 @@
 import { DoubleSide } from 'three'
 import { MeshBasicNodeMaterial } from 'three/webgpu'
 import {
+  Fn,
+  If,
   cameraProjectionMatrix,
   cameraProjectionMatrixInverse,
   cameraPosition,
   cameraViewMatrix,
   cameraWorldMatrix,
   dot,
-  faceDirection,
   float,
   getScreenPosition,
   getViewPosition,
@@ -47,6 +48,8 @@ export interface OceanMaterialOptions {
   sceneBackdrop: {
     sample: (uv: Node<'vec2'>) => Node<'vec4'>
   }
+  /** Camera-medium authority: 0 above the displaced surface, 1 below it. */
+  submerged: Node<'float'>
   /**
    * Half-size of the detailed mesh: fine cascades fade to zero approaching
    * this edge so the surface exactly matches the cascade-0-only skirt at the
@@ -170,11 +173,15 @@ export function createOceanSurfaceMaterial(
     )
   }
 
-  // Fold-aware normal (slope / (1 + λ·dD/dx)), then face-side flip.
+  // Fold-aware normal (slope / (1 + λ·dD/dx)). Optical side is a camera
+  // medium state, never a per-triangle facing test: right at the crossing a
+  // displaced sheet can expose nearby backfaces before the camera itself is
+  // submerged, which previously painted a local bright Snell-window bubble.
   const slopeX = derivatives.x.div(max(0.18, derivatives.z.add(1)))
   const slopeZ = derivatives.y.div(max(0.18, derivatives.w.add(1)))
   const upNormal = normalize(vec3(slopeX.negate(), 1, slopeZ.negate()))
-  const sideSign = faceDirection
+  const isAbove = float(1).sub(options.submerged)
+  const sideSign = isAbove.mul(2).sub(1)
   const rawNormal = upNormal.mul(sideSign)
 
   const toCamera = cameraPosition.sub(vWorld)
@@ -188,66 +195,71 @@ export function createOceanSurfaceMaterial(
   const normal = normalize(mix(rawNormal, vec3(0, sideSign, 0), distanceFade))
 
   const sunDir = sunDirectionUniform
-  const isAbove = sideSign.mul(0.5).add(0.5)
 
-  // Trace one side-aware refracted ray through the opaque framebuffer. The
-  // first depth lookup estimates the subject distance; the second projection
-  // starts at the actual wave-surface hit point. Projecting the direction from
-  // the camera origin (the old path) omitted that interface translation, so
-  // above-water structures drifted away from their water-entry points as the
-  // viewer moved back. The same path gives the above-water side real
-  // transmitted underwater scenery instead of a flat bright body-colour disc.
+  // Trace the underwater Snell ray through the opaque framebuffer. The first
+  // depth lookup estimates subject distance; the second projection starts at
+  // the actual displaced interface hit point, preserving the accepted tower
+  // alignment fix. The framebuffer work is behind the same coherent camera-
+  // medium uniform as the rest of the underwater pipeline, so above-water
+  // frames pay no depth/color refraction samples.
   const incident = viewDir.negate()
-  const refractionEta = mix(float(1.333), float(1 / 1.333), isAbove)
-  const refracted = refract(incident, normal, refractionEta)
+  const refracted = refract(incident, normal, 1.333)
   const insideWindow = step(1e-5, dot(refracted, refracted))
+  const refractedSample = Fn(() => {
+    const sample = vec4(0).toVar()
+    If(options.submerged.greaterThan(0.5), () => {
+      const initialRefractedView = cameraViewMatrix.mul(vec4(refracted, 0)).xyz
+      const initialRefractedUv = getScreenPosition(
+        initialRefractedView,
+        cameraProjectionMatrix,
+      )
+      const initialUvInside = step(0.002, initialRefractedUv.x)
+        .mul(step(initialRefractedUv.x, 0.998))
+        .mul(step(0.002, initialRefractedUv.y))
+        .mul(step(initialRefractedUv.y, 0.998))
+      const initialSafeUv = viewportSafeUV(
+        initialRefractedUv.clamp(vec2(0.002), vec2(0.998)),
+      )
+      const initialDepth = viewportDepthTexture(initialSafeUv).r
+      const initialSourceView = getViewPosition(
+        initialSafeUv,
+        initialDepth,
+        cameraProjectionMatrixInverse,
+      )
+      const initialSourceWorld = cameraWorldMatrix.mul(vec4(initialSourceView, 1)).xyz
+      const estimatedDistance = initialSourceWorld.sub(vWorld).length().clamp(0.5, 3200.0)
 
-  const initialRefractedView = cameraViewMatrix.mul(vec4(refracted, 0)).xyz
-  const initialRefractedUv = getScreenPosition(initialRefractedView, cameraProjectionMatrix)
-  const initialUvInside = step(0.002, initialRefractedUv.x)
-    .mul(step(initialRefractedUv.x, 0.998))
-    .mul(step(0.002, initialRefractedUv.y))
-    .mul(step(initialRefractedUv.y, 0.998))
-  const initialSafeUv = viewportSafeUV(initialRefractedUv.clamp(vec2(0.002), vec2(0.998)))
-  const initialDepth = viewportDepthTexture(initialSafeUv).r
-  const initialSourceView = getViewPosition(
-    initialSafeUv,
-    initialDepth,
-    cameraProjectionMatrixInverse,
-  )
-  const initialSourceWorld = cameraWorldMatrix.mul(vec4(initialSourceView, 1)).xyz
-  const estimatedDistance = initialSourceWorld.sub(vWorld).length().clamp(0.5, 3200.0)
-
-  const refractedTargetWorld = vWorld.add(refracted.mul(estimatedDistance))
-  const refractedTargetView = cameraViewMatrix.mul(vec4(refractedTargetWorld, 1)).xyz
-  const refractedUv = getScreenPosition(refractedTargetView, cameraProjectionMatrix)
-  const uvInside = step(0.002, refractedUv.x)
-    .mul(step(refractedUv.x, 0.998))
-    .mul(step(0.002, refractedUv.y))
-    .mul(step(refractedUv.y, 0.998))
-    .mul(initialUvInside)
-  const safeUv = viewportSafeUV(refractedUv.clamp(vec2(0.002), vec2(0.998)))
-  const refractedScene = options.sceneBackdrop.sample(safeUv as Node<'vec2'>).rgb
-  const sourceDepth = viewportDepthTexture(safeUv).r
-  const sourceView = getViewPosition(safeUv, sourceDepth, cameraProjectionMatrixInverse)
-  const sourceWorld = cameraWorldMatrix.mul(vec4(sourceView, 1)).xyz
-  const sourceOffset = sourceWorld.sub(vWorld)
-  const rayDistance = max(dot(sourceOffset, refracted), 0.0)
-  const lateralError = sourceOffset.sub(refracted.mul(rayDistance)).length()
-  // Permit the depth buffer's finite pixel footprint without accepting a
-  // detached foreground sample as a ray hit.
-  const rayThickness = rayDistance.mul(0.015).add(0.35)
-  const rayAlignment = float(1).sub(
-    smoothstep(rayThickness, rayThickness.mul(3.0), lateralError),
-  )
-  const airSideSource = step(0.05, sourceWorld.y)
-  const waterSideSource = step(sourceWorld.y, vWorld.y.sub(0.05))
-  const sourceOnExpectedSide = mix(airSideSource, waterSideSource, isAbove)
-  const refractedSceneValid = sourceOnExpectedSide
-    .mul(step(sourceView.length(), 3200.0))
-    .mul(uvInside)
-    .mul(rayAlignment)
-    .mul(insideWindow)
+      const refractedTargetWorld = vWorld.add(refracted.mul(estimatedDistance))
+      const refractedTargetView = cameraViewMatrix.mul(vec4(refractedTargetWorld, 1)).xyz
+      const refractedUv = getScreenPosition(refractedTargetView, cameraProjectionMatrix)
+      const uvInside = step(0.002, refractedUv.x)
+        .mul(step(refractedUv.x, 0.998))
+        .mul(step(0.002, refractedUv.y))
+        .mul(step(refractedUv.y, 0.998))
+        .mul(initialUvInside)
+      const safeUv = viewportSafeUV(refractedUv.clamp(vec2(0.002), vec2(0.998)))
+      const sceneColor = options.sceneBackdrop.sample(safeUv as Node<'vec2'>).rgb
+      const sourceDepth = viewportDepthTexture(safeUv).r
+      const sourceView = getViewPosition(safeUv, sourceDepth, cameraProjectionMatrixInverse)
+      const sourceWorld = cameraWorldMatrix.mul(vec4(sourceView, 1)).xyz
+      const sourceOffset = sourceWorld.sub(vWorld)
+      const rayDistance = max(dot(sourceOffset, refracted), 0.0)
+      const lateralError = sourceOffset.sub(refracted.mul(rayDistance)).length()
+      const rayThickness = rayDistance.mul(0.015).add(0.35)
+      const rayAlignment = float(1).sub(
+        smoothstep(rayThickness, rayThickness.mul(3.0), lateralError),
+      )
+      const validity = step(0.05, sourceWorld.y)
+        .mul(step(sourceView.length(), 3200.0))
+        .mul(uvInside)
+        .mul(rayAlignment)
+        .mul(insideWindow)
+      sample.assign(vec4(sceneColor, validity))
+    })
+    return sample
+  })()
+  const refractedScene = refractedSample.rgb
+  const refractedSceneValid = refractedSample.a
 
   // ── Above-surface shading ──────────────────────────────────────────────
   const heightMask = smoothstep(-1.7, 1.5, vHeight)
@@ -277,23 +289,7 @@ export function createOceanSurfaceMaterial(
   )
   const sunGlint = sunColorUniform.mul(glint).mul(6.0)
 
-  // Air -> water transmission: use the actual opaque underwater scene with
-  // Beer-Lambert extinction and in-scatter. Previously the non-reflective
-  // share was a uniform pale body colour; near normal incidence that became
-  // the large light-blue "bubble" visible just before submerging.
-  const waterTransmission = vec3(0.026, 0.0085, 0.005)
-    .mul(rayDistance)
-    .negate()
-    .exp()
-  const refractedWater = refractedScene
-    .mul(waterTransmission)
-    .add(SHALLOW.mul(float(1).sub(waterTransmission)))
-  const transmittedBody = mix(
-    body,
-    refractedWater,
-    refractedSceneValid.mul(isAbove),
-  )
-  let above = mix(transmittedBody, skyReflection, fresnel).add(sunGlint)
+  let above = mix(body, skyReflection, fresnel).add(sunGlint)
 
   if (options.detailed) {
     // Jacobian foam: history-driven coverage × bubbly fbm detail, sun/sky lit.
@@ -328,7 +324,7 @@ export function createOceanSurfaceMaterial(
   // Only real geometry in air participates below the surface. The sky dome
   // remains on the analytic path so its sub-pixel HDR sun cannot become
   // framebuffer-sampling noise.
-  const aboveWaterStructure = refractedSceneValid.mul(float(1).sub(isAbove))
+  const aboveWaterStructure = refractedSceneValid
   const transmittedScene = mix(
     skyThrough.add(windowGlint),
     refractedScene,

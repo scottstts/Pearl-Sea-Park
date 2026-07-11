@@ -46,18 +46,32 @@ export const TIERS: readonly QualityParams[] = [
 ]
 
 const TARGET_MS = 1000 / 60
-const RESPONSE_SECONDS = 0.35
 const DOWNSCALE_THRESHOLD = TARGET_MS * 1.28
 const UPSCALE_THRESHOLD = TARGET_MS * 1.08
-const DOWNSCALE_COOLDOWN_MS = 350
-const UPSCALE_COOLDOWN_MS = 4_000
+const ISOLATED_HITCH_MS = 50
+const SUSTAINED_HITCH_FRAMES = 8
+const DOWNSCALE_PRESSURE_SECONDS = 2
+const UPSCALE_HEALTHY_SECONDS = 10
+const DOWNSCALE_COOLDOWN_MS = 5_000
+const UPSCALE_COOLDOWN_MS = 10_000
+
+export interface DynamicResolutionSnapshot {
+  frameEmaMs: number
+  pressureSeconds: number
+  healthySeconds: number
+  outlierStreak: number
+  scaleChanges: number
+}
 
 export class QualityState {
   tier: number
   renderScale = 1
   private frameEma = TARGET_MS
-  private downscaleCooldownUntilMs = 0
-  private upscaleCooldownUntilMs = 0
+  private pressureSeconds = 0
+  private healthySeconds = 0
+  private outlierStreak = 0
+  private cooldownUntilMs = 0
+  private scaleChanges = 0
 
   constructor(initialTier: number, initialRenderScale = 1) {
     this.tier = Math.max(0, Math.min(TIERS.length - 1, initialTier))
@@ -69,36 +83,70 @@ export class QualityState {
   }
 
   /**
-   * Feed measured frame ms; nudges render scale with hysteresis.
+   * Feed measured frame cadence; resize only under sustained pressure.
+   *
+   * A render-scale change reallocates the canvas and the pipeline's large
+   * MRT/post targets. Treating one long frame as GPU pressure creates a
+   * feedback loop: the hitch requests a resize, and the resize creates the
+   * next hitch. Isolated >50 ms frames are therefore recorded but ignored by
+   * the controller unless they persist for several consecutive frames.
    * Returns true when the scale changed enough that targets must resize.
    */
   submitFrame(ms: number, nowMs: number): boolean {
-    const sample = Math.min(ms, 100)
-    const alpha = 1 - Math.exp(-sample / (RESPONSE_SECONDS * 1000))
-    this.frameEma += (sample - this.frameEma) * alpha
+    const sample = Math.min(Math.max(ms, 1), 100)
+    const sampleSeconds = Math.min(sample, ISOLATED_HITCH_MS) / 1000
+    const outlier = sample > ISOLATED_HITCH_MS
+    this.outlierStreak = outlier ? this.outlierStreak + 1 : 0
+    const sustainedOutlier = outlier && this.outlierStreak >= SUSTAINED_HITCH_FRAMES
+    const acceptedSample = outlier && !sustainedOutlier ? null : Math.min(sample, ISOLATED_HITCH_MS)
+
+    if (acceptedSample !== null) {
+      const alpha = 1 - Math.exp(-sampleSeconds / 0.75)
+      this.frameEma += (acceptedSample - this.frameEma) * alpha
+    }
+
+    const underPressure = sustainedOutlier || (!outlier && sample > DOWNSCALE_THRESHOLD)
+    const healthy = !outlier && sample <= UPSCALE_THRESHOLD
+    if (underPressure) {
+      this.pressureSeconds += sampleSeconds
+      this.healthySeconds = 0
+    } else if (healthy) {
+      this.healthySeconds += sampleSeconds
+      this.pressureSeconds = Math.max(0, this.pressureSeconds - sampleSeconds * 2)
+    } else {
+      this.pressureSeconds = Math.max(0, this.pressureSeconds - sampleSeconds * 0.5)
+      this.healthySeconds = Math.max(0, this.healthySeconds - sampleSeconds)
+    }
+
+    if (nowMs < this.cooldownUntilMs) return false
     const before = this.renderScale
-    if (this.frameEma > DOWNSCALE_THRESHOLD) {
-      if (nowMs < this.downscaleCooldownUntilMs) return false
+    if (this.pressureSeconds >= DOWNSCALE_PRESSURE_SECONDS) {
       const pressure = this.frameEma / TARGET_MS
-      const step = pressure >= 2.4 ? 0.08 : pressure >= 1.6 ? 0.05 : 0.025
+      const step = pressure >= 1.6 ? 0.05 : 0.025
       this.renderScale = Math.max(this.params.renderScaleMin, this.renderScale - step)
-    } else if (this.frameEma <= UPSCALE_THRESHOLD) {
-      if (nowMs < this.upscaleCooldownUntilMs) return false
+      this.pressureSeconds = 0
+      this.healthySeconds = 0
+      this.cooldownUntilMs = nowMs + DOWNSCALE_COOLDOWN_MS
+    } else if (this.healthySeconds >= UPSCALE_HEALTHY_SECONDS && this.renderScale < 1) {
       this.renderScale = Math.min(1, this.renderScale + 0.025)
+      this.pressureSeconds = 0
+      this.healthySeconds = 0
+      this.cooldownUntilMs = nowMs + UPSCALE_COOLDOWN_MS
     }
     if (this.renderScale !== before) {
-      // Presentation cadence is v-sync quantized. A healthy 60 Hz frame is
-      // ~16.7 ms, so recovery must be possible near TARGET_MS rather than
-      // requiring an impossible sub-refresh interval. Recovery probes stay
-      // deliberately sparse to avoid visible scale oscillation.
-      if (this.renderScale < before) {
-        this.downscaleCooldownUntilMs = nowMs + DOWNSCALE_COOLDOWN_MS
-        this.upscaleCooldownUntilMs = nowMs + UPSCALE_COOLDOWN_MS
-      } else {
-        this.upscaleCooldownUntilMs = nowMs + UPSCALE_COOLDOWN_MS
-      }
+      this.scaleChanges++
       return true
     }
     return false
+  }
+
+  debugSnapshot(): DynamicResolutionSnapshot {
+    return {
+      frameEmaMs: this.frameEma,
+      pressureSeconds: this.pressureSeconds,
+      healthySeconds: this.healthySeconds,
+      outlierStreak: this.outlierStreak,
+      scaleChanges: this.scaleChanges,
+    }
   }
 }
