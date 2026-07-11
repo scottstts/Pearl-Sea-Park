@@ -38,15 +38,6 @@ export type GameEvents = {
   'grotto/drip': Record<string, never>
   /** Food or another future prop is attracting the Turtle Lagoon residents. */
   'wildlife/turtle-attractor': { x: number; y: number; z: number; strength: number }
-  /** Temporary school attractor used by food, lamps, and future show props. */
-  'wildlife/fish-attractor': {
-    x: number
-    y: number
-    z: number
-    strength: number
-    radius: number
-    duration: number
-  }
   /** Authored whale passage phases; audio intentionally begins before sight. */
   'wildlife/whale-cue': { phase: 'approach' | 'visible' | 'depart' | 'end' }
   /** A Midway game awarded one of its two physical counter prizes. */

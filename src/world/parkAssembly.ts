@@ -21,6 +21,14 @@ import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from './districts/atrium'
 import { PARK_PATHS, PARK_PLAN, anchorGround } from './parkPlan'
+import {
+  detailCafe,
+  detailEsplanade,
+  detailMidway,
+  detailObservatory,
+  detailOverlook,
+  detailTidalCourt,
+} from './parkFacilities'
 import { terrainHeight } from './terrain'
 
 /**
@@ -44,7 +52,7 @@ export class ParkAssemblySystem implements GameSystem {
   }
 
   init(ctx: GameContext): void {
-    const { physics, materials, seats } = this.services
+    const { physics, materials, amenities, seats } = this.services
     const lib = materials.lib
     if (!lib) throw new Error('ParkAssemblySystem requires materials')
     const kit = new ArchKit(lib)
@@ -52,7 +60,7 @@ export class ParkAssemblySystem implements GameSystem {
     const group = new Object3D()
     const lights: PointLight[] = []
     const lamp = (x: number, y: number, z: number, lit = false) => {
-      const globe = kit.lampPost(w, x, y, z)
+      const globe = amenities.addLamp(x, y, z)
       physics.addStaticBox(x, y + 1.7, z, 0.12, 1.7, 0.12)
       if (lit) {
         const light = new PointLight(0xffd9a0, 5.5, 12, 1.8)
@@ -112,7 +120,7 @@ export class ParkAssemblySystem implements GameSystem {
     for (let z = esp.zTo + 18; z <= esp.zFrom - 18; z += columnGap * 3) {
       for (const side of [-1, 1]) {
         const bx = esp.x + side * (esp.width / 2 - 1.2)
-        kit.bench(w, bx, espY + 0.1, z, side > 0 ? -Math.PI / 2 : Math.PI / 2)
+        amenities.addBench(bx, espY + 0.1, z, side > 0 ? -Math.PI / 2 : Math.PI / 2)
         physics.addStaticBox(bx, espY + 0.45, z, 0.32, 0.34, 0.9)
         seats?.registerBenchSeat({
           eye: new Vector3(bx, espY + 1.35, z),
@@ -122,6 +130,7 @@ export class ParkAssemblySystem implements GameSystem {
         })
       }
     }
+    detailEsplanade({ kit, writer: w, materials: lib, physics }, espY)
 
     // ── Tidal Court: hub colonnade ring + reflecting pool ─────────────────
     const hub = PARK_PLAN.tidalCourt
@@ -247,6 +256,7 @@ export class ParkAssemblySystem implements GameSystem {
     ]) {
       lamp(hub.x + dx, hubY + 0.1, hub.z + dz, true)
     }
+    detailTidalCourt({ kit, writer: w, materials: lib, physics }, hubY)
 
     // ── Midway hall shell and its physical games ─────────────────────────
     const mid = PARK_PLAN.midway
@@ -265,6 +275,7 @@ export class ParkAssemblySystem implements GameSystem {
     for (let i = 0; i < 4; i++) {
       lamp(mid.x - mid.width / 2 + 4 + i * ((mid.width - 8) / 3), midY, mid.z - mid.depth / 2 - 2, i % 2 === 0)
     }
+    detailMidway({ kit, writer: w, materials: lib, physics }, midY)
 
     // ── Café Méduse ───────────────────────────────────────────────────────
     const cafe = PARK_PLAN.cafe
@@ -290,6 +301,7 @@ export class ParkAssemblySystem implements GameSystem {
     }
     lamp(cafe.x - 6, cafeY, cafe.z + 5, true)
     lamp(cafe.x + 6, cafeY, cafe.z - 5, true)
+    detailCafe({ kit, writer: w, materials: lib, physics }, cafeY)
 
     // ── Observatory: the quiet dome for watching the Silver Ceiling ──────
     const obs = PARK_PLAN.observatory
@@ -310,7 +322,7 @@ export class ParkAssemblySystem implements GameSystem {
       const bx = obs.x + Math.sin(angle) * 4
       const bz = obs.z + Math.cos(angle) * 4
       const yaw = Math.atan2(obs.x - bx, obs.z - bz)
-      kit.bench(w, bx, obsY + 0.18, bz, yaw)
+      amenities.addBench(bx, obsY + 0.18, bz, yaw)
       physics.addStaticBox(bx, obsY + 0.5, bz, 0.9, 0.34, 0.3, yaw)
       seats?.registerBenchSeat({
         eye: new Vector3(bx, obsY + 1.4, bz),
@@ -319,6 +331,7 @@ export class ParkAssemblySystem implements GameSystem {
         prompt: 'Recline and watch the ceiling',
       })
     }
+    detailObservatory({ kit, writer: w, materials: lib, physics }, obsY)
 
     // ── Leviathan Overlook: balustrade at the rim ─────────────────────────
     const overlookX = -140
@@ -332,6 +345,7 @@ export class ParkAssemblySystem implements GameSystem {
     physics.addStaticBox(overlookX, overlookY + 0.6, overlookZ - 1, 30, 0.6, 0.2)
     lamp(overlookX - 28, overlookY, overlookZ + 4, true)
     lamp(overlookX + 28, overlookY, overlookZ + 4, true)
+    detailOverlook({ kit, writer: w, materials: lib, physics }, overlookX, overlookZ, overlookY)
 
     // ── Path network (segments defined once in parkPlan) ─────────────────
     for (const p of PARK_PATHS) groundedPath(p.ax, p.az, p.bx, p.bz, p.width)

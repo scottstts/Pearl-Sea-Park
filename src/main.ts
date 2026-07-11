@@ -44,6 +44,7 @@ import type { DistrictServices } from './world/districts/atrium'
 import { AtriumSystem } from './world/districts/atrium'
 import { FloraSystem } from './world/flora'
 import { ParkAssemblySystem } from './world/parkAssembly'
+import { ParkAmenitiesSystem } from './world/parkAmenities'
 import { TerrainSystem } from './world/terrain'
 import { TestGallerySystem } from './world/testGallery'
 import { WildlifeSystem } from './wildlife/wildlifeSystem'
@@ -130,8 +131,9 @@ async function boot(): Promise<void> {
     registry.add(new FloraSystem(medium))
     const physics = registry.add(new PhysicsSystem())
     const materials = registry.add(new MaterialsSystem(medium))
+    const amenities = registry.add(new ParkAmenitiesSystem(materials))
     registry.add(new ArrivalSystem(physics, materials))
-    const services: DistrictServices = { physics, materials }
+    const services: DistrictServices = { physics, materials, amenities }
     let player: PlayerSystem | null = null
     let heldItems: HeldItemSystem | null = null
     if (flags.view) {

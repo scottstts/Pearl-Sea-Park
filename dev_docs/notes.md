@@ -277,3 +277,27 @@
   - The exposure readback computes a target only. Applying adaptation inside
     the 30-frame readback callback creates small brightness steps; adapt the
     existing EV toward that target every rendered frame instead.
+- 2026-07-11 facility and amenity finish pass:
+  - Architectural richness should compile into the existing material-slot and
+    spatial-chunk structure. Cornices, curb inlays, joinery, and ornament can
+    materially improve construction logic without turning into prop-per-draw
+    rendering; keep facility plans separate from the assembly orchestrator.
+  - A late blanket `traverse` can silently undo a local performance policy.
+    Flora explicitly disabled seagrass shadows, then its init traversal enabled
+    them again. Set shadow ownership by asset class; dense blades and tiny
+    shells are never shadow casters.
+- 2026-07-11 facility correction rulings:
+  - Schooling fish are removed completely after continued multi-second freezes;
+    the prior optimization notes are historical only. Do not restore a swarm
+    without a new explicit request and measured GPU evidence.
+  - Repeated amenities are immutable prototypes placed through `InstancedMesh`,
+    not fragment emitters. The old bench split its slats/scrolls across separate
+    transforms; the old lamp guessed torus rotations and left the crown detached.
+    Bench joinery and lamp members now share one local frame and have executable
+    overlap/contact audits.
+  - Roofs on yawed street furniture must be designed in object-local axes and
+    inherit the parent's yaw. A flattened cone is not a pitched notice-board
+    roof. The two panel endpoints now meet one local-X ridge and local-±Z eaves.
+  - The flattened fan-coral sphere read as a cardboard cutout and is deleted.
+    Fan-shaped organisms need authored thickness/branching; omit them until that
+    mechanism exists.

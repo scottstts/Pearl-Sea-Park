@@ -72,6 +72,7 @@ export class ArchKit {
   /** Balustrade run: rail + turned balusters between two points. */
   balustrade(w: SlotWriter, x1: number, z1: number, x2: number, z2: number, y: number): void {
     const rail = this.proto('bal-rail', () => new BoxGeometry(1, 0.07, 0.12))
+    const lowerRail = this.proto('bal-lower-rail', () => new BoxGeometry(1, 0.045, 0.08))
     const post = this.proto('bal-post', () =>
       new LatheGeometry(
         [
@@ -92,11 +93,43 @@ export class ArchKit {
     const composed = new Matrix4().makeScale(length, 1, 1).premultiply(new Matrix4().makeRotationY(-yaw))
     composed.setPosition((x1 + x2) / 2, y + 0.84, (z1 + z2) / 2)
     w.emit(this.m.brass, rail, composed)
+    const lower = composed.clone()
+    lower.elements[13] = y + 0.17
+    w.emit(this.m.verdigris, lowerRail, lower)
 
     const count = Math.max(2, Math.round(length / 0.42))
     for (let i = 0; i <= count; i++) {
       const t = i / count
       w.place(this.m.marble, post, x1 + dx * t, y, z1 + dz * t, 0, 1)
+    }
+    const terminal = this.proto('bal-terminal', () => new SphereGeometry(0.11, 10, 7))
+    w.place(this.m.brass, terminal, x1, y + 0.86, z1)
+    w.place(this.m.brass, terminal, x2, y + 0.86, z2)
+  }
+
+  /** Layered entablature between columns: readable shadow lines, dentils, and crest rail. */
+  cornice(w: SlotWriter, x1: number, z1: number, x2: number, z2: number, y: number): void {
+    const beam = this.proto('cornice-beam', () => new BoxGeometry(1, 1, 1))
+    const dx = x2 - x1
+    const dz = z2 - z1
+    const length = Math.hypot(dx, dz)
+    const yaw = Math.atan2(dz, dx)
+    const placeRun = (height: number, depth: number, atY: number, material: ParkMaterials['brass' | 'marble' | 'verdigris']) => {
+      const matrix = new Matrix4()
+        .makeScale(length, height, depth)
+        .premultiply(new Matrix4().makeRotationY(-yaw))
+      matrix.setPosition((x1 + x2) / 2, atY, (z1 + z2) / 2)
+      w.emit(material, beam, matrix)
+    }
+    placeRun(0.28, 0.36, y, this.m.marble)
+    placeRun(0.09, 0.54, y + 0.2, this.m.brass)
+    placeRun(0.08, 0.3, y - 0.2, this.m.verdigris)
+
+    const dentil = this.proto('cornice-dentil', () => new BoxGeometry(0.22, 0.16, 0.42))
+    const count = Math.max(2, Math.floor(length / 0.72))
+    for (let i = 0; i <= count; i++) {
+      const t = i / count
+      w.place(this.m.brass, dentil, x1 + dx * t, y - 0.32, z1 + dz * t, -yaw)
     }
   }
 
@@ -133,54 +166,6 @@ export class ArchKit {
     this.place(w, this.m.brass, finial, x, y + radius * 0.82, z, 0, radius * 0.12)
   }
 
-  /** Iron lamp post with one warm globe. Returns globe position for lights. */
-  lampPost(w: SlotWriter, x: number, y: number, z: number): { x: number; y: number; z: number } {
-    const post = this.proto('lamp-post', () => new CylinderGeometry(0.05, 0.09, 1, 10))
-    const collar = this.proto('lamp-collar', () => new TorusGeometry(0.09, 0.025, 8, 16))
-    const arm = this.proto('lamp-arm', () => new TorusGeometry(0.35, 0.03, 8, 20, Math.PI * 0.75))
-    const globe = this.proto('lamp-globe', () => new SphereGeometry(0.16, 18, 12))
-
-    const height = 3.4
-    this.placeScaled(w, this.m.iron, post, x, y + height / 2, z, 1, height, 1)
-    this.placeScaled(w, this.m.iron, collar, x, y + 1.1, z, 1, 1, 1, Math.PI / 2)
-    const composed = new Matrix4().makeRotationZ(-0.2)
-    composed.setPosition(x + 0.18, y + height, z)
-    w.emit(this.m.iron, arm, composed)
-    const globePos = { x: x + 0.5, y: y + height + 0.16, z }
-    w.place(this.m.lampGlobe, globe, globePos.x, globePos.y, globePos.z)
-    return globePos
-  }
-
-  /** Park bench: iron scroll sides, wood slats. Faces -z before yaw. */
-  bench(w: SlotWriter, x: number, y: number, z: number, yaw = 0): void {
-    const slat = this.proto('bench-slat', () => new BoxGeometry(1.7, 0.035, 0.09))
-    const side = this.proto('bench-side', () => new TorusGeometry(0.3, 0.035, 8, 18, Math.PI * 1.25))
-    const leg = this.proto('bench-leg', () => new CylinderGeometry(0.035, 0.045, 0.45, 8))
-
-    const rotate = (px: number, pz: number): [number, number] => [
-      x + px * Math.cos(yaw) - pz * Math.sin(yaw),
-      z + px * Math.sin(yaw) + pz * Math.cos(yaw),
-    ]
-    for (let i = 0; i < 4; i++) {
-      const [sx, sz] = rotate(0, -0.09 + i * 0.09)
-      w.place(this.m.woodDark, slat, sx, y + 0.45 + (i > 1 ? (i - 1) * 0.001 : 0), sz, yaw)
-    }
-    for (let i = 0; i < 3; i++) {
-      const [sx, sz] = rotate(0, 0.21 + i * 0.07)
-      w.place(this.m.woodDark, slat, sx, y + 0.62 + i * 0.14, sz, yaw)
-    }
-    for (const sideX of [-0.8, 0.8]) {
-      const [px, pz] = rotate(sideX, 0.05)
-      const composed = new Matrix4().makeRotationY(yaw + Math.PI / 2)
-      composed.setPosition(px, y + 0.42, pz)
-      w.emit(this.m.iron, side, composed)
-      const [lx, lz] = rotate(sideX, -0.12)
-      w.place(this.m.iron, leg, lx, y + 0.22, lz, yaw)
-      const [bx, bz] = rotate(sideX, 0.18)
-      w.place(this.m.iron, leg, bx, y + 0.22, bz, yaw)
-    }
-  }
-
   /** Gabled glass roof with verdigris ridge (midway hall). */
   gableRoof(w: SlotWriter, cx: number, y: number, cz: number, width: number, depth: number, rise: number): void {
     const panel = this.proto('roof-panel', () => new BoxGeometry(1, 0.05, 1))
@@ -199,6 +184,12 @@ export class ArchKit {
       .premultiply(new Matrix4().makeRotationZ(Math.PI / 2))
     ridgeMatrix.setPosition(cx, y + rise, cz)
     w.emit(this.m.verdigris, ridge, ridgeMatrix)
+    const edge = this.proto('roof-edge', () => new BoxGeometry(1, 0.12, 0.12))
+    for (const end of [-1, 1]) {
+      const run = new Matrix4().makeScale(width + 0.5, 1, 1)
+      run.setPosition(cx, y, cz + end * depth / 2)
+      w.emit(this.m.brass, edge, run)
+    }
   }
 
   /** Brass ticket-punch machine: pedestal, dial face, domed cap. */
@@ -241,6 +232,30 @@ export class ArchKit {
       .premultiply(new Matrix4().makeRotationY(yaw))
     composed.setPosition((x1 + x2) / 2, y + 0.08, (z1 + z2) / 2)
     w.emit(this.m.mosaic, plate, composed)
+    const curb = this.proto('path-curb', () => new BoxGeometry(0.18, 0.14, 1))
+    const inlay = this.proto('path-inlay', () => new BoxGeometry(0.055, 0.018, 1))
+    const nx = -dz / Math.max(length, 0.001)
+    const nz = dx / Math.max(length, 0.001)
+    for (const side of [-1, 1]) {
+      const curbMatrix = new Matrix4()
+        .makeScale(1, 1, length)
+        .premultiply(new Matrix4().makeRotationY(yaw))
+      curbMatrix.setPosition(
+        (x1 + x2) / 2 + nx * (width / 2 - 0.07) * side,
+        y + 0.17,
+        (z1 + z2) / 2 + nz * (width / 2 - 0.07) * side,
+      )
+      w.emit(this.m.marble, curb, curbMatrix)
+      const inlayMatrix = new Matrix4()
+        .makeScale(1, 1, length)
+        .premultiply(new Matrix4().makeRotationY(yaw))
+      inlayMatrix.setPosition(
+        (x1 + x2) / 2 + nx * (width * 0.32) * side,
+        y + 0.171,
+        (z1 + z2) / 2 + nz * (width * 0.32) * side,
+      )
+      w.emit(this.m.brass, inlay, inlayMatrix)
+    }
   }
 
   /** Café table: marble round top on brass column, with two stools. */
@@ -249,11 +264,28 @@ export class ArchKit {
     const stem = this.proto('table-stem', () => new CylinderGeometry(0.05, 0.09, 0.72, 10))
     const foot = this.proto('table-foot', () => new CylinderGeometry(0.24, 0.28, 0.05, 14))
     const stool = this.proto('table-stool', () => new CylinderGeometry(0.19, 0.16, 0.48, 12))
+    const rim = this.proto('table-rim', () => new TorusGeometry(0.45, 0.025, 7, 22))
+    const stoolRing = this.proto('stool-ring', () => new TorusGeometry(0.16, 0.018, 6, 12))
     w.place(this.m.marble, top, x, y + 0.76, z)
     w.place(this.m.brass, stem, x, y + 0.38, z)
     w.place(this.m.brass, foot, x, y + 0.03, z)
-    w.place(this.m.woodDark, stool, x + 0.75, y + 0.24, z + 0.1)
-    w.place(this.m.woodDark, stool, x - 0.62, y + 0.24, z - 0.42)
+    this.placeScaled(w, this.m.brass, rim, x, y + 0.785, z, 1, 1, 1, Math.PI / 2)
+    for (const [sx, sz, yaw] of [[0.75, 0.1, 0], [-0.62, -0.42, 2.2], [-0.16, 0.82, -1.3]] as const) {
+      w.place(this.m.woodDark, stool, x + sx, y + 0.24, z + sz, yaw)
+      this.placeScaled(w, this.m.brass, stoolRing, x + sx, y + 0.48, z + sz, 1, 1, 1, Math.PI / 2)
+    }
+  }
+
+  /** Sculptural planter/marker, used sparingly at gates and path junctions. */
+  urn(w: SlotWriter, x: number, y: number, z: number, scale = 1): void {
+    const body = this.proto('urn-body', () => new LatheGeometry([
+      new Vector2(0.22, 0), new Vector2(0.35, 0.08), new Vector2(0.31, 0.22),
+      new Vector2(0.46, 0.5), new Vector2(0.4, 0.78), new Vector2(0.24, 0.92),
+      new Vector2(0.48, 1.02),
+    ], 18))
+    const pearl = this.proto('urn-pearl', () => new SphereGeometry(0.12, 12, 8))
+    w.place(this.m.verdigris, body, x, y, z, 0, scale)
+    w.place(this.m.nacre, pearl, x, y + scale * 1.13, z, 0, scale)
   }
 
   /** Low steps ring (two treads) around a plaza. */

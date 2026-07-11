@@ -2,10 +2,14 @@ import {
   BoxGeometry,
   CanvasTexture,
   Color,
+  CylinderGeometry,
+  LatheGeometry,
   Mesh,
   Object3D,
   PlaneGeometry,
+  SphereGeometry,
   SRGBColorSpace,
+  Vector2,
 } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import { PARK_SCHEDULE } from '../core/scheduler'
@@ -14,6 +18,7 @@ import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from '../world/districts/atrium'
 import { PARK_PLAN } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
+import { createNoticeBoardRoofPlan } from './noticeBoardGeometry'
 
 interface Board {
   panel: Mesh
@@ -120,13 +125,50 @@ export class ScheduleBoardSystem implements GameSystem {
     panel.receiveShadow = true
     boardGroup.add(panel)
 
-    const postGeometry = new BoxGeometry(0.2, 2.5, 0.2)
+    const postGeometry = new LatheGeometry([
+      new Vector2(0.18, 0), new Vector2(0.24, 0.12), new Vector2(0.14, 0.28),
+      new Vector2(0.11, 4.58), new Vector2(0.17, 4.76), new Vector2(0.13, 4.88),
+    ], 12)
+    const footGeometry = new CylinderGeometry(0.28, 0.34, 0.12, 12)
+    const finialGeometry = new SphereGeometry(0.16, 12, 8)
     for (const postX of [-2.45, 2.45]) {
       const post = new Mesh(postGeometry, lib.brass)
-      post.position.set(postX, 1.25, 0)
+      post.position.set(postX, 0, 0)
       post.castShadow = true
-      boardGroup.add(post)
+      const foot = new Mesh(footGeometry, lib.marble)
+      foot.position.set(postX, 0.06, 0)
+      const finial = new Mesh(finialGeometry, lib.nacre)
+      finial.position.set(postX, 4.98, 0)
+      boardGroup.add(post, foot, finial)
     }
+    // Layered reveal and rain-cap: the board remains readable as furniture
+    // even when its texture is edge-on during the mechanical flip.
+    for (const xSide of [-1, 1]) {
+      const rail = new Mesh(new BoxGeometry(0.08, 3.42, 0.1), lib.brass)
+      rail.position.set(xSide * 2.86, 3, 0.17)
+      boardGroup.add(rail)
+    }
+    for (const ySide of [-1, 1]) {
+      const rail = new Mesh(new BoxGeometry(5.8, 0.08, 0.1), lib.brass)
+      rail.position.set(0, 3 + ySide * 1.7, 0.17)
+      boardGroup.add(rail)
+    }
+    const roof = createNoticeBoardRoofPlan()
+    for (const panelPlan of roof.panels) {
+      const roofPanel = new Mesh(
+        new BoxGeometry(panelPlan.width, panelPlan.thickness, panelPlan.slopeLength),
+        lib.verdigris,
+      )
+      roofPanel.rotation.x = panelPlan.rotationX
+      roofPanel.position.copy(panelPlan.position)
+      const fascia = new Mesh(new BoxGeometry(6.72, 0.14, 0.1), lib.brass)
+      fascia.position.set(0, roof.eaveY, panelPlan.side * roof.halfDepth)
+      boardGroup.add(roofPanel, fascia)
+    }
+    const ridge = new Mesh(new CylinderGeometry(0.07, 0.07, roof.ridgeLength, 10), lib.brass)
+    ridge.rotation.z = Math.PI / 2
+    ridge.position.set(0, roof.ridgeY, 0)
+    boardGroup.add(ridge)
     this.services.physics.addStaticBox(x, y + 2.75, z, 3.05, 2.75, 0.2, yaw)
     this.group.add(boardGroup)
     this.boards.push({ panel, texture, canvas, flip: 0, changed: false })

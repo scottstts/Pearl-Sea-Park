@@ -43,9 +43,8 @@
 ## Turtle feeding and park collectibles
 
 - The Menagerie dispenser arms eight Rapier pellet spheres. A pellet crossing
-  the lagoon volume emits both turtle and fish attractors at its physical hit
-  point; turtle paths converge distinctly around food while nearby schools
-  gather more loosely. Pellets expire after 18 s.
+  the lagoon volume emits a turtle attractor at its physical hit point; turtle
+  paths converge distinctly around food. Pellets expire after 18 s.
 - Eight penny presses live at the Bell, Atrium, hub, Wheel, Carousel,
   Menagerie, Grotto, and Overlook. Each has rollers, a four-turn crank, a
   dropping pressed coin, one unique motif, and a matching collider. Finished
@@ -53,6 +52,11 @@
 - The sweets kiosk dispenses the melting strawberry cone. The Grand Atrium
   pedestal supplies the pocket park model and disappears only after it is
   taken.
+- `games/fixtureDetails.ts` supplies batched physical joinery for otherwise
+  box-like fixtures: service/prize counters receive stone plinths, brass tops,
+  corner posts and nacre studs; Pearl Diver owns an inset frame; Kraken Bell a
+  foot/crown/side structure. Details compile through one spatial `SlotWriter`
+  per owning game system instead of creating one draw per fastener.
 
 ## Wishing well water
 

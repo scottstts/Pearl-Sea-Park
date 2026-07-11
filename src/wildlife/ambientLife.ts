@@ -156,7 +156,13 @@ export class AmbientLife {
     for (let i = 0; i < courtColumns.length; i++) {
       const a = courtColumns[i]
       const b = courtColumns[(i + 1) % courtColumns.length]
-      if (!a.gate && !b.gate) kit.arch(writer, a.x, a.z, b.x, b.z, jellyY + 6.35, 1.25)
+      if (!a.gate && !b.gate) {
+        kit.arch(writer, a.x, a.z, b.x, b.z, jellyY + 6.35, 1.25)
+        kit.cornice(writer, a.x, a.z, b.x, b.z, jellyY + 6.42)
+      }
+    }
+    for (const side of [-1, 1]) {
+      kit.urn(writer, jelly.x + side * (jelly.radius - 1.8), jellyY + 0.18, jelly.z, 0.95)
     }
 
     const lagoon = menagerie.turtleLagoon
@@ -182,11 +188,45 @@ export class AmbientLife {
     water.position.set(lagoon.x, lagoonY + 0.18, lagoon.z)
     water.receiveShadow = true
     this.group.add(water)
+    // Four open balustrade quadrants give the lagoon a finished feeding edge
+    // while preserving broad access gaps and clear views to the turtles.
+    for (let quadrant = 0; quadrant < 4; quadrant++) {
+      const start = quadrant * Math.PI / 2 + 0.22
+      const end = (quadrant + 1) * Math.PI / 2 - 0.22
+      const segments = 5
+      for (let i = 0; i < segments; i++) {
+        const a = start + (end - start) * (i / segments)
+        const b = start + (end - start) * ((i + 1) / segments)
+        kit.balustrade(
+          writer,
+          lagoon.x + Math.sin(a) * (lagoon.radius + 0.05),
+          lagoon.z + Math.cos(a) * (lagoon.radius + 0.05),
+          lagoon.x + Math.sin(b) * (lagoon.radius + 0.05),
+          lagoon.z + Math.cos(b) * (lagoon.radius + 0.05),
+          lagoonY + 0.3,
+        )
+      }
+    }
 
     const sun = menagerie.sunGarden
     const sunY = terrainHeight(sun.x, sun.z) + 0.08
     kit.mosaicPlaza(writer, sun.x, sunY, sun.z, 9)
-    kit.dome(writer, sun.x, sunY + 0.2, sun.z, 8.5, 14)
+    const sunStations: { x: number; z: number }[] = []
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2
+      const x = sun.x + Math.sin(angle) * 8
+      const z = sun.z + Math.cos(angle) * 8
+      sunStations.push({ x, z })
+      kit.column(writer, x, sunY + 0.18, z, 4.8, 0.23)
+      physics.addStaticBox(x, sunY + 2.5, z, 0.29, 2.4, 0.29)
+    }
+    for (let i = 0; i < sunStations.length; i++) {
+      const a = sunStations[i]
+      const b = sunStations[(i + 1) % sunStations.length]
+      kit.arch(writer, a.x, a.z, b.x, b.z, sunY + 4.98, 0.9)
+      kit.cornice(writer, a.x, a.z, b.x, b.z, sunY + 5.04)
+    }
+    kit.dome(writer, sun.x, sunY + 5.15, sun.z, 8.5, 14)
     physics.addStaticCylinder(sun.x, sunY + 0.08, sun.z, 0.14, 9.4)
 
     // Short grounded links make the three exhibits read as one district.

@@ -56,7 +56,7 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     carousel: 'Winding the music box',
     torrent: 'Priming the torrent',
     scheduler: 'Winding the timetable',
-    wildlife: 'Inviting the fish',
+    wildlife: 'Waking the wildlife',
     'bubble-fountain': 'Teaching the bubbles to dance',
     'schedule-boards': 'Setting the performance boards',
     audio: 'Tuning the music boxes',

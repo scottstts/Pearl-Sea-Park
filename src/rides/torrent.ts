@@ -321,7 +321,7 @@ export class TorrentSystem implements GameSystem {
     this.group.add(deck)
     physics.addStaticBox(st.x + 2.5, stationY - 0.62, st.z, 1.8, 0.12, 8)
     for (const dz of [-6.5, 6.5]) {
-      const globe = kit.lampPost(w, st.x + 4.4, stationY - 0.5, st.z + dz)
+      const globe = this.services.amenities.addLamp(st.x + 4.4, stationY - 0.5, st.z + dz)
       void globe
       physics.addStaticBox(st.x + 4.4, stationY + 1.2, st.z + dz, 0.12, 1.7, 0.12)
     }
@@ -334,6 +334,13 @@ export class TorrentSystem implements GameSystem {
     ]) {
       kit.column(w, cx, stationY - 0.5, cz, 4.1, 0.22)
       physics.addStaticBox(cx, stationY + 1.55, cz, 0.28, 2.05, 0.28)
+    }
+    for (const x of [st.x + 0.4, st.x + 4.2]) {
+      kit.cornice(w, x, st.z - 7.6, x, st.z + 7.6, stationY + 3.68)
+    }
+    for (const z of [st.z - 7.6, st.z + 7.6]) {
+      kit.arch(w, st.x + 0.4, z, st.x + 4.2, z, stationY + 3.62, 0.8)
+      kit.cornice(w, st.x + 0.4, z, st.x + 4.2, z, stationY + 3.7)
     }
 
     // ── The wreck: a hull caught on the cliff face, threaded by the track ─

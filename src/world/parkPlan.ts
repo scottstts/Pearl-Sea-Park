@@ -97,8 +97,8 @@ export function inParkFootprint(x: number, z: number, margin = 0): boolean {
 
 /**
  * Signed distance to the coarse park collision plan (negative = inside).
- * Wildlife bakes this exact field to a low-resolution GPU texture, so fish
- * flow around the same district/path footprints that keep scatter clear.
+ * The same signed field is the authoritative keep-out for deterministic
+ * scatter and any future district-scale navigation.
  */
 export function parkFootprintSignedDistance(x: number, z: number): number {
   let distance = Infinity

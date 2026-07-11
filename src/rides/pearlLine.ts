@@ -137,12 +137,27 @@ export class PearlLineSystem implements GameSystem {
         [-5, -3.4],
         [5, 3.4],
       ]) {
-        const globe = kit.lampPost(w, v.x + dx, y, v.z + dz)
+        const globe = this.services.amenities.addLamp(v.x + dx, y, v.z + dz)
         physics.addStaticBox(v.x + dx, y + 1.7, v.z + dz, 0.12, 1.7, 0.12)
         const light = new PointLight(0xffd9a0, 5.5, 12, 1.8)
         light.position.set(globe.x, globe.y, globe.z)
         this.group.add(light)
       }
+      // A compact glass-and-brass station house. Four posts and two arches
+      // carry the canopy; it reads as infrastructure without enclosing the
+      // open-water boarding platform.
+      const stationCorners = [
+        [-3.8, -2.3], [3.8, -2.3], [-3.8, 2.3], [3.8, 2.3],
+      ] as const
+      for (const [dx, dz] of stationCorners) {
+        kit.column(w, v.x + dx, y, v.z + dz, 4.4, 0.2)
+        physics.addStaticBox(v.x + dx, y + 2.2, v.z + dz, 0.26, 2.2, 0.26)
+      }
+      for (const dz of [-2.3, 2.3]) {
+        kit.arch(w, v.x - 3.8, v.z + dz, v.x + 3.8, v.z + dz, y + 4.4, 0.9)
+        kit.cornice(w, v.x - 3.8, v.z + dz, v.x + 3.8, v.z + dz, y + 4.48)
+      }
+      kit.gableRoof(w, v.x, y + 4.55, v.z, 8.8, 5.6, 1.25)
       const exit = new Vector3(v.x, y + 0.1, v.z + 3.6)
       return { name, s: findS(new Vector3(v.x, stationCableY(v), v.z)), position: new Vector3(v.x, y, v.z), exit, pulsedAtS: -1000 }
     }

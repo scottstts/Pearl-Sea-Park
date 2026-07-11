@@ -12,7 +12,6 @@ export interface QualityParams {
   causticsSize: number
   particulateCount: number
   seagrassDensity: number
-  boidBudget: number
   bubbleBudget: number
   reflectorResolutionScale: number
 }
@@ -25,7 +24,6 @@ export const TIERS: readonly QualityParams[] = [
     causticsSize: 512,
     particulateCount: 8_000,
     seagrassDensity: 0.35,
-    boidBudget: 5_000,
     bubbleBudget: 800,
     reflectorResolutionScale: 0.2,
   },
@@ -36,7 +34,6 @@ export const TIERS: readonly QualityParams[] = [
     causticsSize: 1024,
     particulateCount: 18_000,
     seagrassDensity: 0.7,
-    boidBudget: 10_000,
     bubbleBudget: 1_400,
     reflectorResolutionScale: 0.28,
   },
@@ -47,7 +44,6 @@ export const TIERS: readonly QualityParams[] = [
     causticsSize: 1024,
     particulateCount: 30_000,
     seagrassDensity: 1,
-    boidBudget: 15_000,
     bubbleBudget: 2_200,
     reflectorResolutionScale: 0.35,
   },

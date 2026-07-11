@@ -263,7 +263,7 @@ export class GrottoSystem implements GameSystem {
       [190.5, 114.8],
       [196.2, 110.6],
     ]) {
-      const globe = kit.lampPost(w, lx, dockDeckY + 0.15, lz)
+      const globe = this.services.amenities.addLamp(lx, dockDeckY + 0.15, lz)
       physics.addStaticBox(lx, dockDeckY + 1.85, lz, 0.12, 1.7, 0.12)
       const light = new PointLight(0xffd9a0, 4.5, 11, 1.8)
       light.position.set(globe.x, globe.y, globe.z)
@@ -430,6 +430,9 @@ export class GrottoSystem implements GameSystem {
     kit.column(w, left.x, floor, left.z, 4.7, 0.3)
     kit.column(w, right.x, floor, right.z, 4.7, 0.3)
     kit.arch(w, left.x, left.z, right.x, right.z, floor + 4.72, 1.65)
+    kit.cornice(w, left.x, left.z, right.x, right.z, floor + 4.82)
+    kit.urn(w, left.x - across.x * 0.75, floor, left.z - across.z * 0.75, 0.9)
+    kit.urn(w, right.x + across.x * 0.75, floor, right.z + across.z * 0.75, 0.9)
     physics.addStaticBox(left.x, floor + 2.35, left.z, 0.42, 2.35, 0.42)
     physics.addStaticBox(right.x, floor + 2.35, right.z, 0.42, 2.35, 0.42)
 

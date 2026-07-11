@@ -8,11 +8,14 @@ import type { InteractionSystem } from '../../player/interact'
 import type { SeatSystem } from '../../player/seats'
 import type { GameContext } from '../../runtime/context'
 import type { GameSystem } from '../../runtime/system'
+import type { ParkAmenitiesSystem } from '../parkAmenities'
 import { PARK_PLAN, anchorGround } from '../parkPlan'
+import { detailAtrium } from '../parkFacilities'
 
 export interface DistrictServices {
   physics: PhysicsSystem
   materials: MaterialsSystem
+  amenities: ParkAmenitiesSystem
   seats?: SeatSystem
   interaction?: InteractionSystem
 }
@@ -32,7 +35,7 @@ export class AtriumSystem implements GameSystem {
   }
 
   init(ctx: GameContext): void {
-    const { physics, materials, seats, interaction } = this.services
+    const { physics, materials, amenities, seats, interaction } = this.services
     const lib = materials.lib
     if (!lib) throw new Error('AtriumSystem requires MaterialsSystem')
 
@@ -68,6 +71,7 @@ export class AtriumSystem implements GameSystem {
       if (a.skip || b.skip) continue
       kit.arch(writer, a.x, a.z, b.x, b.z, floorY + columnHeight, 1.7)
     }
+    detailAtrium({ kit, writer, materials: lib, physics }, floorY)
 
     // Dome over it all.
     kit.dome(writer, cx, floorY + columnHeight + 0.6, cz, columnRadius + 0.9, 16)
@@ -78,7 +82,7 @@ export class AtriumSystem implements GameSystem {
       const bx = cx + Math.sin(angle) * 13.5
       const bz = cz + Math.cos(angle) * 13.5
       const yaw = Math.atan2(cx - bx, cz - bz) + Math.PI
-      kit.bench(writer, bx, floorY + 0.18, bz, yaw)
+      amenities.addBench(bx, floorY + 0.18, bz, yaw)
       physics.addStaticBox(bx, floorY + 0.5, bz, 0.9, 0.34, 0.3, yaw)
       seats?.registerBenchSeat({
         eye: new Vector3(bx - Math.sin(yaw) * 0.1, floorY + 1.45, bz - Math.cos(yaw) * 0.1),
@@ -96,7 +100,7 @@ export class AtriumSystem implements GameSystem {
       [-11, 11],
       [11, 11],
     ]) {
-      const globe = kit.lampPost(writer, cx + dx, floorY + 0.18, cz + dz)
+      const globe = amenities.addLamp(cx + dx, floorY + 0.18, cz + dz)
       const light = new PointLight(0xffd9a0, 6.5, 13, 1.8)
       light.position.set(globe.x, globe.y, globe.z)
       group.add(light)

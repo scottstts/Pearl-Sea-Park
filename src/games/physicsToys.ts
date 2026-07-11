@@ -11,12 +11,14 @@ import {
   Vector3,
 } from 'three'
 import { registerBookmark } from '../core/debug'
+import { SlotWriter } from '../archkit/writer'
 import type { GameContext } from '../runtime/context'
 import type { DistrictServices } from '../world/districts/atrium'
 import { PARK_PLAN } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
 import type { ArmThrow, DynamicProp } from './types'
 import { syncDynamicProp } from './types'
+import { emitBackboardFrame, emitCounterJoinery, emitHighStrikerTrim } from './fixtureDetails'
 
 interface ScoredProp extends DynamicProp {
   kind: 'ring' | 'pearl'
@@ -39,6 +41,7 @@ export class PhysicsToys {
   private ringScore = 0
   private pearlScore = 0
   private krakenBest = 0
+  private readonly fixtureWriter = new SlotWriter(72)
 
   constructor(services: DistrictServices, armThrow: ArmThrow) {
     this.services = services
@@ -53,6 +56,7 @@ export class PhysicsToys {
     this.buildNarwhal(ctx, ground)
     this.buildPearlDiver(ctx, ground)
     this.buildKrakenBell(ctx, ground)
+    this.group.add(this.fixtureWriter.compile())
     ctx.scene.add(this.group)
 
     registerBookmark({
@@ -90,6 +94,7 @@ export class PhysicsToys {
     const eye = new Mesh(new SphereGeometry(0.065, 12, 8), lib.iron)
     eye.position.set(x - 0.55, baseY + 1.3, z - 0.58)
     this.group.add(counter, plinth, narwhal, tail, horn, eye)
+    emitCounterJoinery(this.fixtureWriter, lib, x, ground, z + 1.2, 8, 2.2)
     physics.addStaticBox(x, ground + 0.45, z + 1.2, 4, 0.45, 1.1)
     physics.addStaticCylinder(x, baseY + 0.2, z, 0.28, 1.6)
     const hornBody = world.createRigidBody(
@@ -179,6 +184,7 @@ export class PhysicsToys {
     const backboard = new Mesh(new BoxGeometry(5.8, 3.4, 0.3), lib.canvasCream)
     backboard.position.set(x, ground + 2.6, 146.5)
     this.group.add(backboard)
+    emitBackboardFrame(this.fixtureWriter, lib, x, ground + 2.6, 146.27, 5.8, 3.4)
     for (const [offset, height, points] of [
       [-1.45, 2.2, 10],
       [0, 2.85, 50],
@@ -254,6 +260,7 @@ export class PhysicsToys {
     bell.position.set(x, bellY, z - 0.32)
     bell.rotation.x = Math.PI
     this.group.add(tower, railLeft, railRight, bell)
+    emitHighStrikerTrim(this.fixtureWriter, lib, x, ground, z)
     physics.addStaticBox(x, ground + 3.2, z + 0.15, 1.1, 3.15, 0.23)
 
     const puckBody = world.createRigidBody(

@@ -76,7 +76,7 @@ export class DescentBellSystem implements GameSystem {
     kit.stepsRing(w, x, this.terraceY - 0.2, z, 6)
     physics.addStaticCylinder(x, this.terraceY - 0.01, z, 0.16, 6.55)
     const lamp = (lx: number, lz: number) => {
-      const globe = kit.lampPost(w, lx, this.terraceY, lz)
+      const globe = this.services.amenities.addLamp(lx, this.terraceY, lz)
       physics.addStaticBox(lx, this.terraceY + 1.7, lz, 0.12, 1.7, 0.12)
       const light = new PointLight(0xffd9a0, 5.5, 12, 1.8)
       light.position.set(globe.x, globe.y, globe.z)

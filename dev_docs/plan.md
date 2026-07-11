@@ -62,7 +62,7 @@ src/
   rides/                common/ (boarding, restraints, ride cameras) + bell/ wheel/ torrent/
                         carousel/ grotto/ pearline/
   games/                ringtoss, skeeball, hammerbell, pennypress, feeding, wishingwell, sweets
-  wildlife/             GPU boids + species, rays, turtles, jellies, whale, seahorses
+  wildlife/             rays, turtles, jellies, whale, seahorses
   audio/                engine, synth instruments, positional sources, acoustic zones
   ui/                   ticket screen, contextual prompts, pause card
 ```
@@ -76,7 +76,7 @@ src/
 
 Skills: threejs-image-pipeline, threejs-bloom, threejs-exposure-color-grading, threejs-screen-space-ambient-occlusion.
 
-- Forward WebGPU with **MSAA 4×**; HDR half-float throughout; per-effect temporal accumulation (volumetrics, caustics soft shadowing) with blue-noise jitter rather than full-frame TAA (avoids ghosting on thousands of fish).
+- Forward WebGPU with **MSAA 4×**; HDR half-float throughout; per-effect temporal accumulation (volumetrics, caustics soft shadowing) with blue-noise jitter rather than full-frame TAA.
 - Pass graph (single `PostProcessing` graph owns tone mapping; renderer tone mapping off):
   1. opaque + MRT (color / normal / depth)
   2. GTAO half-res → bilateral upsample (contact grounding for colonnades, coral, props)
@@ -110,7 +110,7 @@ Skills: threejs-procedural-fields, threejs-procedural-vegetation.
 
 - 1024² heightfield over 700×700 m (white-sand plateau, gentle dunes, authored flat pads for plazas from parkPlan), plus a sculpted cliff band at the north rim with a skirt to −300 m.
 - Shared procedural field stack (one noise "cause" driving many channels): sand ripple normals, path-wear mask (sand compacts along the path graph), seagrass density, coral-cluster placement, rock outcrops.
-- Scatter system (BatchedMesh/instancing): coral colonies (staghorn, brain, fans — procedural geometry with nacre/candy accent palettes), rocks, shells, starfish.
+- Scatter system (BatchedMesh/instancing): volumetric coral colonies (staghorn and brain forms), rocks, shells, starfish. Flat fan-card coral is forbidden.
 - **Kelp forest** boundary: ~300 stalks (8–14 m) with rooted sway on the current field; **seagrass meadows**: ~200 k GPU-instanced blades (realistic GPU grass technique adapted to slow water sway).
 - Rapier: heightfield collider + static colliders from archkit + prop colliders.
 
@@ -118,7 +118,7 @@ Skills: threejs-procedural-fields, threejs-procedural-vegetation.
 
 Skills: threejs-procedural-architecture, threejs-procedural-geometry, threejs-procedural-materials.
 
-- **archkit** generators (parametric, seeded, compiled to material-slot meshes): fluted columns with kelp-motif capitals, whiplash arches, ribbed glass domes and barrel vaults, colonnades, balustrades, mosaic floors (radial shell patterns), lamp posts (frosted globes), benches, turnstiles, signage frames, banner rigs, kiosk shells. Since the sea is air, buildings are **open pavilions** — fish drift through the colonnades; glass is decorative (canopies, stained glass) not containment.
+- **archkit** generators (parametric, seeded, compiled to material-slot meshes): fluted columns with kelp-motif capitals, whiplash arches, ribbed glass domes and barrel vaults, colonnades, balustrades, mosaic floors (radial shell patterns), turnstiles, signage frames, banner rigs, kiosk shells. Repeated benches and lamps are fixed prototypes owned by `ParkAmenitiesSystem` and placed through instances. Since the sea is air, buildings are **open pavilions**; glass is decorative (canopies, stained glass) not containment.
 - **Stained glass casts colored caustic light** (transmission-tinted shadow/projector treatment) — Atrium rose window and Grotto entrance get hero placements.
 - **materials/** library (all TSL, all procedural): polished brass, verdigris copper, white marble (subtle veining), mother-of-pearl (thin-film iridescence), frosted + clear glass (transmission, roughness-graded), mosaic ceramic, gilded trim, wrought iron, painted wood (midway candy tones), sand, coral skins, wet-look varnish on everything near the floor (the world glistens slightly — dream lever).
 - Close-inspection budget: geometry and material detail hold up at 0.5 m viewing distance (player can walk up to anything).
@@ -129,7 +129,7 @@ Skill: threejs-camera-direction.
 
 - Rapier character controller: walk 1.5 m/s, brisk 3 m/s, eye height 1.7 m, smooth step handling on stairs/kerbs, no jump. Head-bob nearly imperceptible; motion tuned for composure.
 - Interaction: proximity + view-cone raycast → single contextual DOM prompt (elegant serif caption, fades in/out). Interactables: ride gates, game counters, penny presses, food kiosk, benches, wishing well, the bell.
-- **Held items** presented as finely-modeled props floating at hand position with inertia sway (no arm mesh — clean, dreamlike, avoids uncanny gloves): golden ticket (gets punched with a satisfying clip animation at each ride), pocket brass park model (the only map), ice-cream cone (slowly melts), fish-food cone, midway prizes, pressed pennies in a velvet book.
+- Held collection is state-only with no camera-attached props: golden ticket stamps, pocket park model, ice-cream state, turtle-food cone, midway prizes, and pressed pennies.
 - Seating: benches and ride vehicles use smooth authored camera moves in/out (no cuts anywhere in the game); seated free-look with comfortable limits.
 
 ## 9. Rides
@@ -157,7 +157,7 @@ All real physics toys (Rapier), all diegetic:
 
 The crowd. Skill: WebGPU compute via TSL throughout.
 
-- **Schooling fish:** GPU boids over storage buffers — target ~15 k fish across 3–4 species (silversides, golden trevally-likes, candy-striped reef fish), coarse park SDF (baked from parkPlan colliders) for obstacle flow, attraction hooks (lamps, feeding, carousel lights), vertex-TSL swim deformation on instanced meshes. Schools split around the player — the Esplanade flyover is a scheduled hero behavior.
+- **Schooling fish:** removed by Scott on 2026-07-11 because the swarm caused repeated multi-second gameplay freezes. Do not restore it without a new explicit request and measured GPU evidence.
 - **Rays:** 6 gliding on lazy spline fields with procedural wing undulation; one manta hero pass over the Esplanade on the schedule.
 - **Turtles:** 8 lagoon residents with feeding response; **jellies:** ~400 drifting in the Jellyfish Court + 200 bioluminescent in the Grotto, pulse-driven locomotion on the current; **seahorses:** 40 clustered around the carousel exterior (the nod).
 - **The whale:** one humpback (~14 m), scheduled pass along the drop-off every ~20 min — approach audio first (sub-bass song), shadow, then the eye past the Overlook glass rail. Fully animated procedural swim on an authored path.
@@ -185,7 +185,7 @@ Frame budget (16.6 ms): opaque scene ~5.0 · sea surface + FFT compute ~1.5 · c
 Key strategies:
 
 - **Fixed sun + mostly-static world → cached shadow clipmaps** with targeted invalidation; only rides/wildlife render into a small dynamic near cascade each frame (skill: threejs-shadow-systems). This is the single biggest win the fixed-time decision buys us.
-- Instancing/BatchedMesh everywhere (bulbs, balusters, coral, blades, fish); procedural materials = tiny memory + zero texture streaming.
+- Instancing/BatchedMesh everywhere (bulbs, amenities, balusters, coral, blades); procedural materials = tiny memory + zero texture streaming.
 - Distance policy: full geometry to ~120 m, generated LOD swaps beyond, aquatic haze does the rest (fog is free occlusion tuning).
 - All park generation at load, async with progress; target < 8 s to open the gates on the reference machine.
 
@@ -215,7 +215,7 @@ Dependency-ordered stages; each lands at final quality for its scope and leaves 
 | S9 | Wheel & Carousel | both rides fully ridable with restraints, sway physics, bulbs, breach moment, music-box waltz | `?view=breach` from inside a gondola; carousel audible across the lagoon |
 | S10 | The Torrent | track + train dynamics + station flow + wreck set piece + breach hump | full 90 s ride, physics-plausible speeds, `?view=dive` |
 | S11 | Grotto of Pearls | cave environment, real water channel sim, buoyant boat, bioluminescent scenes, treasury | 4 min ride; `?view=treasury` |
-| S12 | Wildlife | boids + species, SDF avoidance, rays, turtles, jellies, seahorses, whale event | Esplanade school-split flyover; `?view=whale` at the Overlook |
+| S12 | Wildlife | rays, turtles, jellies, seahorses, whale event | manta flyover; `?view=whale` at the Overlook |
 | S13 | Games & small wonders | 3 midway games, prizes, feeding, penny presses + velvet book, wishing well, sweets, punch-ticket completion | every interactable on the map works with physics |
 | S14 | Opening day | Bubble Fountain grand show, full schedule choreography, final LUT/grade, mix pass, quality tiers + auto-bench, perf pass, full 10-postcard sweep | 60 fps on reference hardware across all postcards |
 
@@ -233,5 +233,5 @@ Dependency-ordered stages; each lands at final quality for its scope and leaves 
 - **Caustics + god rays cost** → step counts and caustic texture sizes remain
   tiered, but the ray image stays full output resolution. Recover performance
   from other systems until a validated temporal reconstruction contract exists.
-- **15 k boids vs. draw overhead** → single instanced draw per species, compute-driven; SDF resolution kept coarse (park-scale avoidance, not per-baluster).
+- **Wildlife cost** → bounded instanced populations and low-count hero animals; no schooling-fish compute path.
 - **Scope is genuinely large** → the stage gates + postcard contract keep every increment shippable-quality; parkPlan data-driven layout means content grows without code churn.

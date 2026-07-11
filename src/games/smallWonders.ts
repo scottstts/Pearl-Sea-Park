@@ -10,12 +10,14 @@ import {
   Vector3,
 } from 'three'
 import type { HeldItemSystem } from '../player/heldItems'
+import { SlotWriter } from '../archkit/writer'
 import type { GameContext } from '../runtime/context'
 import type { DistrictServices } from '../world/districts/atrium'
 import { PARK_PLAN } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
 import type { ArmThrow, DynamicProp } from './types'
 import { syncDynamicProp } from './types'
+import { emitCounterJoinery } from './fixtureDetails'
 
 interface PennyPress {
   motif: string
@@ -58,6 +60,7 @@ export class SmallWonders {
   private hatDisplay: Object3D | null = null
   private plushDisplay: Object3D | null = null
   private modelTaken = false
+  private readonly fixtureWriter = new SlotWriter(72)
 
   constructor(services: DistrictServices, held: HeldItemSystem | null, armThrow: ArmThrow) {
     this.services = services
@@ -73,6 +76,7 @@ export class SmallWonders {
     this.buildSweetsKiosk(ctx)
     this.buildPrizeCounter(ctx)
     this.buildPocketModel(ctx)
+    this.group.add(this.fixtureWriter.compile())
     ctx.events.on('games/prize-earned', ({ prize }) => {
       if (prize === 'paper-hat') {
         this.hatAvailable = true
@@ -205,6 +209,7 @@ export class SmallWonders {
     const post = new Mesh(new CylinderGeometry(0.08, 0.08, 2.4, 12), lib.brass)
     post.position.set(x, y + 1.9, z)
     this.group.add(counter, canopy, post)
+    emitCounterJoinery(this.fixtureWriter, lib, x, y, z, 3.4, 1.5)
     physics.addStaticBox(x, y + 0.53, z, 1.7, 0.53, 0.75)
     interaction?.register({
       position: new Vector3(x, y + 1, z + 1.1),
@@ -224,6 +229,7 @@ export class SmallWonders {
     const counter = new Mesh(new BoxGeometry(4.4, 1.1, 1.4), lib.woodDark)
     counter.position.set(x, y + 0.55, z)
     this.group.add(counter)
+    emitCounterJoinery(this.fixtureWriter, lib, x, y, z, 4.4, 1.4)
     physics.addStaticBox(x, y + 0.55, z, 2.2, 0.55, 0.7)
 
     const hat = new Group()
@@ -319,14 +325,6 @@ export class SmallWonders {
       if (!pellet.fed && Math.hypot(p.x - lagoon.x, p.z - lagoon.z) < lagoon.radius && p.y < waterY + 0.8) {
         pellet.fed = true
         ctx.events.emit('wildlife/turtle-attractor', { x: p.x, y: waterY, z: p.z, strength: 1 })
-        ctx.events.emit('wildlife/fish-attractor', {
-          x: p.x,
-          y: waterY + 2,
-          z: p.z,
-          strength: 0.7,
-          radius: 28,
-          duration: 10,
-        })
       }
       if (pellet.age > 18) {
         this.services.physics.world?.removeRigidBody(pellet.body)

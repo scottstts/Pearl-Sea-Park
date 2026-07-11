@@ -4,13 +4,17 @@ import {
   Color,
   CylinderGeometry,
   DynamicDrawUsage,
+  Euler,
   IcosahedronGeometry,
   InstancedMesh,
+  LatheGeometry,
   Matrix4,
   Mesh,
   Object3D,
   Quaternion,
   SphereGeometry,
+  TorusGeometry,
+  Vector2,
   Vector3,
 } from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
@@ -50,9 +54,9 @@ export class FloraSystem implements GameSystem {
     this.buildKelp(rng.fork('kelp'))
     this.buildSeagrass(rng.fork('seagrass'), ctx.quality.params.seagrassDensity)
     this.buildReef(rng.fork('reef'))
+    this.buildShellsAndStones(rng.fork('shells-and-stones'))
     this.group.traverse((node) => {
       if ((node as Mesh).isMesh) {
-        node.castShadow = true
         node.receiveShadow = true
       }
     })
@@ -113,6 +117,33 @@ export class FloraSystem implements GameSystem {
         indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2)
       }
       vertexBase += (SEGMENTS + 1) * 2
+
+      // Alternating lateral blades create the feathered kelp silhouette.
+      // They share the same baked root and rooted sway weights, so the added
+      // character costs no extra draw or animation pass.
+      for (let leaf = 0; leaf < 4; leaf++) {
+        const t = 0.3 + leaf * 0.16
+        const side = leaf % 2 === 0 ? -1 : 1
+        const leafYaw = yaw + side * (Math.PI * 0.42) + rng.range(-0.2, 0.2)
+        const length = rng.range(0.85, 1.55) * (1 - t * 0.35)
+        const leafWidth = width * 0.42
+        const baseY = y + t * height
+        const tipX = x + Math.cos(leafYaw) * length
+        const tipZ = z + Math.sin(leafYaw) * length
+        const px = -Math.sin(leafYaw) * leafWidth
+        const pz = Math.cos(leafYaw) * leafWidth
+        stalks.push(
+          x - px, baseY, z - pz,
+          x + px, baseY, z + pz,
+          tipX + px * 0.15, baseY + length * 0.24, tipZ + pz * 0.15,
+          tipX - px * 0.15, baseY + length * 0.24, tipZ - pz * 0.15,
+        )
+        const baseWeight = Math.pow(t, 1.4)
+        sway.push(baseWeight, baseWeight, Math.min(1, baseWeight + 0.22), Math.min(1, baseWeight + 0.22))
+        roots.push(x, z, x, z, x, z, x, z)
+        indices.push(vertexBase, vertexBase + 1, vertexBase + 2, vertexBase, vertexBase + 2, vertexBase + 3)
+        vertexBase += 4
+      }
     }
 
     const geometry = new BufferGeometry()
@@ -136,7 +167,10 @@ export class FloraSystem implements GameSystem {
     material.colorNode = mix(vec3(0.1, 0.16, 0.08), vec3(0.23, 0.32, 0.12), weight)
     this.medium.applyCaustics(material, 1.1)
 
-    this.group.add(new Mesh(geometry, material))
+    const mesh = new Mesh(geometry, material)
+    mesh.name = 'flora-kelp'
+    mesh.castShadow = false
+    this.group.add(mesh)
   }
 
   // ── Seagrass: chunked baked blades in the meadow field ─────────────────
@@ -208,6 +242,7 @@ export class FloraSystem implements GameSystem {
       geometry.setAttribute('swayWeight', new BufferAttribute(new Float32Array(list.sway), 1))
       geometry.computeVertexNormals()
       const mesh = new Mesh(geometry, material)
+      mesh.name = 'flora-seagrass'
       mesh.castShadow = false
       this.group.add(mesh)
     }
@@ -232,10 +267,6 @@ export class FloraSystem implements GameSystem {
     }
     const staghorn = mergeGeometries(staghornPieces)!
 
-    const fan = new SphereGeometry(1, 28, 12)
-    displace(fan, 0.3, 6.0, rng.fork('fan-noise'))
-    fan.scale(1, 0.95, 0.1)
-
     const rock = new IcosahedronGeometry(1, 2)
     displace(rock, 0.24, 1.7, rng.fork('rock-noise'))
 
@@ -249,15 +280,14 @@ export class FloraSystem implements GameSystem {
     }[] = [
       { geometry: brain, color: 0xa8756c, roughness: 0.85, count: 130, scale: [0.35, 1.1], band: [190, 430] },
       { geometry: staghorn, color: 0xe08a70, roughness: 0.7, count: 150, scale: [0.7, 1.6], band: [190, 440] },
-      { geometry: fan, color: 0x9a6fb0, roughness: 0.6, count: 120, scale: [0.35, 0.9], band: [200, 450] },
       { geometry: rock, color: 0x69705f, roughness: 0.95, count: 220, scale: [0.5, 2.6], band: [60, 560] },
     ]
 
     const matrix = new Matrix4()
     const position = new Vector3()
     const quaternion = new Quaternion()
-    const up = new Vector3(0, 1, 0)
     const scaleVector = new Vector3()
+    const euler = new Euler()
 
     for (const type of archetypes) {
       const material = new MeshStandardNodeMaterial()
@@ -280,15 +310,140 @@ export class FloraSystem implements GameSystem {
         const y = terrainHeight(x, z)
         const s = placeRng.range(type.scale[0], type.scale[1])
         position.set(x, y + s * 0.12, z)
-        quaternion.setFromAxisAngle(up, placeRng.range(0, Math.PI * 2))
-        scaleVector.set(s, s * placeRng.range(0.85, 1.15), s)
+        quaternion.setFromEuler(euler.set(
+          placeRng.range(-0.18, 0.18),
+          placeRng.range(0, Math.PI * 2),
+          placeRng.range(-0.18, 0.18),
+        ))
+        scaleVector.set(
+          s * placeRng.range(0.72, 1.35),
+          s * placeRng.range(0.72, 1.18),
+          s * placeRng.range(0.68, 1.28),
+        )
         matrix.compose(position, quaternion, scaleVector)
         mesh.setMatrixAt(i, matrix)
       }
       mesh.instanceMatrix.needsUpdate = true
+      mesh.castShadow = true
       this.group.add(mesh)
     }
   }
+
+  // ── Shells and garden stones: tiny instanced silhouettes ───────────────
+  private buildShellsAndStones(rng: Rng): void {
+    const clam = createClamShellGeometry()
+    const spiral = mergeGeometries([
+      new TorusGeometry(0.25, 0.105, 6, 18, Math.PI * 1.72),
+      new LatheGeometry([
+        new Vector2(0.03, 0), new Vector2(0.12, 0.04), new Vector2(0.16, 0.18),
+        new Vector2(0.1, 0.36), new Vector2(0, 0.48),
+      ], 9),
+    ])!
+    spiral.rotateX(Math.PI / 2)
+    spiral.scale(1, 0.72, 1)
+
+    const pebbleA = new IcosahedronGeometry(1, 1)
+    const pebbleB = new IcosahedronGeometry(1, 1)
+    displace(pebbleA, 0.2, 1.9, rng.fork('pebble-a'))
+    displace(pebbleB, 0.27, 2.4, rng.fork('pebble-b'))
+
+    const shellMaterial = new MeshStandardNodeMaterial()
+    shellMaterial.color = new Color(0xd2b995)
+    shellMaterial.roughness = 0.48
+    shellMaterial.metalness = 0.04
+    shellMaterial.side = DoubleSide
+    this.medium.applyCaustics(shellMaterial, 1.35)
+    const stoneMaterial = new MeshStandardNodeMaterial()
+    stoneMaterial.color = new Color(0x6b7268)
+    stoneMaterial.roughness = 0.96
+    this.medium.applyCaustics(stoneMaterial, 1.1)
+
+    const families = [
+      { geometry: clam, material: shellMaterial, count: 150, min: 0.18, max: 0.48, y: 0.025 },
+      { geometry: spiral, material: shellMaterial, count: 110, min: 0.22, max: 0.55, y: 0.04 },
+      { geometry: pebbleA, material: stoneMaterial, count: 320, min: 0.12, max: 0.52, y: 0.05 },
+      { geometry: pebbleB, material: stoneMaterial, count: 240, min: 0.2, max: 0.8, y: 0.06 },
+    ] as const
+    const matrix = new Matrix4()
+    const position = new Vector3()
+    const quaternion = new Quaternion()
+    const scale = new Vector3()
+    const euler = new Euler()
+
+    for (let familyIndex = 0; familyIndex < families.length; familyIndex++) {
+      const family = families[familyIndex]
+      const mesh = new InstancedMesh(family.geometry, family.material, family.count)
+      const place = rng.fork(`family-${familyIndex}`)
+      for (let i = 0; i < family.count; i++) {
+        let x = 0
+        let z = 0
+        let accepted = false
+        for (let attempt = 0; attempt < 10; attempt++) {
+          x = place.range(-360, 360)
+          z = place.range(-205, 390)
+          if (z > RIM_Z + 22 && !inParkFootprint(x, z, familyIndex < 2 ? 0.7 : 1.5)) {
+            accepted = true
+            break
+          }
+        }
+        if (!accepted) {
+          matrix.makeScale(0, 0, 0)
+          mesh.setMatrixAt(i, matrix)
+          continue
+        }
+        const size = place.range(family.min, family.max)
+        position.set(x, terrainHeight(x, z) + family.y * size, z)
+        quaternion.setFromEuler(euler.set(
+          familyIndex < 2 ? place.range(-0.2, 0.2) : place.range(-0.45, 0.45),
+          place.range(0, Math.PI * 2),
+          familyIndex < 2 ? place.range(-0.18, 0.18) : place.range(-0.45, 0.45),
+        ))
+        scale.set(
+          size * place.range(0.78, 1.3),
+          size * (familyIndex < 2 ? place.range(0.8, 1.1) : place.range(0.45, 0.82)),
+          size * place.range(0.78, 1.25),
+        )
+        matrix.compose(position, quaternion, scale)
+        mesh.setMatrixAt(i, matrix)
+      }
+      mesh.instanceMatrix.needsUpdate = true
+      mesh.castShadow = false
+      mesh.name = familyIndex < 2 ? 'flora-shells' : 'flora-garden-stones'
+      this.group.add(mesh)
+    }
+  }
+}
+
+function createClamShellGeometry(): BufferGeometry {
+  const positions: number[] = [0, 0.07, -0.08, 0, 0, -0.08]
+  const indices: number[] = []
+  const segments = 14
+  for (let i = 0; i <= segments; i++) {
+    const angle = -Math.PI / 2 + (i / segments) * Math.PI
+    const scallop = Math.sin((i / segments) * Math.PI * segments * 0.5)
+    const radial = 0.56 + scallop * 0.025
+    const x = Math.sin(angle) * radial
+    const z = Math.cos(angle) * radial
+    const rib = 0.045 + Math.cos(i * Math.PI) * 0.012
+    positions.push(x, rib, z, x, 0, z)
+    if (i > 0) {
+      const previousTop = 2 + (i - 1) * 2
+      const previousBottom = previousTop + 1
+      const top = 2 + i * 2
+      const bottom = top + 1
+      indices.push(
+        0, previousTop, top,
+        1, bottom, previousBottom,
+        previousTop, previousBottom, bottom,
+        previousTop, bottom, top,
+      )
+    }
+  }
+  const geometry = new BufferGeometry()
+  geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3))
+  geometry.setIndex(indices)
+  geometry.computeVertexNormals()
+  return geometry
 }
 
 function displace(geometry: BufferGeometry, amount: number, frequency: number, rng: Rng): void {

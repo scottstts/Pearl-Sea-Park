@@ -6,8 +6,6 @@ import {
   Vector3,
 } from 'three'
 
-export type FishSpecies = 'silverside' | 'trevally' | 'candy-stripe'
-
 export interface GeometryMetrics {
   vertices: number
   triangles: number
@@ -134,43 +132,6 @@ class WildlifeMeshWriter {
     geometry.computeBoundingSphere()
     return geometry
   }
-}
-
-export function createFishGeometry(species: FishSpecies): BufferGeometry {
-  const writer = new WildlifeMeshWriter()
-  const scale = species === 'silverside' ? 0.72 : species === 'trevally' ? 1.08 : 0.86
-  const depth = species === 'trevally' ? 0.4 : species === 'candy-stripe' ? 0.3 : 0.21
-  writer.ringBody(
-    [
-      { z: 0.82 * scale, rx: 0.08 * scale, ry: 0.1 * scale, morph: 0 },
-      { z: 0.52 * scale, rx: 0.22 * scale, ry: depth * scale, morph: 0.04 },
-      { z: 0.02 * scale, rx: 0.28 * scale, ry: depth * 1.08 * scale, morph: 0.16 },
-      { z: -0.46 * scale, rx: 0.13 * scale, ry: 0.17 * scale, morph: 0.72 },
-      { z: -0.62 * scale, rx: 0.07 * scale, ry: 0.1 * scale, morph: 1 },
-    ],
-    10,
-  )
-
-  const tailRoot = writer.vertex(0, 0, -0.58 * scale, 0.9)
-  const tailTop = writer.vertex(0, 0.42 * scale, -1.0 * scale, 1)
-  const tailNotch = writer.vertex(0, 0, -0.86 * scale, 1)
-  const tailBottom = writer.vertex(0, -0.42 * scale, -1.0 * scale, 1)
-  writer.triangle(tailRoot, tailTop, tailNotch)
-  writer.triangle(tailRoot, tailNotch, tailBottom)
-
-  // Dorsal and paired pectoral fins break the primitive silhouette.
-  const dorsalA = writer.vertex(0, depth * 0.8 * scale, 0.18 * scale, 0.2)
-  const dorsalB = writer.vertex(0, depth * 1.55 * scale, -0.13 * scale, 0.42)
-  const dorsalC = writer.vertex(0, depth * 0.8 * scale, -0.38 * scale, 0.64)
-  writer.triangle(dorsalA, dorsalB, dorsalC)
-  for (const side of [-1, 1]) {
-    const rootA = writer.vertex(side * 0.2 * scale, -0.02, 0.22 * scale, 0.18)
-    const tip = writer.vertex(side * 0.56 * scale, -0.1 * scale, -0.06 * scale, 0.34)
-    const rootB = writer.vertex(side * 0.18 * scale, -0.08, -0.2 * scale, 0.42)
-    if (side < 0) writer.triangle(rootA, rootB, tip)
-    else writer.triangle(rootA, tip, rootB)
-  }
-  return writer.compile()
 }
 
 export function createRayGeometry(manta = false): BufferGeometry {

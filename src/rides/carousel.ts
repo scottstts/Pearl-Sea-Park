@@ -94,7 +94,7 @@ export class CarouselSystem implements GameSystem {
       [3, plazaRadius - 1.5, false],
       [-3, -plazaRadius + 1.5, false],
     ] as const) {
-      const globe = kit.lampPost(w, cx + dx, plazaY, cz + dz)
+      const globe = this.services.amenities.addLamp(cx + dx, plazaY, cz + dz)
       physics.addStaticBox(cx + dx, plazaY + 1.7, cz + dz, 0.12, 1.7, 0.12)
       if (lit) {
         const light = new PointLight(0xffd9a0, 5.5, 12, 1.8)

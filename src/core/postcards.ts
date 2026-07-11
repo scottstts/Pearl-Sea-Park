@@ -2,7 +2,7 @@ import { getBookmark } from './debug'
 
 export const POSTCARD_VIEWS = [
   { name: 'descent', intent: 'Sky through the waterline to the glowing park below' },
-  { name: 'esplanade', intent: 'Thousands of fish split around the glass-vault boulevard' },
+  { name: 'esplanade', intent: 'The glass-vault boulevard and its civic arcade' },
   { name: 'breach', intent: 'The Great Wheel crest breaks into sunlight' },
   { name: 'dive', intent: 'The Torrent leaves the shelf for open blue' },
   { name: 'manta', intent: 'A manta and its shadow cross the Esplanade marble' },

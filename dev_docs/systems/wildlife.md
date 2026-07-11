@@ -1,56 +1,20 @@
 # Wildlife (S12)
 
-## Schooling fish
+## Schooling-fish removal
 
-- `FishSchoolSystem` owns four GPU storage buffers: vec4 position A/B and
-  velocity A/B. Simulation advances at a fixed 30 Hz and render frames
-  interpolate the existing ping-pong buffers, so motion remains smooth without
-  recomputing flock forces at display rate. No fish transforms return to CPU.
-- Quality budgets are exact: tier 0 = 5,000 fish / 10 schools; tier 1 = 10,000
-  / 20; tier 2 = 15,000 / 30. Every school contains 500 fish. Species counts
-  are respectively 2,000/1,500/1,500; 3,500/3,500/3,000; and
-  5,000/5,000/5,000 for silversides, golden trevally-likes, and candy-striped
-  reef fish.
-- The compute is O(N × 8), not O(N²): each fish samples eight stable,
-  well-spread members of its own 500-fish cohort. Separation is distance
-  weighted; alignment and cohesion use the cohort average. A moving school
-  target, the shared current field, terrain clearance, surface ceiling, and
-  attraction forces complete the acceleration model. Speed is bounded at
-  0.72–3.4 m/s (4.9 m/s during the hero pass).
-- Fish meshes are authored along local +Z. Each 500-fish school is its own
-  cullable instanced draw with an analytic dynamic bounding sphere; off-camera
-  schools now disappear from main, reflection, and shadow submission instead
-  of forcing all 5k–15k fish through the vertex stage. Per-vertex `morphWeight` drives
-  tail flex in TSL, while velocity constructs an orthonormal swim frame in the
-  vertex graph. Schooling fish and dense non-hero particles live on the
-  main-detail layer and are omitted from the soft Tidal Court reflection.
-  Offline geometry audit: 65 vertices / 105 triangles per fish archetype.
-- The player is a 13.5 m avoidance sphere with a steep inner force. Schools
-  open an aisle causally; no fish teleports or uses a scripted split pose.
-
-## Park field and attraction hooks
-
-- `parkFootprintSignedDistance()` is the signed-distance form of the existing
-  `parkPlan` discs and capsules. `inParkFootprint()` now delegates to it, so
-  scatter and wildlife cannot silently disagree.
-- The compute samples two 128² R16F maps across the park: signed obstacle
-  distance and terrain height. R16F is deliberate: R32F linear filtering is
-  optional on WebGPU adapters. Central differences on the signed-distance map
-  steer fish around district-scale architecture; the field is a flow guide,
-  not per-baluster collision.
-- Carousel bulbs and Tidal Court lamps are permanent local, low-strength
-  attractors. `wildlife/fish-attractor` adds one temporary gameplay/show hook
-  with position, radius, strength, and duration; feeding and future props can
-  use it without knowing about storage buffers. `wildlife/turtle-attractor`
-  similarly drives the lagoon residents and is ready for S13 food pellets.
+- Scott removed schooling fish on 2026-07-11 after repeated multi-second
+  gameplay freezes near schools. `FishSchoolSystem`, its compute/storage
+  buffers, quality budget, field textures, species meshes, attractor event,
+  and show/feeding hooks are deleted. Do not reintroduce a fish swarm without
+  a new explicit request and measured GPU evidence.
+- The remaining wildlife is deliberately low-count or bounded instancing:
+  rays/manta, turtles, moon jellies, grotto jellies, seahorses, and the whale.
 
 ## Esplanade event
 
 - The existing 15-minute `manta-flyover` schedule cue owns one 45 s hero
-  composition. Every fifth school (two/four/six by tier) converges on three offset Esplanade lanes
-  while the manta crosses above. Park-SDF force is reduced, not disabled, for
-  these elevated schools; player avoidance remains fully active and creates
-  the acceptance split.
+  composition. The manta alone crosses above the Esplanade; no school or
+  player-split behavior remains.
 - `?view=esplanade` holds the choreography around phase 0.43 so the fixed
   postcard camera does not have to wait five minutes for the timetable.
   Normal play always follows the scheduler.
@@ -87,14 +51,11 @@
 
 ## Diagnostics and verification
 
-- Under `?debug`, canvas `data-wildlife-state` records fish/species/school
-  counts, sampled neighbors, compute steps, draw counts, hero phase, habitat
+- Under `?debug`, canvas `data-wildlife-state` records hero phase, habitat
   populations, feeding response, whale phase/position, and per-archetype mesh
   budgets.
 - Fixed validation views: `?view=esplanade`, `?view=whale`,
   `?view=jelly-court`, and `?view=turtle-lagoon`. Global `?pass=no-post`
   remains the lighting/material baseline.
-- Offline procedural-mesh audit passed for every archetype; the largest
-  repeated shape is the 298-vertex/494-triangle seahorse, and the 15k fish
-  archetypes remain 65 vertices/105 triangles each. Lint, typecheck, and
-  production bundle are clean without launching a GPU preview.
+- Offline procedural-mesh audit passed for every retained archetype; the
+  largest repeated shape is the 298-vertex/494-triangle seahorse.

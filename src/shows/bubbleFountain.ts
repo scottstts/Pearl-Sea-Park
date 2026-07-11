@@ -102,14 +102,6 @@ export class BubbleFountainSystem implements GameSystem {
         this.active = true
         this.startTime = ctx.time.elapsed
         this.group.visible = true
-        ctx.events.emit('wildlife/fish-attractor', {
-          x,
-          y: waterY + 5,
-          z,
-          strength: 0.72,
-          radius: 70,
-          duration: SHOW_SECONDS,
-        })
       } else {
         this.active = false
       }

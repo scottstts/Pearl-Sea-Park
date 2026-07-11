@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "typecheck": "tsc -b",
+    "audit:geometry": "node --experimental-strip-types scripts/audit-geometry.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

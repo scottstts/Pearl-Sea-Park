@@ -109,10 +109,17 @@ export class GreatWheelSystem implements GameSystem {
     kit.balustrade(w, hx - 27.5, hz - 2.05, hx - 17.8, hz - 2.05, pierY + 0.05)
     kit.balustrade(w, hx - 27.5, hz + 2.05, hx - 17.8, hz + 2.05, pierY + 0.05)
     for (const dz of [-2.4, 2.4]) {
-      const globe = kit.lampPost(w, hx - 26.5, pierY, hz + dz)
+      const globe = this.services.amenities.addLamp(hx - 26.5, pierY, hz + dz)
       physics.addStaticBox(hx - 26.5, pierY + 1.7, hz + dz, 0.12, 1.7, 0.12)
       void globe
     }
+    // Pier-head gateway frames the transition from civic park to machinery.
+    for (const dz of [-2.05, 2.05]) {
+      kit.column(w, hx - 18.4, pierY, hz + dz, 4.2, 0.22)
+      physics.addStaticBox(hx - 18.4, pierY + 2.1, hz + dz, 0.28, 2.1, 0.28)
+    }
+    kit.arch(w, hx - 18.4, hz - 2.05, hx - 18.4, hz + 2.05, pierY + 4.22, 0.9)
+    kit.cornice(w, hx - 18.4, hz - 2.05, hx - 18.4, hz + 2.05, pierY + 4.3)
 
     // ── Rotor: rims, spokes, bulbs, gondola pivots ────────────────────────
     const rotor = this.rotor

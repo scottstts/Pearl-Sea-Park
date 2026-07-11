@@ -23,9 +23,7 @@ modes `?pass=fountain-age` and `?pass=fountain-envelope` expose the controlling
 fields; `canvas.dataset.fountainState` records the current section and values.
 
 The composed fountain cue is procedural and positional. A sixteen-bar phrase
-is scheduled ahead on one HRTF bus while the show event is active. The same
-event also creates a bounded fish attractor, so nearby life gathers without a
-second show clock.
+is scheduled ahead on one HRTF bus while the show event is active.
 
 ## Fixed-sun cached shadows
 

@@ -49,7 +49,7 @@
   intervening application frame. Animated ripple UVs continue every frame, so
   the soft mip-3 mirror stays fluid while its secondary scene render is capped
   at half display cadence. The virtual camera disables the main-detail layer
-  (bulk fish, particulates, bubbles, jellies); architectural silhouettes, sky,
+  (particulates, bubbles, jellies); architectural silhouettes, sky,
   lighting, hero wildlife, and the ceiling remain reflected.
 - The basin is a lathed open **ring**; the original capped cylinder put a
   marble lid 3 cm above the water and hid the pool entirely (looked like a
@@ -66,8 +66,22 @@
 - Park assembly uses 72 m material-slot chunks. Batching remains bounded by
   material within each cell, but camera and shadow frusta can reject distant
   districts instead of submitting one park-wide marble/brass mesh.
-- Benches viewed end-on read as a single iron hoop (both scroll sides line
-  up); intentional, but seat-facing choices should consider the main view axis.
+- Benches and lamps do not emit through district `SlotWriter`s. They are fixed
+  prototypes owned by `ParkAmenitiesSystem`, and every placement is a complete
+  instance transform. This prevents a bench or lamp from splitting across
+  spatial chunks and makes every copy structurally identical.
+- Facility finish is plan-driven in `world/parkFacilities.ts`: Esplanade owns a
+  continuous entablature and threshold urns; Tidal Court a pearl-pedestal rim;
+  Midway an arched/corniced hall and built counter rhythm; Café Méduse a full
+  arcade plus curved service bar; the Observatory an armillary focal point;
+  and the Overlook viewing instruments and terminal markers. Atrium and the
+  Menagerie courts use the same vocabulary. Ride transitions (Pearl Line
+  stations, Wheel pier head, Torrent station, Grotto portal) are finished as
+  architecture without redesigning already-authored ride machinery.
+- Paths retain the ≤9 m terrain-following segmentation, but each segment now
+  carries two narrow marble curbs and brass longitudinal inlays. Those pieces
+  merge into the existing spatial material chunks and do not create a draw per
+  segment.
 
 ## Physics
 
@@ -86,7 +100,11 @@
   an arbitrary amount of time spent on the loading/entry screen.
 - Two in-world mechanical timetable boards flip on event transitions and
   15-second countdown boundaries. They render the same `PARK_SCHEDULE`
-  authority used by the systems; there is no parallel UI timetable.
+  authority used by the systems; there is no parallel UI timetable. Their
+  structural furniture is a turned-post, stone-foot, brass-reveal frame with a
+  conventional two-panel pitched roof in board-local coordinates. The ridge
+  follows local X; the eaves follow local ±Z regardless of the whole board's
+  world yaw. `audit:geometry` verifies both panels meet the ridge and eaves.
 - `AudioEngineSystem` is fully procedural (pink-noise bed + breathing filter,
   detuned shimmer pad, FM bell chimes, ticket-punch thunk). The master chain
   ends in a low-pass swept 1900 Hz ↔ 16 kHz on `sea/waterline-crossed` — the
