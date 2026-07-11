@@ -13,7 +13,6 @@ export interface QualityParams {
   particulateCount: number
   seagrassDensity: number
   bubbleBudget: number
-  reflectorResolutionScale: number
 }
 
 export const TIERS: readonly QualityParams[] = [
@@ -25,7 +24,6 @@ export const TIERS: readonly QualityParams[] = [
     particulateCount: 8_000,
     seagrassDensity: 0.35,
     bubbleBudget: 800,
-    reflectorResolutionScale: 0.2,
   },
   {
     renderScaleMin: 0.88,
@@ -35,7 +33,6 @@ export const TIERS: readonly QualityParams[] = [
     particulateCount: 18_000,
     seagrassDensity: 0.7,
     bubbleBudget: 1_400,
-    reflectorResolutionScale: 0.28,
   },
   {
     renderScaleMin: 0.9,
@@ -45,7 +42,6 @@ export const TIERS: readonly QualityParams[] = [
     particulateCount: 30_000,
     seagrassDensity: 1,
     bubbleBudget: 2_200,
-    reflectorResolutionScale: 0.35,
   },
 ]
 

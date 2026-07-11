@@ -1,7 +1,6 @@
 import {
   BoxGeometry,
   CatmullRomCurve3,
-  CylinderGeometry,
   Mesh,
   Object3D,
   PointLight,
@@ -20,6 +19,7 @@ import type { DistrictServices } from '../world/districts/atrium'
 import { inParkFootprint } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
 import { VehicleSeatRig } from './vehicleSeat'
+import { PearlLineCabinFleet } from './pearlLineCabin'
 
 const CABIN_COUNT = 8
 const CRUISE_SPEED = 2.6
@@ -57,6 +57,7 @@ export class PearlLineSystem implements GameSystem {
   private cableS = 0
   private speed = CRUISE_SPEED
   private readonly cabins: Object3D[] = []
+  private cabinFleet: PearlLineCabinFleet | null = null
   private readonly cabinTilt: { roll: number; pitch: number }[] = []
   private stations: Station[] = []
   private ridingCabin = -1
@@ -203,56 +204,12 @@ export class PearlLineSystem implements GameSystem {
     }
 
     // ── Cabins ────────────────────────────────────────────────────────────
-    const cabinGeometries = {
-      hanger: new CylinderGeometry(0.05, 0.06, 1.05, 10),
-      clamp: new BoxGeometry(0.34, 0.16, 0.2),
-      roof: new CylinderGeometry(0.42, 1.1, 0.48, 8),
-      body: new BoxGeometry(1.55, 0.8, 1.9),
-      floor: new BoxGeometry(1.65, 0.09, 2.0),
-      paneSide: new BoxGeometry(0.02, 0.7, 1.8),
-      paneEnd: new BoxGeometry(1.44, 0.7, 0.02),
-      post: new BoxGeometry(0.07, 0.78, 0.07),
-      bench: new BoxGeometry(1.3, 0.09, 0.42),
-    }
+    const cabinFleet = new PearlLineCabinFleet(lib, CABIN_COUNT)
+    this.cabinFleet = cabinFleet
+    this.group.add(cabinFleet.group)
     for (let i = 0; i < CABIN_COUNT; i++) {
+      // Transform/seat anchor. Visible geometry is the shared instanced fleet.
       const cabin = new Object3D()
-      const clamp = new Mesh(cabinGeometries.clamp, lib.brass)
-      clamp.position.y = 3.14
-      const hanger = new Mesh(cabinGeometries.hanger, lib.iron)
-      hanger.position.y = 2.6
-      const roof = new Mesh(cabinGeometries.roof, lib.verdigris)
-      roof.position.y = 1.86
-      const body = new Mesh(cabinGeometries.body, lib.woodDark)
-      body.position.y = 0.46
-      const floor = new Mesh(cabinGeometries.floor, lib.brass)
-      floor.position.y = 0.05
-      const bench = new Mesh(cabinGeometries.bench, lib.woodDark)
-      bench.position.set(0, 0.52, -0.62)
-      cabin.add(clamp, hanger, roof, body, floor, bench)
-      for (const sx of [-0.76, 0.76]) {
-        const pane = new Mesh(cabinGeometries.paneSide, lib.glass)
-        pane.position.set(sx, 1.24, 0)
-        cabin.add(pane)
-      }
-      for (const sz of [-0.94, 0.94]) {
-        const pane = new Mesh(cabinGeometries.paneEnd, lib.glass)
-        pane.position.set(0, 1.24, sz)
-        cabin.add(pane)
-      }
-      for (const [px, pz] of [
-        [-0.74, -0.9],
-        [0.74, -0.9],
-        [-0.74, 0.9],
-        [0.74, 0.9],
-      ]) {
-        const post = new Mesh(cabinGeometries.post, lib.brass)
-        post.position.set(px, 1.25, pz)
-        cabin.add(post)
-      }
-      cabin.traverse((node) => {
-        const mesh = node as Mesh
-        if (mesh.isMesh && mesh.material !== lib.glass) mesh.castShadow = true
-      })
       this.group.add(cabin)
       this.cabins.push(cabin)
       this.cabinTilt.push({ roll: 0, pitch: 0 })
@@ -348,7 +305,10 @@ export class PearlLineSystem implements GameSystem {
       tilt.roll += (targetRoll - tilt.roll) * 0.03
       tilt.pitch += (targetPitch - tilt.pitch) * 0.03
       cabin.rotation.set(tilt.pitch, yaw, tilt.roll, 'YXZ')
+      cabin.updateMatrix()
+      this.cabinFleet?.setMatrixAt(i, cabin.matrix)
     }
+    this.cabinFleet?.commit()
   }
 
   update(ctx: GameContext, dt: number): void {
@@ -400,5 +360,7 @@ export class PearlLineSystem implements GameSystem {
 
   dispose(ctx: GameContext): void {
     ctx.scene.remove(this.group)
+    this.cabinFleet?.dispose()
+    this.cabinFleet = null
   }
 }

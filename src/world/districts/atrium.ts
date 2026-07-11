@@ -82,7 +82,7 @@ export class AtriumSystem implements GameSystem {
       const bx = cx + Math.sin(angle) * 13.5
       const bz = cz + Math.cos(angle) * 13.5
       const yaw = Math.atan2(cx - bx, cz - bz) + Math.PI
-      amenities.addBench(bx, floorY + 0.18, bz, yaw)
+      amenities.addBenchFacing(bx, floorY + 0.18, bz, cx, cz)
       physics.addStaticBox(bx, floorY + 0.5, bz, 0.9, 0.34, 0.3, yaw)
       seats?.registerBenchSeat({
         eye: new Vector3(bx - Math.sin(yaw) * 0.1, floorY + 1.45, bz - Math.cos(yaw) * 0.1),

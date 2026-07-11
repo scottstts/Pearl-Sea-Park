@@ -1,9 +1,8 @@
 import type { Camera, Object3D } from 'three'
 
 /**
- * Main-only dynamic detail. The gameplay camera sees this layer; planar
- * reflectors deliberately omit it so their soft mirror does not submit bulk
- * particles and schooling wildlife a second time.
+ * Main-view dynamic detail. Kept as an explicit layer so any future auxiliary
+ * render can opt out of bulk particles without changing object ownership.
  */
 export const MAIN_DETAIL_LAYER = 1
 

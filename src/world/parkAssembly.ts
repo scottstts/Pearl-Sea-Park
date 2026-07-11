@@ -1,6 +1,6 @@
 import {
+  CircleGeometry,
   Color,
-  CylinderGeometry,
   LatheGeometry,
   Mesh,
   Object3D,
@@ -10,13 +10,10 @@ import {
   Vector3,
 } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
-import type { Node } from 'three/webgpu'
-import { cameraPosition, float, mix, normalGeometry, normalize, positionWorld, reflector, sin, uniform, vec2, vec3 } from 'three/tsl'
+import { cameraPosition, float, mix, normalGeometry, normalize, positionWorld, sin, uniform, vec3 } from 'three/tsl'
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
-import { cadenceReflector } from '../render/cadencedReflector'
-import type { CadencedReflectorSnapshot } from '../render/cadencedReflector'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from './districts/atrium'
@@ -42,10 +39,6 @@ export class ParkAssemblySystem implements GameSystem {
   private group: Object3D | null = null
   private readonly services: DistrictServices
   private readonly timeUniform = uniform(0)
-  private poolWater: Mesh | null = null
-  private poolReflectionDistance = 180
-  private reflectionSnapshot: (() => CadencedReflectorSnapshot) | null = null
-  private debugCanvas: HTMLCanvasElement | null = null
 
   constructor(services: DistrictServices) {
     this.services = services
@@ -120,7 +113,7 @@ export class ParkAssemblySystem implements GameSystem {
     for (let z = esp.zTo + 18; z <= esp.zFrom - 18; z += columnGap * 3) {
       for (const side of [-1, 1]) {
         const bx = esp.x + side * (esp.width / 2 - 1.2)
-        amenities.addBench(bx, espY + 0.1, z, side > 0 ? -Math.PI / 2 : Math.PI / 2)
+        amenities.addBenchFacing(bx, espY + 0.1, z, esp.x, z)
         physics.addStaticBox(bx, espY + 0.45, z, 0.32, 0.34, 0.9)
         seats?.registerBenchSeat({
           eye: new Vector3(bx, espY + 1.35, z),
@@ -184,11 +177,9 @@ export class ParkAssemblySystem implements GameSystem {
     // cylinder at the rim height keeps guests from wading; the wall is 56 cm.
     physics.addStaticCylinder(hub.x, hubY + 0.28, hub.z, 0.28, poolRadius + 1.4)
 
-    // A reflecting pool that actually reflects: planar reflector (the PMREM
-    // env alone can never draw the colonnade — it only knows the sky, so the
-    // pool read as milk). Emissive carries the mirrored scene so lighting
-    // leaves it alone; ripples bend both the normals (sun glint) and the
-    // reflection lookup.
+    // Single-draw glossy pool. A previous planar reflector nested a second
+    // full park render whenever this disc entered the Esplanade view frustum,
+    // freezing the exact entrance-facing-north sightline.
     const ripplePhase = this.timeUniform.mul(0.7)
     const rippleVec = vec3(
       sin(positionWorld.x.mul(2.6).add(positionWorld.z.mul(1.4)).add(ripplePhase))
@@ -200,46 +191,20 @@ export class ParkAssemblySystem implements GameSystem {
         .add(sin(positionWorld.z.mul(7.9).add(positionWorld.x.mul(4.2)).add(ripplePhase.mul(1.4))).mul(0.04)),
     )
     const water = new MeshStandardNodeMaterial()
-    water.color = new Color(0x000000)
-    water.roughness = 0.08
-    water.metalness = 0
-    water.envMapIntensity = 0
-    // Soft-focus mirror: mipmapped reflection sampled two levels down turns
-    // the busy mirrored wave ceiling into a dreamy sheen while arches and
-    // lamps still draw. (Direct levelNode set — .level() clones, and clones
-    // never receive the live reflector texture.)
-    const poolReflection = reflector({
-      resolutionScale: ctx.quality.params.reflectorResolutionScale,
-      generateMipmaps: true,
-      bounces: false,
-    })
-    this.reflectionSnapshot = cadenceReflector(poolReflection, 2)
-    if (ctx.flags.debug) this.debugCanvas = ctx.renderer.domElement
-    poolReflection.target.rotateX(-Math.PI / 2)
-    const reflectionUv = poolReflection.uvNode as unknown as Node<'vec2'>
-    // Keep the lookup wobble tiny — big screen-space offsets alias the
-    // reduced-resolution mirror into checkerboard moiré.
-    poolReflection.uvNode = reflectionUv.add(
-      vec2(rippleVec.x, rippleVec.z).mul(0.012),
-    ) as unknown as typeof poolReflection.uvNode
-    poolReflection.levelNode = float(3) as unknown as typeof poolReflection.levelNode
+    water.color = new Color(0x0a3038)
+    water.roughness = 0.16
+    water.metalness = 0.12
+    water.envMapIntensity = 0.72
     water.normalNode = normalize(normalGeometry.add(rippleVec))
-    // Fresnel over the plane: steep looks read the deep basin, grazing looks
-    // read the mirror — otherwise the pool bounces the bright water column
-    // straight up and turns to milk again.
-    const facing = cameraPosition.sub(positionWorld).normalize().y.clamp(0, 1)
-    const reflectance = float(1).sub(facing).pow(3).mul(0.75).add(0.08)
-    // The mirrored Silver Ceiling is HDR-huge; Reinhard-squash the reflection
-    // so the pool reads as dark glass with the colonnade drawn in it, not as
-    // a second sun on the floor.
-    const squashed = poolReflection.rgb.div(poolReflection.rgb.add(1)).mul(vec3(0.48, 0.63, 0.68))
-    water.emissiveNode = mix(vec3(0.01, 0.038, 0.045), squashed, reflectance)
-    const waterDisc = new Mesh(new CylinderGeometry(poolRadius, poolRadius, 0.1, 48), water)
+    const facing = cameraPosition.sub(positionWorld).normalize().y.abs().clamp(0, 1)
+    const grazing = float(1).sub(facing).pow(3)
+    water.colorNode = mix(vec3(0.018, 0.09, 0.105), vec3(0.16, 0.29, 0.31), grazing)
+    water.emissiveNode = vec3(0.004, 0.015, 0.018)
+    const waterDisc = new Mesh(new CircleGeometry(poolRadius, 48), water)
+    waterDisc.rotation.x = -Math.PI / 2
     waterDisc.position.set(hub.x, hubY + 0.42, hub.z)
-    waterDisc.add(poolReflection.target)
+    waterDisc.receiveShadow = true
     group.add(waterDisc)
-    this.poolWater = waterDisc
-    this.poolReflectionDistance = 150 + ctx.quality.tier * 35
     // Verdigris lip on the basin rim so the water's edge reads at a glance.
     const lip = new Mesh(new TorusGeometry(poolRadius + 1.2, 0.09, 12, 72), lib.verdigris)
     lip.rotation.x = Math.PI / 2
@@ -321,8 +286,8 @@ export class ParkAssemblySystem implements GameSystem {
       const angle = (i / 4) * Math.PI * 2 + Math.PI / 4
       const bx = obs.x + Math.sin(angle) * 4
       const bz = obs.z + Math.cos(angle) * 4
-      const yaw = Math.atan2(obs.x - bx, obs.z - bz)
-      amenities.addBench(bx, obsY + 0.18, bz, yaw)
+      const yaw = Math.atan2(bx - obs.x, bz - obs.z)
+      amenities.addBenchFacing(bx, obsY + 0.18, bz, obs.x, obs.z)
       physics.addStaticBox(bx, obsY + 0.5, bz, 0.9, 0.34, 0.3, yaw)
       seats?.registerBenchSeat({
         eye: new Vector3(bx, obsY + 1.4, bz),
@@ -377,21 +342,9 @@ export class ParkAssemblySystem implements GameSystem {
 
   update(ctx: GameContext): void {
     this.timeUniform.value = ctx.time.elapsed
-    if (this.poolWater) {
-      const dx = ctx.camera.position.x - this.poolWater.position.x
-      const dz = ctx.camera.position.z - this.poolWater.position.z
-      this.poolWater.visible = dx * dx + dz * dz <= this.poolReflectionDistance ** 2
-    }
-    if (this.debugCanvas && ctx.time.frame % 60 === 0) {
-      this.debugCanvas.dataset.poolReflection = JSON.stringify(this.reflectionSnapshot?.())
-    }
   }
 
   dispose(ctx: GameContext): void {
     if (this.group) ctx.scene.remove(this.group)
-    this.poolWater = null
-    this.reflectionSnapshot = null
-    if (this.debugCanvas) delete this.debugCanvas.dataset.poolReflection
-    this.debugCanvas = null
   }
 }

@@ -60,8 +60,15 @@
 - Towers stand 2 m BESIDE the line with a bracket arm to the sheave — cabins
   hang 3.2 m under the cable and sweep through any on-axis column. Pylons
   also respect `inParkFootprint`.
-- Cabin glazing is four thin panes, not a solid glass box (a box renders a
-  fat refractive seam across the guest's view).
+- Cabins use one authored local-space assembly in `pearlLineCabin.ts`: a flared
+  extruded saloon, shallow arched canopy, floor pan, continuous brass frame,
+  thin side/end panes, interior benches, door furniture, and a connected
+  saddle→yoke→clamp→twin-sheave suspension. The eight moving cabins share five
+  instanced material draws; their empty `Object3D` anchors remain only for seat
+  transforms. Do not return to per-cabin primitive part meshes.
+- Glazing remains thin panes rather than a solid glass box (a box renders a fat
+  refractive seam across the guest's view). `audit:geometry` verifies finite
+  bounds, nontrivial body profile, five draw slots, and zero roof/yoke gaps.
 - Station platforms use a three-cylinder collider staircase — a single tall
   cylinder defeats the character controller's 0.45 m autostep and guests
   bounce off an invisible wall.

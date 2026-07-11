@@ -2,17 +2,18 @@
 
 ## Layout authority
 
-- `src/world/parkPlan.ts` is the **only** source of park geometry facts. S7 added
-  `PARK_PATHS` (every mosaic path segment) and `inParkFootprint(x, z, margin)`
+- `src/world/parkLayout.ts` is the source of static park anchors, authored path
+  segments, and entrance markers. `src/world/parkPlan.ts` derives
+  `inParkFootprint(x, z, margin)`
   (discs + capsules covering every built or reserved footprint, including the
   future wheel/torrent/menagerie/grotto sites). Anything that scatters content
   on the seabed (flora today; shells, props, wildlife rest-points later) must
   consult `inParkFootprint` — reef rocks were spawning inside the reflecting
   pool before this existed.
 - S12 promoted the same footprints to `parkFootprintSignedDistance()`. The
-  boolean keep-out delegates to that signed field, and wildlife bakes it to a
-  128² R16F flow map. This preserves one collision/layout authority across
-  scatter, habitat placement, and GPU schooling behavior.
+  boolean keep-out delegates to that signed field, preserving one authority
+  across scatter and habitat placement. The former schooling-field consumer
+  was deleted with the fish-school system.
 - `PARK_PLAN.menagerie` now owns explicit `sunGarden`, `jellyCourt`, and
   `turtleLagoon` anchors. Their cloister, dome, lagoon, grounded links, and
   colliders land with S12 wildlife rather than remaining an empty reserved
@@ -29,28 +30,17 @@
   is a real 0.2 m step the character controller absorbs (plazas already had
   cylinder colliders).
 
-## The reflecting pool is a planar reflector
+## The reflecting pool is single-pass
 
-- PMREM env reflection can never draw scene geometry, so a "reflecting pool"
-  built from a glossy standard material reads as milk. The pool uses the TSL
-  `reflector()` (r185 core): `resolutionScale 0.35`, `generateMipmaps`,
-  sampled at `levelNode = 3` for a soft-focus dream mirror; UV wobbled by the
-  same ripple field that drives `normalNode` (offset ≤0.012 — bigger offsets
-  alias the low-res mirror into checkerboard moiré).
-- The mirrored Silver Ceiling is HDR-huge: Reinhard-squash
-  (`rgb/(rgb+1)`) + tint before blending, and blend with a plane Fresnel
-  (`facing = normalize(camera − pos).y`) so steep views read the dark basin.
-- Reflection lives in `emissiveNode` (black base color, env 0) so the lighting
-  pipeline leaves it alone; roughness 0.08 keeps a live sun glint from
-  `normalNode`.
-- Do **not** call `.level()` / `.blur()` on a ReflectorNode — they clone the
-  node and clones never receive the live RT texture. Set `levelNode` directly.
-- The pool reflector has `bounces: false` and reuses its scene texture for one
-  intervening application frame. Animated ripple UVs continue every frame, so
-  the soft mip-3 mirror stays fluid while its secondary scene render is capped
-  at half display cadence. The virtual camera disables the main-detail layer
-  (particulates, bubbles, jellies); architectural silhouettes, sky,
-  lighting, hero wildlife, and the ceiling remain reflected.
+- The former TSL planar reflector was the cause of the reproducible freeze
+  when the guest stood beyond the Atrium and looked north along the Esplanade.
+  At that position the 52 m water disc entered the camera frustum and started
+  a nested full-park render. Resolution and cadence limits did not eliminate
+  its submission cost, so the reflector and its cadence helper are deleted.
+- The pool is now one 48-segment disc with an analytic two-band ripple normal,
+  grazing-angle color, restrained environment response, and a small dark-water
+  emissive floor. It adds no render target, secondary camera, readback, or
+  direction-dependent render pass.
 - The basin is a lathed open **ring**; the original capped cylinder put a
   marble lid 3 cm above the water and hid the pool entirely (looked like a
   bright marble disc — cost several debugging rounds).
@@ -70,6 +60,15 @@
   prototypes owned by `ParkAmenitiesSystem`, and every placement is a complete
   instance transform. This prevents a bench or lamp from splitting across
   spatial chunks and makes every copy structurally identical.
+- Bench local front is `−Z`; placement is only through `addBenchFacing()` with
+  an explicit world-space focal point. Esplanade benches face its centerline,
+  while Atrium and Observatory rings face their own centers. The offline audit
+  rejects any placement whose forward/target dot product is not effectively 1.
+- `FacilitySignsSystem` places one rooted, brass-framed marker at every facility
+  threshold. All sixteen frames share three instanced material draws and all
+  sixteen names share one 1024×512 (2 MB) atlas mesh, for four draws total.
+  `parkLayout.ts` owns positions and arrival targets; the geometry audit checks
+  unique coverage, approach-facing orientation, and walking-lane clearance.
 - Facility finish is plan-driven in `world/parkFacilities.ts`: Esplanade owns a
   continuous entablature and threshold urns; Tidal Court a pearl-pedestal rim;
   Midway an arched/corniced hall and built counter rhythm; Café Méduse a full

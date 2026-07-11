@@ -42,10 +42,11 @@ import { ArrivalSystem } from './world/arrival'
 import { DevOrbitSystem } from './world/devOrbit'
 import type { DistrictServices } from './world/districts/atrium'
 import { AtriumSystem } from './world/districts/atrium'
+import { FacilitySignsSystem } from './world/facilitySigns'
 import { FloraSystem } from './world/flora'
 import { ParkAssemblySystem } from './world/parkAssembly'
 import { ParkAmenitiesSystem } from './world/parkAmenities'
-import { TerrainSystem } from './world/terrain'
+import { TerrainSystem, terrainHeight } from './world/terrain'
 import { TestGallerySystem } from './world/testGallery'
 import { WildlifeSystem } from './wildlife/wildlifeSystem'
 
@@ -150,6 +151,7 @@ async function boot(): Promise<void> {
     }
     registry.add(new AtriumSystem(services))
     registry.add(new ParkAssemblySystem(services))
+    registry.add(new FacilitySignsSystem(services, terrainHeight))
     registry.add(new DescentBellSystem(services, player))
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))

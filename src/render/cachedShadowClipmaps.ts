@@ -204,9 +204,8 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     this.maxCacheAge = Math.max(0, Math.round(options.maxCacheAge ?? 180))
     this.dynamicRefreshFrames = Math.max(1, Math.round(options.dynamicRefreshFrames ?? 2))
     this.directionCos = Math.cos(options.directionEpsilon ?? 0.002)
-    // A planar reflector starts a nested render. These world-space clipmaps
-    // are camera-independent once rendered, so every render in one app frame
-    // must reuse the same committed maps.
+    // These world-space clipmaps are camera-independent once rendered, so
+    // every render pass in one app frame must reuse the committed maps.
     this.updateBeforeType = NodeUpdateType.FRAME
   }
 

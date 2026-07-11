@@ -29,9 +29,9 @@ is scheduled ahead on one HRTF bus while the show event is active.
 
 `render/cachedShadowClipmaps.ts` replaces the old single 180 m camera-following
 box with four ordinary shadow maps covering 28, 84, 252, and 650 m half-widths.
-Only level 0 is dynamic. The clipmap owner is frame-scoped, so nested planar
-reflection renders reuse the same committed maps; the dynamic level refreshes
-at most every two stationary frames while snapped camera movement and explicit
+Only level 0 is dynamic. The clipmap owner is frame-scoped, so multiple render
+passes in one application frame reuse the same committed maps; the dynamic
+level refreshes at most every two stationary frames while snapped camera movement and explicit
 invalidation remain immediate. Cached levels publish committed centers, snap X/Y to
 their actual texel footprints, quantize Z, stagger maximum ages, cross-fade
 inside a guard band, and consume one ordinary refresh budget per frame.
@@ -51,9 +51,9 @@ and render counts. The fixed sun never causes continuous direction refreshes.
 - God rays retain their pre-S14 full-output-resolution march. The attempted
   reduced-resolution target was rejected because its fine caustic shafts cannot
   be spatially reconstructed without mud or visible sampling structure.
-- Tidal Court's planar reflection uses per-tier resolution, disables recursive
-  bounces, omits main-only bulk detail, reuses its texture every other frame,
-  and remains distance-gated at 150/185/220 m. Basin geometry remains visible.
+- Tidal Court no longer owns a planar-reflection target. Its pool is a
+  single-draw analytic glossy surface; this removes the nested full-park render
+  that froze the Atrium-to-Esplanade north-facing view.
 - `canvas.dataset.performance` reports CPU submission time, presented frame
   time/FPS, asynchronous render/compute/combined GPU timestamps, draw and
   primitive counts, render targets, quality, render scale, and GPU-resource bytes.

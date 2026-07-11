@@ -73,8 +73,18 @@ export class ParkAmenitiesSystem implements GameSystem {
     ctx.scene.add(this.group)
   }
 
-  addBench(x: number, y: number, z: number, yaw = 0): void {
+  addBenchFacing(
+    x: number,
+    y: number,
+    z: number,
+    targetX: number,
+    targetZ: number,
+  ): void {
     if (this.benchCount >= BENCH_CAPACITY) throw new Error('Park bench instance capacity exceeded')
+    const yaw = benchYawToward(x, z, targetX, targetZ)
+    if (benchFacingDot(x, z, yaw, targetX, targetZ) < 0.999999) {
+      throw new Error('Park bench does not face its declared target')
+    }
     this.matrix.makeRotationY(yaw)
     this.matrix.setPosition(x, y, z)
     this.writeInstance(this.benchSlots, this.benchCount, this.matrix)
@@ -122,6 +132,29 @@ export class ParkAmenitiesSystem implements GameSystem {
       slot.mesh.computeBoundingSphere()
     }
   }
+}
+
+/** Local bench front is -Z; derive yaw from an explicit world-space target. */
+export function benchYawToward(x: number, z: number, targetX: number, targetZ: number): number {
+  if (Math.hypot(targetX - x, targetZ - z) < 1e-6) {
+    throw new Error('Bench facing target must differ from its position')
+  }
+  return Math.atan2(x - targetX, z - targetZ)
+}
+
+export function benchFacingDot(
+  x: number,
+  z: number,
+  yaw: number,
+  targetX: number,
+  targetZ: number,
+): number {
+  const dx = targetX - x
+  const dz = targetZ - z
+  const inverseLength = 1 / Math.hypot(dx, dz)
+  const forwardX = -Math.sin(yaw)
+  const forwardZ = -Math.cos(yaw)
+  return forwardX * dx * inverseLength + forwardZ * dz * inverseLength
 }
 
 type BenchPrototype = { wood: BufferGeometry; iron: BufferGeometry; brass: BufferGeometry }

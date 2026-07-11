@@ -41,9 +41,9 @@
   - Torus prototypes must be radius-keyed when used as rings — uniform-scaling a unit torus fattens the tube with the major radius (1.2 m brass donuts on domes, the atrium "gold balloon" mass).
   - Transparent slots must not cast shadows (`SlotWriter.compile` handles it) — glass roofs were shadowing like plywood.
   - Solid-of-revolution "basins" need open profiles: a capped CylinderGeometry LIDDED the reflecting pool with marble 3 cm above the water; the pool tuning looked broken for several rounds because the water was simply invisible.
-  - Planar reflections: TSL `reflector()` works under our RenderPipeline pass. Blend it via `emissiveNode` over a black-base standard material; Reinhard-squash the mirrored HDR ceiling; Fresnel by plane-facing; set `levelNode` directly (never `.level()`/`.blur()` — clones lose the live RT); keep UV wobble ≤~0.012 or the low-res mirror moirés.
+  - **SUPERSEDED 2026-07-11:** the Tidal Court planar-reflector recipe worked visually but froze the long Esplanade sightline through nested park submission. It is historical only; the pool is now single-pass.
   - Rapier `world.castRay` before the first `world.step()` returns no hits — run raycast self-checks on the first fixedUpdate, not at init.
-  - Preview FPS with the full park at tier 2 measured ~27–40 while visible (reflector adds a second scene render when the pool is on screen — S14 lever: pause reflector when hub out of view).
+  - Historical preview FPS with the full park at tier 2 measured ~27–40 while visible; its reflector cost was later removed rather than merely distance-gated.
 - 2026-07-10 S8 lessons (rides — see systems/rides-bell-pearl.md for the full set):
   - Route anything airborne (cables, future coaster track) with explicit point-to-segment clearance vs EVERY dome/building; the first Pearl Line draft flew through the observatory glass. There is no collision check for splines — geometry review is the check.
   - Aerial structures need lateral standoff: gondola towers 2 m beside the cable (cabins sweep 3.2 m below it); same thinking applies to coaster supports near the track envelope (S10).
@@ -301,3 +301,18 @@
   - The flattened fan-coral sphere read as a cardboard cutout and is deleted.
     Fan-shaped organisms need authored thickness/branching; omit them until that
     mechanism exists.
+- 2026-07-11 Esplanade freeze, cart, orientation, and wayfinding corrections:
+  - Direction-specific freezes are a render-pass clue. Looking north just past
+    the Atrium admitted Tidal Court's 52 m planar-reflector disc to the frustum,
+    which nested a second full-park render. Cadence/resolution limits retained
+    the submission spike, so the reflector path and helper were deleted. The
+    pool now has one analytic glossy draw and no auxiliary target.
+  - Repeated vehicle bodies follow the same prototype rule as amenities. Pearl
+    Line cabins are a five-slot instanced fleet with connected suspension and
+    authored saloon/canopy profiles; moving `Object3D`s are seat transforms only.
+  - Bench orientation is semantic: local front `−Z` must face an explicit focal
+    point. Esplanade benches target the centerline; Atrium and Observatory rings
+    target their centers. Raw placement yaw is not an acceptable public API.
+  - Facility wayfinding is one system, not one-off boards. Sixteen entrance
+    signs share three instanced frame slots and one 2 MB name atlas. Their plan
+    records an approach target and the offline audit verifies exact facing.

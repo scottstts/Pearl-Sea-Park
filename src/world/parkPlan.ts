@@ -1,64 +1,12 @@
 import { terrainHeight } from './terrain'
-
-/**
- * THE master layout (plan §3): every district, path, and ride anchors here.
- * Coordinates in meters; north = −z (toward the drop-off). Nothing else may
- * hardcode park positions.
- */
-export const PARK_PLAN = {
-  /** Buoy pavilion + descent bell shaft. */
-  arrival: { x: 0, z: 320 },
-  /** Grand Atrium — the entrance dome. */
-  atrium: { x: 0, z: 250, plazaRadius: 21 },
-  /** Esplanade boulevard: atrium → hub. */
-  esplanade: { x: 0, zFrom: 229, zTo: 121, width: 13 },
-  /** Tidal Court — the hub lagoon + colonnade. */
-  tidalCourt: { x: 0, z: 78, colonnadeRadius: 40, lagoonRadius: 26 },
-  /** The Great Wheel pier (east) — turns in a dredged basin (floor ≈ −40). */
-  wheel: { x: 175, z: 40, radius: 20, hubY: -18 },
-  /** Carrousel des Abysses — the Midway's southern rotunda. */
-  carousel: { x: 100, z: 182, plazaRadius: 12 },
-  /** Torrent coaster station (north, near the rim). */
-  torrent: { station: { x: 70, z: -165 } },
-  /** Menagerie gardens (west): the inverted zoo's three linked courts. */
-  menagerie: {
-    x: -170,
-    z: 45,
-    sunGarden: { x: -148, z: 60 },
-    jellyCourt: { x: -188, z: 53, radius: 14 },
-    turtleLagoon: { x: -168, z: 20, radius: 13 },
-  },
-  /** Midway hall (south-east of hub). */
-  midway: { x: 100, z: 150, width: 42, depth: 20 },
-  /** Grotto of Pearls entrance (south-east). */
-  grotto: { x: 185, z: 125 },
-  /** Observatory dome (west of atrium). */
-  observatory: { x: -62, z: 228 },
-  /** Café Méduse terrace (between hub and esplanade, east side). */
-  cafe: { x: 46, z: 112 },
-} as const
+import { PARK_PATHS, PARK_PLAN } from './parkLayout'
+export { FACILITY_ENTRANCE_SIGNS, PARK_PATHS, PARK_PLAN } from './parkLayout'
+export type { FacilityEntranceSign } from './parkLayout'
 
 /** Ground height at a plan anchor. */
 export function anchorGround(anchor: { x: number; z: number }): number {
   return terrainHeight(anchor.x, anchor.z)
 }
-
-/**
- * Path segments (from → to, width). Park assembly builds mosaic plates from
- * this list; the flora keep-out reads the same list — one source of truth.
- */
-export const PARK_PATHS: { ax: number; az: number; bx: number; bz: number; width: number }[] = [
-  { ax: PARK_PLAN.arrival.x, az: PARK_PLAN.arrival.z - 6, bx: PARK_PLAN.atrium.x, bz: PARK_PLAN.atrium.z + 21, width: 5 },
-  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.wheel.x - 27, bz: PARK_PLAN.wheel.z, width: 8 },
-  { ax: PARK_PLAN.midway.x, az: PARK_PLAN.midway.z + 12, bx: PARK_PLAN.carousel.x, bz: PARK_PLAN.carousel.z - 13, width: 6 },
-  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.menagerie.x, bz: PARK_PLAN.menagerie.z, width: 8 },
-  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.midway.x - 10, bz: PARK_PLAN.midway.z - 4, width: 7 },
-  { ax: PARK_PLAN.midway.x + 16, az: PARK_PLAN.midway.z, bx: PARK_PLAN.grotto.x, bz: PARK_PLAN.grotto.z, width: 6 },
-  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.torrent.station.x, bz: PARK_PLAN.torrent.station.z, width: 7 },
-  { ax: PARK_PLAN.atrium.x, az: PARK_PLAN.atrium.z, bx: PARK_PLAN.observatory.x, bz: PARK_PLAN.observatory.z, width: 5 },
-  { ax: PARK_PLAN.tidalCourt.x + 18, az: PARK_PLAN.tidalCourt.z + 24, bx: PARK_PLAN.cafe.x, bz: PARK_PLAN.cafe.z, width: 5 },
-  { ax: -140, az: -232, bx: PARK_PLAN.menagerie.x, bz: PARK_PLAN.menagerie.z, width: 6 },
-]
 
 /** Built/reserved footprints: no flora, no scatter. Radii include margin. */
 const KEEPOUT_DISCS: { x: number; z: number; r: number }[] = [
