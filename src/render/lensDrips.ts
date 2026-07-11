@@ -17,6 +17,7 @@ import {
 } from 'three/tsl'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
+import type { SeaSystem } from '../sea/seaSystem'
 import { fbm2 } from './tslNoise'
 import type { RenderPipelineSystem } from './pipeline'
 
@@ -46,15 +47,20 @@ export class LensDripSystem implements GameSystem {
   readonly id = 'lens-drips'
 
   private readonly pipeline: RenderPipelineSystem
+  private readonly sea: SeaSystem
   private readonly droplets = uniform(0)
   private readonly sheet = uniform(0)
   private readonly timeUniform = uniform(0)
 
-  constructor(pipeline: RenderPipelineSystem) {
+  constructor(pipeline: RenderPipelineSystem, sea: SeaSystem) {
     this.pipeline = pipeline
+    this.sea = sea
   }
 
   init(ctx: GameContext): void {
+    const submerged = this.sea.visualSubmergedNode
+    if (!submerged) throw new Error('LensDripSystem requires the visual waterline gate')
+
     ctx.events.on('sea/waterline-crossed', ({ submerged }) => {
       if (submerged) {
         // A submerged lens carries no droplets — the water IS the medium.
@@ -79,7 +85,10 @@ export class LensDripSystem implements GameSystem {
 
         // `droplets` is uniform across the frame — a coherent branch that
         // removes every extra texture sample once the lens is dry.
-        If(droplets.greaterThan(0.002), () => {
+        // CPU events own wet/dry history, but a delayed readback must never
+        // leave an above-water lens overlay on the first underwater frame.
+        const visibleDroplets = droplets.mul(float(1).sub(submerged))
+        If(visibleDroplets.greaterThan(0.002), () => {
           const aspect = screenSize.x.div(screenSize.y)
           const suv = vec2(screenUV.x.mul(aspect), screenUV.y).toVar()
           const offset = vec2(0, 0).toVar()

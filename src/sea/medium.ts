@@ -60,8 +60,6 @@ const AMBIENT_UP = vec3(0.1, 0.32, 0.37)
 export class SeaMediumSystem implements GameSystem {
   readonly id = 'sea-medium'
 
-  /** 0 above water → 1 below; smoothed across the crossing frames. */
-  private readonly submerged = uniform(0)
   private readonly timeUniform = uniform(0)
   /** 0 = open sea, 1 = deep inside an interior (grotto): kills fog glow + rays. */
   private readonly interior = uniform(0)
@@ -80,6 +78,8 @@ export class SeaMediumSystem implements GameSystem {
   init(ctx: GameContext): void {
     const sim = this.sea.sim
     if (!sim) throw new Error('SeaMediumSystem requires SeaSystem to init first')
+    const submerged = this.sea.visualSubmergedNode
+    if (!submerged) throw new Error('SeaMediumSystem requires the visual waterline gate')
 
     const caustics = new CausticsPass(sim, ctx.quality.params.causticsSize)
     this.caustics = caustics
@@ -88,8 +88,6 @@ export class SeaMediumSystem implements GameSystem {
     this.pipeline.debugNodes.caustics = vec4(caustics.textureNode.rgb, 1)
 
     const godraySteps = ctx.quality.params.godraySteps
-    const submerged = this.submerged
-
     // ── HDR composite: fog + god rays, spliced before bloom ───────────────
     this.pipeline.hdrTransform = (color, extras) => {
       const viewZ = (extras as { viewZNode: Node<'float'> }).viewZNode
@@ -139,9 +137,10 @@ export class SeaMediumSystem implements GameSystem {
           sin(screenUV.x.mul(1741.37).add(screenUV.y.mul(921.13))).mul(43758.55),
         )
         const shaft = float(0).toVar()
-        // `submerged` is uniform across the draw, so this is a coherent branch:
-        // it preserves the exact underwater loop while eliminating all caustic
-        // texture samples from above-water frames.
+        // `submerged` comes from one texel and is spatially constant across the
+        // draw, so every invocation takes the same branch. This preserves the
+        // exact underwater loop while eliminating all caustic texture samples
+        // from above-water frames.
         If(submerged.greaterThan(0.001), () => {
           Loop({ start: 0, end: godraySteps }, (loopVars) => {
             const i = (loopVars as { i: Node<'int'> }).i
@@ -164,7 +163,7 @@ export class SeaMediumSystem implements GameSystem {
       return combined
     }
 
-    this.buildParticulates(ctx)
+    this.buildParticulates(ctx, submerged)
 
     registerBookmark({
       name: 'caustics',
@@ -193,7 +192,7 @@ export class SeaMediumSystem implements GameSystem {
     }) as unknown as typeof material.receivedShadowNode
   }
 
-  private buildParticulates(ctx: GameContext): void {
+  private buildParticulates(ctx: GameContext, submerged: Node<'float'>): void {
     const count = ctx.quality.params.particulateCount
     const material = new MeshBasicNodeMaterial()
     material.blending = AdditiveBlending
@@ -224,7 +223,7 @@ export class SeaMediumSystem implements GameSystem {
     const depthGlow = exp(center.y.mul(0.04)).min(1)
     // Node materials blend via opacityNode — color alpha alone is ignored.
     material.colorNode = vec4(vec3(0.7, 0.82, 0.84).mul(0.5).mul(depthGlow), 1.0)
-    material.opacityNode = fade.mul(this.submerged)
+    material.opacityNode = fade.mul(submerged)
 
     const mesh = new InstancedMesh(new TetrahedronGeometry(1, 0), material, count)
     mesh.frustumCulled = false
@@ -241,13 +240,12 @@ export class SeaMediumSystem implements GameSystem {
   }
 
   lateUpdate(ctx: GameContext): void {
-    // Hard gate, locked to the true wave-displaced waterline: crossing the
-    // surface swaps worlds in the same rendered frame. This runs after every
-    // player/ride camera owner; the shader graph and binary uniform are
-    // deliberately unchanged.
-    const below = ctx.camera.position.y < this.sea.surfaceHeightAtCamera
-    this.submerged.value = below ? 1 : 0
-    if (this.particulates) this.particulates.visible = below
+    // Near the interface the draw remains armed and its GPU opacity follows
+    // the exact same-frame waterline gate. Safely away from the interface the
+    // CPU event state can still cull the entire instance draw.
+    if (this.particulates) {
+      this.particulates.visible = Math.abs(ctx.camera.position.y) <= 3 || this.sea.isSubmerged
+    }
   }
 
   dispose(ctx: GameContext): void {

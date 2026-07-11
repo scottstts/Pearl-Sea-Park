@@ -137,7 +137,7 @@
     the full-resolution pre-`e59ca20` mechanism until the renderer owns a real
     motion-vector/history/rejection contract for temporal reconstruction.
   - Full-resolution ray quality does not require paying the march above water:
-    branch on the uniform submerged gate around the loop. This removes every
+    branch on the spatially uniform submerged gate around the loop. This removes every
     caustic texture sample in above-water frames while leaving underwater pixel
     positions, jitter, step count, source field, and accumulation unchanged.
 - 2026-07-10 quality walkthrough (arrival & waterline — Scott's rulings):
@@ -145,11 +145,12 @@
     (ticket card in the view corner) read as an artifact; `heldItems.ts` is now
     state-only (stamps/pennies/prizes still tracked, `ticket/completed` still
     fires). Don't re-parent meshes to the camera without asking Scott.
-  - **The waterline is `SeaSystem.surfaceHeightAtCamera`, never y<0.** A
-    1-thread compute (`sea/waterlineProbe.ts`) samples the three displacement
-    cascades at the camera XZ with fixed-point horizontal correction + async
-    storage readback. The medium's `submerged` uniform is a hard binary flip —
-    smoothing it made every swell-dunk during the descent lag visibly.
+  - **The waterline is the displaced wave field, never y<0.** A 1-thread
+    compute (`sea/waterlineProbe.ts`) samples the three displacement cascades
+    at camera XZ with fixed-point horizontal correction. Visual consumers use
+    its same-frame 1×1 GPU state texture; `SeaSystem.surfaceHeightAtCamera` is
+    the intentionally latent CPU copy for events/gameplay only. The medium gate
+    remains a hard binary flip — smoothing made every swell-dunk lag visibly.
   - TSL `.sample()` inside compute compiles to `textureSampleLevel(…, 0)`
     automatically — sampling render textures from compute is fine.
   - `skyRadiance(dir, discStrength)`: physical 0.53° limb-darkened HDR disc.
@@ -270,10 +271,16 @@
     frames ("Maximum number of queries exceeded" warnings). The monitor now
     resolves continuously with a single resolution in flight.
 - 2026-07-11 waterline and exposure timing:
-  - Keep the undersea medium's authored shader graph and binary `submerged`
-    uniform unchanged. A probe-storage node in the render graph caused
-    above-water sky corruption and underwater gate flicker. The safe fix is
-    to write the existing uniform in a post-camera `lateUpdate` phase.
+  - A probe-storage **buffer node** in the render graph caused above-water sky
+    corruption and underwater gate flicker; do not restore it. Moving a CPU
+    uniform write to post-camera `lateUpdate` fixed camera-order latency but
+    could not fix asynchronous map latency under GPU load. The final visual
+    authority is instead a sampled 1×1 half-float texture written by a
+    post-camera compute and consumed by the immediately following render. It
+    retains the authored binary shader graph without a CPU round trip or nine
+    displacement samples per output pixel. The same state also suppresses the
+    above-water lens overlay immediately on submergence; its CPU event remains
+    responsible only for droplet wet/dry history and emergence re-arming.
   - The exposure readback computes a target only. Applying adaptation inside
     the 30-frame readback callback creates small brightness steps; adapt the
     existing EV toward that target every rendered frame instead.
@@ -370,7 +377,7 @@
     changing water colour merely made that camera-enclosing overlay obvious.
     The lathe winding is outward (all radial normal dots are positive), so a
     bell-only FrontSide clone preserves exterior glazing and removes the entire
-    interior overlay. The ocean still shares one camera-level submerged uniform
+    interior overlay. The ocean still shares one camera-level submerged state
     with the medium; that is correct optical-state hygiene, but was not the
     source of this artifact.
   - A fixed-sun cache cannot use periodic full-world expiry to service moving

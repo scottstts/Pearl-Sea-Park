@@ -54,7 +54,6 @@ export class SeaSystem implements GameSystem {
   private outer: Mesh | null = null
   private probe: WaterlineProbe | null = null
   private readonly timeUniform = uniform(0)
-  private readonly submergedUniform = uniform(0)
   private submerged = false
   private followStep = 1
 
@@ -62,12 +61,13 @@ export class SeaSystem implements GameSystem {
     const sim = new WaveSim(ctx.rng)
     this.sim = sim
     this.probe = new WaterlineProbe(sim)
+    this.probe.initialize(ctx.renderer)
 
     const segments = [256, 384, 448][ctx.quality.tier] ?? 384
     this.followStep = INNER_SIZE / segments
 
     const timeNode = this.timeUniform as unknown as import('three/webgpu').Node<'float'>
-    const submergedNode = this.submergedUniform as unknown as import('three/webgpu').Node<'float'>
+    const submergedNode = this.probe.visualSubmergedNode
     // Both ocean sheets sample one framebuffer copy. A shared base
     // ViewportTextureNode makes its per-surface samples resolve to the same
     // render-scoped texture instead of copying the 4 MP HDR target twice.
@@ -133,22 +133,22 @@ export class SeaSystem implements GameSystem {
     const qz = Math.round(ctx.camera.position.z / step) * step
     this.inner?.position.set(qx, 0, qz)
     this.outer?.position.set(qx, -OUTER_SINK, qz)
+  }
 
-    // The crossing test uses the true displaced surface at the camera XZ —
-    // the swell is metres tall and dunks the camera long before y < 0.
+  lateUpdate(ctx: GameContext): void {
+    // Player and ride systems own the camera later in regular update. Dispatch
+    // the visual waterline only now: queue ordering makes its 1×1 state texture
+    // visible to the immediately following render with no CPU round trip.
     this.probe?.update(
       ctx.renderer,
       ctx.camera.position.x,
       ctx.camera.position.z,
       ctx.camera.position.y,
     )
-  }
 
-  lateUpdate(ctx: GameContext): void {
-    // Player and ride systems own the camera later in the regular update
-    // order. Classify only after they settle the pose rendered this frame.
+    // Events/audio still use the asynchronous CPU height. Their latency must
+    // never gate the ocean material or whole-frame underwater composite.
     const nowSubmerged = ctx.camera.position.y < this.surfaceHeightAtCamera
-    this.submergedUniform.value = nowSubmerged ? 1 : 0
     if (nowSubmerged !== this.submerged) {
       this.submerged = nowSubmerged
       ctx.events.emit('sea/waterline-crossed', { submerged: nowSubmerged })
@@ -164,8 +164,15 @@ export class SeaSystem implements GameSystem {
     return this.probe?.height ?? 0
   }
 
+  /** Same-frame GPU gate shared by the surface and underwater composite. */
+  get visualSubmergedNode(): import('three/webgpu').Node<'float'> | null {
+    return this.probe?.visualSubmergedNode ?? null
+  }
+
   dispose(ctx: GameContext): void {
     if (this.inner) ctx.scene.remove(this.inner)
     if (this.outer) ctx.scene.remove(this.outer)
+    this.probe?.dispose()
+    this.probe = null
   }
 }

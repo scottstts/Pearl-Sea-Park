@@ -128,7 +128,7 @@ async function boot(): Promise<void> {
     registry.add(new SkySystem())
     const sea = registry.add(new SeaSystem())
     const medium = registry.add(new SeaMediumSystem(pipeline, sea))
-    registry.add(new LensDripSystem(pipeline))
+    registry.add(new LensDripSystem(pipeline, sea))
     registry.add(new TerrainSystem(medium))
     registry.add(new FloraSystem(medium))
     const physics = registry.add(new PhysicsSystem())
