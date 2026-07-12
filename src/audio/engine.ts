@@ -3,6 +3,9 @@ import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { PARK_PLAN, anchorGround } from '../world/parkPlan'
 
+const PROCEDURAL_SAMPLE_RATE = 48_000
+const HUM_NAMES = ['bell', 'pearl', 'wheel', 'carousel', 'torrent'] as const
+
 /**
  * Fully procedural audio (plan §12): no files, everything synthesized.
  * - Underwater ambience: filtered noise bed + slow shimmer pad.
@@ -30,10 +33,17 @@ export class AudioEngineSystem implements GameSystem {
   private fountainActive = false
   private fountainGain: GainNode | null = null
   private fountainLoopEnd = 0
+  private ambiencePcm: Float32Array<ArrayBuffer> | null = createPinkNoisePcm(6)
+  private whaleBreathPcm: Float32Array<ArrayBuffer> | null = createNoisePcm(8, 9059, 0.18)
+  private readonly humPcm = new Map<string, Float32Array<ArrayBuffer>>(
+    HUM_NAMES.map((name) => [name, createNoisePcm(2, deterministicStringHash(name), 1)]),
+  )
+  private whaleBreathBuffer: AudioBuffer | null = null
+  private readonly humBuffers = new Map<string, AudioBuffer>()
 
   init(ctx: GameContext): void {
     // The context must start from a user gesture: the enter click.
-    ctx.events.on('park/entered', () => this.start(ctx))
+    ctx.events.on('park/entered', ({ revealSeconds }) => this.start(ctx, revealSeconds))
     ctx.events.on('audio/volume-changed', ({ volume }) => {
       this.volume = Math.max(0, Math.min(1, volume))
       if (this.master && this.context) {
@@ -101,14 +111,22 @@ export class AudioEngineSystem implements GameSystem {
     })
   }
 
-  private start(_ctx: GameContext): void {
+  private start(_ctx: GameContext, revealSeconds: number): void {
     if (this.started) return
     this.started = true
     const context = new AudioContext()
     this.context = context
 
     const master = context.createGain()
-    master.gain.value = this.volume
+    // The visual scene is revealed through the ticket's opacity crossfade.
+    // Start the context in the click gesture, but make its master envelope the
+    // same duration so sound and image arrive together instead of audio jumping
+    // to full level beneath an almost-opaque ticket.
+    master.gain.setValueAtTime(0, context.currentTime)
+    master.gain.linearRampToValueAtTime(
+      this.volume,
+      context.currentTime + Math.max(0.01, revealSeconds),
+    )
     const lowpass = context.createBiquadFilter()
     lowpass.type = 'lowpass'
     lowpass.frequency.value = 1900 // guests begin underwater
@@ -117,6 +135,13 @@ export class AudioEngineSystem implements GameSystem {
     lowpass.connect(context.destination)
     this.master = master
     this.lowpass = lowpass
+
+    this.whaleBreathBuffer = copyPcmToAudioBuffer(context, this.whaleBreathPcm)
+    this.whaleBreathPcm = null
+    for (const [name, pcm] of this.humPcm) {
+      this.humBuffers.set(name, copyPcmToAudioBuffer(context, pcm))
+    }
+    this.humPcm.clear()
 
     this.buildAmbience(context, master)
 
@@ -260,11 +285,8 @@ export class AudioEngineSystem implements GameSystem {
       oscillator.stop(at + 16.1)
     }
 
-    const breathBuffer = context.createBuffer(1, Math.ceil(context.sampleRate * 8), context.sampleRate)
-    const breath = breathBuffer.getChannelData(0)
-    for (let i = 0; i < breath.length; i++) breath[i] = deterministicNoise(i + 9059) * 0.18
     const breathSource = context.createBufferSource()
-    breathSource.buffer = breathBuffer
+    breathSource.buffer = this.whaleBreathBuffer
     breathSource.loop = true
     const breathFilter = context.createBiquadFilter()
     breathFilter.type = 'bandpass'
@@ -337,19 +359,8 @@ export class AudioEngineSystem implements GameSystem {
 
   /** Deep, soft ambience: pink-ish noise through a slow-breathing filter. */
   private buildAmbience(context: AudioContext, out: GainNode): void {
-    const seconds = 6
-    const buffer = context.createBuffer(1, context.sampleRate * seconds, context.sampleRate)
-    const data = buffer.getChannelData(0)
-    let b0 = 0
-    let b1 = 0
-    let b2 = 0
-    for (let i = 0; i < data.length; i++) {
-      const white = deterministicNoise(i + 4099)
-      b0 = 0.997 * b0 + 0.029 * white
-      b1 = 0.985 * b1 + 0.032 * white
-      b2 = 0.95 * b2 + 0.048 * white
-      data[i] = (b0 + b1 + b2) * 0.32
-    }
+    const buffer = copyPcmToAudioBuffer(context, this.ambiencePcm)
+    this.ambiencePcm = null
     const source = context.createBufferSource()
     source.buffer = buffer
     source.loop = true
@@ -407,11 +418,7 @@ export class AudioEngineSystem implements GameSystem {
     const oscB = context.createOscillator()
     oscB.frequency.value = frequency * 1.996 // near-octave beat
     const noise = context.createBufferSource()
-    const buffer = context.createBuffer(1, context.sampleRate * 2, context.sampleRate)
-    const data = buffer.getChannelData(0)
-    const noiseSeed = deterministicStringHash(name)
-    for (let i = 0; i < data.length; i++) data[i] = deterministicNoise(i + noiseSeed)
-    noise.buffer = buffer
+    noise.buffer = this.humBuffers.get(name) ?? null
     noise.loop = true
     const noiseFilter = context.createBiquadFilter()
     noiseFilter.type = 'bandpass'
@@ -537,4 +544,39 @@ function deterministicStringHash(value: string): number {
     hash = Math.imul(hash, 16777619)
   }
   return hash >>> 0
+}
+
+function createNoisePcm(
+  seconds: number,
+  seed: number,
+  level: number,
+): Float32Array<ArrayBuffer> {
+  const data = new Float32Array(PROCEDURAL_SAMPLE_RATE * seconds)
+  for (let i = 0; i < data.length; i++) data[i] = deterministicNoise(i + seed) * level
+  return data
+}
+
+function createPinkNoisePcm(seconds: number): Float32Array<ArrayBuffer> {
+  const data = new Float32Array(PROCEDURAL_SAMPLE_RATE * seconds)
+  let b0 = 0
+  let b1 = 0
+  let b2 = 0
+  for (let i = 0; i < data.length; i++) {
+    const white = deterministicNoise(i + 4099)
+    b0 = 0.997 * b0 + 0.029 * white
+    b1 = 0.985 * b1 + 0.032 * white
+    b2 = 0.95 * b2 + 0.048 * white
+    data[i] = (b0 + b1 + b2) * 0.32
+  }
+  return data
+}
+
+function copyPcmToAudioBuffer(
+  context: AudioContext,
+  pcm: Float32Array<ArrayBuffer> | null,
+): AudioBuffer {
+  const data = pcm ?? new Float32Array(1)
+  const buffer = context.createBuffer(1, data.length, PROCEDURAL_SAMPLE_RATE)
+  buffer.copyToChannel(data, 0)
+  return buffer
 }

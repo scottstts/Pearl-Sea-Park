@@ -2,6 +2,7 @@ import { auditNoticeBoardRoof } from '../src/shows/noticeBoardGeometry.ts'
 import { auditPearlLineCabinGeometry } from '../src/rides/pearlLineCabin.ts'
 import { auditPearlRoute } from '../src/rides/pearlRoute.ts'
 import { auditTorrentTrack } from '../src/rides/torrentTrack.ts'
+import { auditOceanSkirtGeometry } from '../src/sea/oceanSkirtGeometry.ts'
 import { auditFacilitySigns } from '../src/world/facilitySigns.ts'
 import {
   auditAmenityGeometry,
@@ -15,6 +16,7 @@ const pearlLineCabin = auditPearlLineCabinGeometry()
 const facilitySigns = auditFacilitySigns()
 const torrentTrack = auditTorrentTrack()
 const pearlRoute = auditPearlRoute()
+const oceanSkirt = auditOceanSkirtGeometry()
 const benchFacing = [
   { name: 'esplanade-east', at: [5.3, 175], target: [0, 175] },
   { name: 'esplanade-west', at: [-5.3, 175], target: [0, 175] },
@@ -67,6 +69,7 @@ const report = {
   benchFacing,
   torrentTrack,
   pearlRoute,
+  oceanSkirt,
 }
 
 console.log(JSON.stringify(report, null, 2))

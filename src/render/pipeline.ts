@@ -1,15 +1,27 @@
 import { AgXToneMapping, NoToneMapping, SRGBColorSpace } from 'three'
 import { RenderPipeline } from 'three/webgpu'
+import type { Node } from 'three/webgpu'
 import {
+  Fn,
+  If,
+  abs,
+  dot,
+  exp,
   exp2,
   float,
+  getViewPosition,
+  max,
   mix,
   mrt,
   normalView,
   output,
   pass,
+  pow,
   renderOutput,
   smoothstep,
+  uniform,
+  uv,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl'
@@ -71,7 +83,10 @@ export class RenderPipelineSystem implements GameSystem {
     renderer.toneMapping = NoToneMapping
 
     const scenePass = pass(scene, camera, { samples: 4 })
-    scenePass.setMRT(mrt({ output, normal: normalView }))
+    // Alpha is an AO-receiver channel. Lit opaque materials inherit 1; water
+    // overrides only this named MRT output to 0. Reusing the normal target's
+    // otherwise spare alpha avoids another full-resolution multisampled MRT.
+    scenePass.setMRT(mrt({ output, normal: vec4(normalView, 1) }))
 
     const sceneColor = scenePass.getTextureNode('output')
     const sceneNormal = scenePass.getTextureNode('normal')
@@ -80,13 +95,60 @@ export class RenderPipelineSystem implements GameSystem {
     const aoNode = ao(sceneDepth, sceneNormal, camera)
     aoNode.resolutionScale = 0.5
     const aoTexture = aoNode.getTextureNode()
+    const aoResolution = aoNode.resolution as unknown as Node<'vec2'>
 
-    // GTAO writes a RedFormat target — multiply by the scalar, not the vec4.
-    // AO is a *contact* effect: past ~100 m the half-res horizon sampling on
-    // grazing geometry (ocean waves) turns to dither, so fade it to neutral.
+    // Three r185 GTAO emits a raw, half-resolution 5x5 magic-square-noise
+    // pattern and performs no denoise unless the owner adds one. Reconstruct
+    // at full resolution with the exact eight-neighbour ring: depth rejects
+    // foreground/background bleeding and normal similarity preserves edges.
+    const projectionInverse = uniform(camera.projectionMatrixInverse)
+    const filteredAo = Fn(() => {
+      const centerUv = uv()
+      const centerDepth = sceneDepth.sample(centerUv).r
+      const centerView = getViewPosition(centerUv, centerDepth, projectionInverse)
+      const centerNormal = sceneNormal.sample(centerUv).rgb.normalize()
+      const centerVisibility = aoTexture.sample(centerUv).r
+      const texel = vec2(1).div(aoResolution)
+      const visibilitySum = float(0).toVar()
+      const weightSum = float(0).toVar()
+      const offsets = [
+        [-1, -1], [0, -1], [1, -1],
+        [-1, 0], [1, 0],
+        [-1, 1], [0, 1], [1, 1],
+      ] as const
+
+      for (const [x, y] of offsets) {
+        const sampleUv = centerUv.add(texel.mul(vec2(x, y)))
+        const sampleDepth = sceneDepth.sample(sampleUv).r
+        const sampleView = getViewPosition(sampleUv, sampleDepth, projectionInverse)
+        const sampleNormal = sceneNormal.sample(sampleUv).rgb.normalize()
+        const depthWeight = exp(abs(sampleView.z.sub(centerView.z)).div(-0.5))
+        const normalWeight = pow(max(dot(centerNormal, sampleNormal), 0), 12)
+        const spatialWeight = x !== 0 && y !== 0 ? 0.70710678 : 1
+        const weight = depthWeight.mul(normalWeight).mul(spatialWeight)
+        visibilitySum.addAssign(aoTexture.sample(sampleUv).r.mul(weight))
+        weightSum.addAssign(weight)
+      }
+
+      const result = centerVisibility.toVar()
+      If(centerDepth.lessThan(0.999999), () => {
+        If(weightSum.greaterThan(0.01), () => {
+          result.assign(visibilitySum.div(weightSum))
+        })
+      })
+      return result
+    })()
+
+    // AO is a contact effect. Fade the reconstructed visibility when its world
+    // radius is sub-pixel, then honor the per-material receiver mask. The ocean
+    // is reflective/transmissive optics, not indirect diffuse, and explicitly
+    // writes zero; applying screen-space cavity shading to it caused the gray
+    // fabric field in grazing views.
     const viewZNode = scenePass.getViewZNode()
     const aoDistance = viewZNode.negate()
-    const aoAmount = mix(aoTexture.r, float(1), smoothstep(60.0, 160.0, aoDistance))
+    const distanceFilteredAo = mix(filteredAo, float(1), smoothstep(60.0, 160.0, aoDistance))
+    const aoReceiver = sceneNormal.a.clamp(0, 1)
+    const aoAmount = mix(float(1), distanceFilteredAo, aoReceiver)
     const occluded = sceneColor.mul(aoAmount)
     const withMedium = this.hdrTransform(occluded, { viewZNode }) as typeof occluded
     const withLens = this.lensTransform(withMedium, { sceneColorNode: sceneColor }) as typeof occluded
@@ -103,6 +165,15 @@ export class RenderPipelineSystem implements GameSystem {
     switch (flags.pass) {
       case 'ao':
         outputNode = vec4(vec3(aoTexture.r), 1.0)
+        break
+      case 'ao-filtered':
+        outputNode = vec4(vec3(filteredAo), 1.0)
+        break
+      case 'ao-applied':
+        outputNode = vec4(vec3(aoAmount), 1.0)
+        break
+      case 'ao-mask':
+        outputNode = vec4(vec3(aoReceiver), 1.0)
         break
       case 'bloom':
         outputNode = renderOutput(bloomNode, AgXToneMapping, SRGBColorSpace)

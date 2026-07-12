@@ -2,6 +2,8 @@
  * The ticket screen — entry overlay, loading progress, and the WebGPU-required
  * notice. The only full-screen UI in the game.
  */
+export const TICKET_REVEAL_SECONDS = 1.6
+
 export interface TicketScreen {
   setProgress(label: string, fraction: number): void
   /** Swap progress for the enter button; resolves when the guest clicks. */
@@ -26,6 +28,7 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     </div>
   `
   parent.appendChild(root)
+  root.style.setProperty('--ticket-reveal-duration', `${TICKET_REVEAL_SECONDS}s`)
 
   const status = root.querySelector<HTMLElement>('.ticket-status')!
   const label = root.querySelector<HTMLElement>('.ticket-progress-label')!

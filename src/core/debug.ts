@@ -2,7 +2,7 @@
  * Debug harness (plan §3/§15). URL flags:
  *   ?debug          — tweakpane + stats overlay (dev tooling, dynamic import)
  *   ?view=<name>    — jump camera to a registered bookmark (postcard cameras)
- *   ?pass=<name>    — isolate a render pass (ao, bloom, caustics, rays, depth, normal, no-post)
+ *   ?pass=<name>    — isolate a render pass (ao, ao-filtered/applied/mask, bloom, caustics, rays, depth, normal, no-post)
  *   ?tier=<0|1|2>   — force a quality tier
  *   ?seed=<n>       — override the world seed
  *   ?time=<seconds>  — freeze authored time for deterministic captures

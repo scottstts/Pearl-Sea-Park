@@ -841,3 +841,35 @@
     recenter threshold, invalid = ∞). Verified by offline simulation of
     the recenter math (worst excursion 0.34 of the sampled box at 28 m/s,
     all levels bounded render rates).
+- 2026-07-12 ocean barcode, entry sync, and roaming hitch pass:
+  - The persistent above-water "barcode" had a second cause beyond mip-less
+    FFT minification: `createSkirtGeometry` filtered triangles out of a 48×48,
+    6400 m plane. The requested ±348 m hole therefore had diagonal boundary
+    triangles reaching ±266.7 m — 81.3 m inside the intended hole and ~83 m
+    beneath the inner surface. Inner waves were still live there and troughs
+    crossed the skirt at y=−0.14, producing animated contour bands. The skirt
+    is now four explicit rectangles with an exact ±348 m hole and only a 2 m
+    overlap, entirely inside the inner mesh's already-flat border. Geometry
+    audit enforces the seam; no FFT/detail/tessellation quality was reduced.
+  - Static clipmap caching did not cache CPU scene traversal/command encoding:
+    each camera recenter synchronously called `updateShadow` on the full live
+    scene, increasingly expensive after the facility pass. Immutable casters
+    are now flattened at exact world matrices into a shadow-only WebGPU render
+    bundle after world init; first/loading render records each clipmap target,
+    and gameplay refreshes execute those commands. All static casters and map
+    resolutions remain; dynamic casters retain their live map. Existing perf
+    telemetry now records static refresh CPU timing for evidence.
+  - Entry sound now shares the ticket's 1.6 s reveal envelope instead of
+    jumping to full gain under an opaque overlay. All large procedural PCM
+    beds (ambience, whale breath, five ride hums) generate during loading and
+    become reusable AudioBuffers at entry, removing later event-time CPU loops.
+  - The finer gray "fabric" left after the geometry barcode disappeared was
+    not another FFT defect. Three r185 GTAO uses a repeating 5×5 magic-square
+    noise field and produces raw half-resolution visibility with no built-in
+    denoise; the pipeline bilinearly enlarged and multiplied it into the whole
+    HDR scene, so the weave crossed ocean, metal, and deck shading in screen
+    space. GTAO now receives an eight-neighbour full-resolution bilateral
+    reconstruction (view-depth + normal weights). Normal-MRT alpha is an AO
+    receiver channel, with ocean explicitly 0 and ordinary opaque surfaces 1,
+    so no extra 4× MSAA target or graphics downgrade was introduced. Preserve
+    `?pass=ao`, `ao-filtered`, `ao-applied`, and `ao-mask` as the proof chain.

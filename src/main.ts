@@ -35,7 +35,7 @@ import { SeaSystem } from './sea/seaSystem'
 import { SkySystem } from './sky/skySystem'
 import { BubbleFountainSystem } from './shows/bubbleFountain'
 import { ScheduleBoardSystem } from './shows/scheduleBoard'
-import { createTicketScreen } from './ui/ticketScreen'
+import { createTicketScreen, TICKET_REVEAL_SECONDS } from './ui/ticketScreen'
 import { PauseCardSystem } from './ui/pauseCard'
 import { ArrivalSystem } from './world/arrival'
 import { DevOrbitSystem } from './world/devOrbit'
@@ -118,12 +118,13 @@ async function boot(): Promise<void> {
 
   const registry = new SystemRegistry()
   const pipeline = new RenderPipelineSystem()
+  let sky: SkySystem | null = null
   if (flags.debug) registry.add(new DebugOverlaySystem())
   if (flags.view === 'gallery') {
     registry.add(new TestGallerySystem())
     registry.add(new DevOrbitSystem())
   } else {
-    registry.add(new SkySystem())
+    sky = registry.add(new SkySystem())
     const sea = registry.add(new SeaSystem())
     const medium = registry.add(new SeaMediumSystem(pipeline, sea))
     registry.add(new LensDripSystem(pipeline, sea))
@@ -171,6 +172,10 @@ async function boot(): Promise<void> {
   await registry.init(ctx, (label, index, total) =>
     ticket.setProgress(label, 0.1 + 0.9 * (index / Math.max(1, total))),
   )
+  // The fixed sun and immutable world can record their shadow commands while
+  // the loading ticket still owns the screen. Later clipmap recenters execute
+  // that bundle instead of traversing the full live scene on the game frame.
+  sky?.sealStaticShadowCasters(scene)
   const postcardAudit = auditPostcardBookmarks()
   canvas.dataset.postcardAudit = JSON.stringify(postcardAudit)
   if (!postcardAudit.complete) {
@@ -215,6 +220,7 @@ async function boot(): Promise<void> {
         tier: ctx.quality.tier,
         renderScale: ctx.quality.renderScale,
         dynamicResolution: ctx.quality.debugSnapshot(),
+        staticShadows: sky?.shadowPerformanceSnapshot() ?? null,
         drawCalls: info.render.drawCalls,
         triangles: info.render.triangles,
         points: info.render.points,
@@ -230,8 +236,9 @@ async function boot(): Promise<void> {
   const validationMode = flags.view !== null || flags.pass !== 'final' || flags.fixedTime !== null
   if (!validationMode) await ticket.showEnter()
   ticket.hide()
+  sky?.resetShadowPerformance()
   ctx.time.paused = false
-  ctx.events.emit('park/entered', {})
+  ctx.events.emit('park/entered', { revealSeconds: TICKET_REVEAL_SECONDS })
 }
 
 void boot()

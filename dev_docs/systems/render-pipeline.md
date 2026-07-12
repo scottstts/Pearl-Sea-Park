@@ -1,7 +1,28 @@
 # Render pipeline (S1)
 
 Signal order (one owner of the final image, `render/pipeline.ts`):
-scene pass (MSAA 4×, MRT color+view-normal, depth) → GTAO at 0.5 res (RedFormat — multiply by `.r`, never the vec4) → `hdrTransform` hook (S3 medium splices aquatic fog/god rays here) → `lensTransform` hook (`render/lensDrips.ts`: the `refs/water_off_lens.html` Heartfelt/Rain drop field after surfacing — static beads + two running-drop layers and finite-difference refraction normals; one offset scene sample is mixed only through drop/trail coverage, with no lens-wide blur or color filter; intensity drains for five seconds and a coherent branch makes it free when dry or submerged) → bloom (HDR, pre-tonemap; threshold 1.0 so only true emitters bloom) → measured exposure EV → `renderOutput` (AgX + sRGB, placed manually; `outputColorTransform = false`) → 32³ dream LUT → spatial vignette.
+scene pass (MSAA 4×, MRT color+view-normal/AO-receiver, depth) → GTAO at
+0.5 res → full-resolution eight-neighbour depth/normal-aware reconstruction →
+distance/material receiver application → `hdrTransform` hook (S3 medium splices
+aquatic fog/god rays here) → `lensTransform` hook (`render/lensDrips.ts`: the
+`refs/water_off_lens.html` Heartfelt/Rain drop field after surfacing — static
+beads + two running-drop layers and finite-difference refraction normals; one
+offset scene sample is mixed only through drop/trail coverage, with no
+lens-wide blur or color filter; intensity drains for five seconds and a
+coherent branch makes it free when dry or submerged) → bloom (HDR,
+pre-tonemap; threshold 1.0 so only true emitters bloom) → measured exposure EV
+→ `renderOutput` (AgX + sRGB, placed manually; `outputColorTransform = false`)
+→ 32³ dream LUT → spatial vignette.
+
+Three r185's GTAO output is a raw RedFormat target driven by a repeating 5×5
+magic-square noise texture; it has no automatic denoise. Sampling that target
+directly at half resolution produced a gray fabric/weave across the ocean and
+sunlit architecture. The reconstruction samples the eight surrounding AO
+texels at full-resolution UVs, weights by view-depth difference and normal
+similarity, and falls back to the center when a discontinuity rejects the
+ring. The normal MRT's spare alpha is the AO-receiver mask (opaque default 1,
+ocean 0), avoiding another 4× MSAA attachment. `?pass=ao` shows raw gather;
+`ao-filtered`, `ao-applied`, and `ao-mask` isolate each subsequent decision.
 
 The lens field is authored in the reference fullscreen mesh's Y-up UV space.
 WebGPU `screenUV` is Y-down, so flip Y before evaluating `DropLayer2` and
@@ -23,7 +44,7 @@ Choices beyond the code:
   loop.
 - **Emissive hierarchy contract:** bloom threshold is 1.0 — materials must express glow through genuinely HDR emissive values (sun sparkle strongest, lamps mid, bioluminescence subtle), never by lowering the threshold.
 - **Type boundary:** @types/three TSL generics (`Node<"vec4">` etc.) churn per release — cross-module node handoffs type as `object` and cast once at the boundary (`asColor` in grade.ts). Do not thread precise TSL generic types through system APIs.
-- `?pass=` views: `ao · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`, plus the fountain field modes. `?view`/`?pass` skip the enter button (validation mode).
+- `?pass=` views: `ao · ao-filtered · ao-applied · ao-mask · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`, plus the fountain field modes. `?view`/`?pass` skip the enter button (validation mode).
 - Dynamic resolution = `setPixelRatio(base × quality.renderScale)`; all pass targets follow the drawing-buffer size automatically. The base is capped by DPR 1.7 **and** a 4,000,000-pixel drawing-buffer budget (`recommendedPixelRatio`), recomputed on resize before dynamic scale is applied.
 - Dynamic resolution is driven by the actual animation-frame interval, not CPU
   command-submission time. It is an emergency pressure valve bounded to
@@ -39,3 +60,13 @@ Choices beyond the code:
 - The scene MRT remains 4× MSAA. The default canvas is deliberately not
   multisampled because its only geometry is the final fullscreen presentation
   pass; enabling both would pay for a redundant second resolve.
+- Fixed-sun static shadow clipmaps keep their authored sizes, cascades, casters,
+  and filtering, but no longer traverse/encode the full live scene when the
+  camera crosses a recenter threshold. After all systems initialize,
+  `staticShadowScene.ts` flattens immutable static casters at their exact world
+  transforms into a shadow-only WebGPU `BundleGroup`; frustum culling is off on
+  these proxies because the bundle draw list is immutable and the live shadow
+  camera supplies clipping. Initial paused/loading render records one bundle
+  per clipmap target. Moving rides, wildlife, and props remain excluded and
+  render through the existing live dynamic-caster map. The performance dataset
+  reports static caster count, refresh count, and last/max CPU refresh time.

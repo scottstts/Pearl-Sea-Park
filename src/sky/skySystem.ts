@@ -5,6 +5,7 @@ import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { CachedShadowClipmapNode } from '../render/cachedShadowClipmaps'
 import { DYNAMIC_SHADOW_LAYER } from '../render/layers'
+import { createStaticShadowScene } from '../render/staticShadowScene'
 import { skyRadiance } from './skyRadiance'
 import { SUN_LIGHT_INTENSITY, sunColor, sunDirection } from './sun'
 
@@ -81,6 +82,21 @@ export class SkySystem implements GameSystem {
     if (this.debugCanvas && ctx.time.frame % 60 === 0) {
       this.debugCanvas.dataset.shadowClipmaps = JSON.stringify(this.clipmaps?.debugSnapshot())
     }
+  }
+
+  /** Called after every world system has initialized, before the first render. */
+  sealStaticShadowCasters(scene: Scene): void {
+    if (!this.clipmaps) return
+    const staticShadows = createStaticShadowScene(scene)
+    this.clipmaps.setStaticCasterScene(staticShadows.scene, staticShadows.casterCount)
+  }
+
+  shadowPerformanceSnapshot(): ReturnType<CachedShadowClipmapNode['staticPerformanceSnapshot']> | null {
+    return this.clipmaps?.staticPerformanceSnapshot() ?? null
+  }
+
+  resetShadowPerformance(): void {
+    this.clipmaps?.resetStaticPerformance()
   }
 
   dispose(ctx: GameContext): void {

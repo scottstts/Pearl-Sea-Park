@@ -13,7 +13,7 @@ export type GameEvents = {
   /** Player crossed the waterline (rides can breach the surface). */
   'sea/waterline-crossed': { submerged: boolean }
   /** The guest clicked "enter" on the ticket screen. */
-  'park/entered': Record<string, never>
+  'park/entered': { revealSeconds: number }
   /** The golden ticket got a stamp (ride gates, the atrium machine). */
   'ticket/punched': { ride: string }
   /** All six ride-gate stamps are present on the cardstock ticket. */

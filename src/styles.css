@@ -48,7 +48,7 @@ canvas#scene {
   backdrop-filter: blur(13px) saturate(0.72);
   color: var(--foam);
   z-index: 100;
-  transition: opacity 1.6s ease;
+  transition: opacity var(--ticket-reveal-duration, 1.6s) ease;
   user-select: none;
 }
 

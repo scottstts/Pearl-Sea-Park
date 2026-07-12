@@ -1,45 +1,16 @@
-import { BufferAttribute, BufferGeometry, Mesh, PlaneGeometry } from 'three'
+import { Mesh, PlaneGeometry } from 'three'
 import { uniform, viewportTexture } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { runFftSelfTest } from './fftCompute'
 import { createOceanSurfaceMaterial } from './oceanSurfaceMaterial'
+import { createOceanSkirtGeometry, OCEAN_INNER_HALF_SIZE } from './oceanSkirtGeometry'
 import { WaterlineProbe } from './waterlineProbe'
 import { WaveSim } from './waveSim'
 
-const INNER_SIZE = 700
-// The skirt must END inside the sky dome (r 3400) — a wider skirt knifes
-// through the dome's triangulation at the horizon as a sawtooth seam.
-const OUTER_SIZE = 6400
-// The inner mesh fades its fine cascades to zero at its edge, so at the seam
-// both surfaces carry identical cascade-0 displacement; the skirt abuts and
-// sits a hair lower to cover the crack.
-const OUTER_HOLE_HALF = 348
+const INNER_SIZE = OCEAN_INNER_HALF_SIZE * 2
 const OUTER_SINK = 0.14
-
-/** Plane with the inner square removed — the far skirt ring. */
-function createSkirtGeometry(): BufferGeometry {
-  const plane = new PlaneGeometry(OUTER_SIZE, OUTER_SIZE, 48, 48)
-  plane.rotateX(-Math.PI / 2)
-  const position = plane.getAttribute('position')
-  const index = plane.getIndex()!
-  const kept: number[] = []
-  for (let i = 0; i < index.count; i += 3) {
-    let inside = true
-    for (let v = 0; v < 3; v++) {
-      const vi = index.getX(i + v)
-      const x = position.getX(vi)
-      const z = position.getZ(vi)
-      if (Math.max(Math.abs(x), Math.abs(z)) > OUTER_HOLE_HALF) inside = false
-    }
-    if (!inside) {
-      kept.push(index.getX(i), index.getX(i + 1), index.getX(i + 2))
-    }
-  }
-  plane.setIndex(new BufferAttribute(new Uint32Array(kept), 1))
-  return plane
-}
 
 /**
  * The sea: spectral wave sim + inner high-density surface + far skirt ring,
@@ -92,7 +63,7 @@ export class SeaSystem implements GameSystem {
     this.inner = inner
 
     const outer = new Mesh(
-      createSkirtGeometry(),
+      createOceanSkirtGeometry(),
       createOceanSurfaceMaterial(sim, timeNode, {
         detailed: false,
         sceneBackdrop,

@@ -34,9 +34,21 @@ Architecture (spectral-ocean skill, WebGPU/TSL production tier):
 Hard-won lessons (do not re-learn these):
 
 - **GTAO dithers on distant grazing geometry (ocean!).** AO is contact-scale: the pipeline fades AO to neutral beyond 60–160 m (`pipeline.ts`). Any "mysterious dither band" seen on far surfaces — check `?pass=ao` FIRST, before touching materials. This cost hours.
+- **Ocean never receives screen-space AO.** The water material is reflective/
+  transmissive optics rather than indirect diffuse and writes 0 into the
+  normal MRT's AO-receiver alpha. This is separate from GTAO's bilateral
+  reconstruction for opaque architecture; do not restore cavity multiplication
+  on water to fake contact. Interface depth, Fresnel, foam, reflection, and
+  refraction already own its readable structure.
 - **Material-blit readbacks lie**: renderer tone mapping (AgX) clamps negatives to 0 in any quad-blit path. GPU→CPU verification must use storage-buffer readback.
 - **Spectral LOD is by PIXEL FOOTPRINT, not distance** (2026-07-10): the cascade maps have no mips, and at grazing incidence the vertical footprint on the surface is distance²·pixelAngle/heightGap — a 4.4 m deck eye is under-sampled at 200 m (comb/moiré band at the horizon) while a diver sees the same span steeply and keeps detail. Fragment derivative keeps, the normal flatten, glints, foam, AND all three vertex displacement keeps fade on the footprint vs each band's shortest wavelength (~41 / 2.8 / 0.83 m; the vertex stage computes it against the y = 0 base plane, so the gap is just camera height). Cascade-0 geometry must fade too: flat normals alone leave vHeight-driven body-color stripes and silhouette teeth as a residual comb. Distance-only fades can never serve deck and diver simultaneously — don't regress this. MSAA cannot fix shader aliasing on sub-pixel waves.
-- The far skirt is a FLAT ring (vertex-sampling waves at 187 m spacing is pure aliasing); the inner 700 m mesh fades ALL displacement to zero at its edge so the surfaces meet exactly. Inner follows the camera quantized to its own grid step.
+- The far skirt is a FLAT exact square ring (`oceanSkirtGeometry.ts`); the inner
+  700 m mesh fades ALL displacement to zero before its edge and overlaps the
+  skirt by only 2 m, where it is already flat. Do not rebuild the hole by
+  deleting triangles from a coarse plane: the old 133.3 m grid left boundary
+  triangles 81.3 m inside the requested hole, so live inner-wave troughs
+  crossed the skirt and produced animated barcode/contour bands. The inner and
+  skirt follow the camera together on the inner vertex grid.
 - **The TIR underside (`tirBody`) must be BRIGHT silvery teal** (≈ the medium's horizontal ambient, currently (0.035, 0.14, 0.19)), because a total-internal-reflection mirror reflects the upwelling water light. The original `DEEP·0.55` near-black ceiling carved a bright "gap" band at the surface silhouette against converged fog — the fogged underside must start from a radiance close to what the fog converges to. Keep this and medium.ts AMBIENT_* in the same family if either is retuned.
 - **Snell's window includes real above-water geometry, anchored at the interface.** The ocean renders first in the transparent queue (while remaining alpha-opaque and depth-writing). A first depth sample estimates subject distance, then the physically refracted ray is reprojected from the actual displaced surface hit point for the final color/depth sample. Omitting that surface origin makes structures drift away from their water-entry points with camera distance. Reconstructed depth admits only geometry on the transmitted side and nearer than the 3400 m sky dome; an alignment tolerance rejects detached foreground samples. Invalid/offscreen samples and the dome fall back to the shared analytic sky + filtered window glint. Exact water→air dielectric Fresnel fades transmission to zero at the critical angle. The optical side is one camera-level uniform derived from the same displaced waterline as the underwater medium; never use per-fragment `faceDirection`, because nearby wave triangles can expose opposite faces just before a crossing and mix the underwater/Snell regime into an above-water frame. The framebuffer depth/color reprojection is coherently skipped while above water.
 - `texture(...).sample(uv)` re-samples a texture node at a custom UV; `textureNode.value = tex` repoints after ping-pong swaps. `.sample()` inside a compute shader compiles to `textureSampleLevel(…, 0)` automatically — the waterline probe relies on this.

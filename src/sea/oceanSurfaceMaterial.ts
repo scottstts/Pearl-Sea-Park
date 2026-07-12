@@ -15,7 +15,9 @@ import {
   max,
   mix,
   modelWorldMatrix,
+  mrt,
   normalize,
+  normalView,
   positionLocal,
   pow,
   reflect,
@@ -83,6 +85,11 @@ export function createOceanSurfaceMaterial(
   // passes. This is a single geometric sheet, and a second pass would copy
   // the first pass's water result into its own refraction backdrop.
   material.forceSinglePass = true
+  // Screen-space AO estimates missing *diffuse* ambient light. This material
+  // owns reflective/transmissive water optics, so cavity-multiplying its final
+  // color is physically wrong and exposes GTAO's sampling lattice at grazing
+  // incidence. Override the normal MRT's spare alpha receiver channel only.
+  material.mrtNode = mrt({ normal: vec4(normalView, 0) })
 
   const patch = sim.patchLengths
   const cascadeCount = options.detailed ? 3 : 1

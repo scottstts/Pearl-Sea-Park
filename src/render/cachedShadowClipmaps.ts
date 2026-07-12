@@ -6,7 +6,7 @@ import {
   Vector3,
   Vector4,
 } from 'three'
-import type { DirectionalLight, DirectionalLightShadow } from 'three'
+import type { DirectionalLight, DirectionalLightShadow, Scene } from 'three'
 import { NodeUpdateType, ShadowBaseNode, ShadowNode } from 'three/webgpu'
 import type { Node, NodeBuilder, NodeFrame } from 'three/webgpu'
 import {
@@ -112,12 +112,16 @@ export interface ShadowClipmapOptions {
 
 export interface ShadowClipmapSnapshot {
   textureCount: number
+  staticCasterBundle: null | { casterCount: number }
   dynamicLevels: number
   dynamicRefreshFrames: number
   updateBudget: number
   budgetBefore: number
   budgetAfter: number
   directionDelta: number
+  staticRefreshes: number
+  lastStaticRefreshCpuMs: number
+  maxStaticRefreshCpuMs: number
   dynamicCaster: null | {
     layer: number
     halfWidth: number
@@ -210,6 +214,11 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   private budgetBefore = 0
   private budgetAfter = 0
   private directionDelta = 0
+  private staticCasterScene: Scene | null = null
+  private staticCasterCount = 0
+  private staticRefreshes = 0
+  private lastStaticRefreshCpuMs = 0
+  private maxStaticRefreshCpuMs = 0
 
   constructor(light: DirectionalLight, options: ShadowClipmapOptions) {
     super(light)
@@ -251,6 +260,32 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   attach(): this {
     ;(this.light.shadow as DirectionalLightShadow & { shadowNode?: Node }).shadowNode = this
     return this
+  }
+
+  /** Use a sealed, render-bundled proxy scene for immutable clipmap levels. */
+  setStaticCasterScene(scene: Scene, casterCount: number): void {
+    this.staticCasterScene = scene
+    this.staticCasterCount = casterCount
+  }
+
+  staticPerformanceSnapshot(): {
+    casterCount: number
+    refreshes: number
+    lastCpuMs: number
+    maxCpuMs: number
+  } {
+    return {
+      casterCount: this.staticCasterCount,
+      refreshes: this.staticRefreshes,
+      lastCpuMs: this.lastStaticRefreshCpuMs,
+      maxCpuMs: this.maxStaticRefreshCpuMs,
+    }
+  }
+
+  resetStaticPerformance(): void {
+    this.staticRefreshes = 0
+    this.lastStaticRefreshCpuMs = 0
+    this.maxStaticRefreshCpuMs = 0
   }
 
   detach(): this {
@@ -469,7 +504,21 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     shadow.needsUpdate = true
     const shadowNode = this.shadowNodes[index] as unknown as InternalShadowNode
     if (shadowNode.shadowMap) {
-      shadowNode.updateShadow(frame)
+      const started = performance.now()
+      if (this.staticCasterScene) {
+        const staticFrame = Object.assign(Object.create(frame), {
+          scene: this.staticCasterScene,
+        }) as NodeFrame
+        shadowNode.updateShadow(staticFrame)
+      } else {
+        shadowNode.updateShadow(frame)
+      }
+      this.lastStaticRefreshCpuMs = performance.now() - started
+      this.maxStaticRefreshCpuMs = Math.max(
+        this.maxStaticRefreshCpuMs,
+        this.lastStaticRefreshCpuMs,
+      )
+      this.staticRefreshes++
       shadow.needsUpdate = false
     }
   }
@@ -495,12 +544,18 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   debugSnapshot(): ShadowClipmapSnapshot {
     return {
       textureCount: this.levels + (this.dynamicShadowNode ? 1 : 0),
+      staticCasterBundle: this.staticCasterScene
+        ? { casterCount: this.staticCasterCount }
+        : null,
       dynamicLevels: this.dynamicLevels,
       dynamicRefreshFrames: this.dynamicRefreshFrames,
       updateBudget: this.updateBudget,
       budgetBefore: this.budgetBefore,
       budgetAfter: this.budgetAfter,
       directionDelta: this.directionDelta,
+      staticRefreshes: this.staticRefreshes,
+      lastStaticRefreshCpuMs: this.lastStaticRefreshCpuMs,
+      maxStaticRefreshCpuMs: this.maxStaticRefreshCpuMs,
       dynamicCaster: this.dynamicCasterLayer === null
         ? null
         : {
@@ -542,6 +597,9 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     this.dynamicLight?.shadow.dispose()
     this.dynamicLight?.parent?.remove(this.dynamicLight)
     this.dynamicLight?.target.parent?.remove(this.dynamicLight.target)
+    this.staticCasterScene?.clear()
+    this.staticCasterScene = null
+    this.staticCasterCount = 0
     super.dispose()
   }
 

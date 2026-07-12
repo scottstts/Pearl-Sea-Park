@@ -112,6 +112,13 @@
   ends in a low-pass swept 1900 Hz ↔ 16 kHz on `sea/waterline-crossed` — the
   audible half of the waterline crossing. AudioContext starts on
   `park/entered` (the enter click satisfies the gesture requirement).
+- Entry is one 1.6 s image/sound crossfade: `TICKET_REVEAL_SECONDS` writes the
+  ticket CSS transition variable and travels on `park/entered`; the Web Audio
+  master ramps from silence over that exact interval. Procedural PCM for the
+  ambience, whale breath, and all five machinery hums is generated during
+  loading and copied into reusable AudioBuffers at entry, so neither the click
+  nor a later schedule/ride event runs a sample-generation loop on the game
+  frame.
 - S13 updates the Web Audio listener from the camera pose every frame. The
   Kraken Bell is the first true HRTF world source (inverse distance, 90 m
   cutoff); its low body and high strike partials originate at the physical
