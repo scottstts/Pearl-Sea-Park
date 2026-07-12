@@ -19,6 +19,7 @@ import { TeleportSystem } from './player/teleport'
 import { LensDripSystem } from './render/lensDrips'
 import { RenderPipelineSystem } from './render/pipeline'
 import { createRenderer, webgpuAvailable } from './render/renderer'
+import { warmupRenderer } from './render/warmup'
 import { enableMainDetailLayer } from './render/layers'
 import { FramePerformanceMonitor } from './render/performanceMonitor'
 import { CarouselSystem } from './rides/carousel'
@@ -170,7 +171,7 @@ async function boot(): Promise<void> {
   registry.add(pipeline)
 
   await registry.init(ctx, (label, index, total) =>
-    ticket.setProgress(label, 0.1 + 0.9 * (index / Math.max(1, total))),
+    ticket.setProgress(label, 0.1 + 0.62 * (index / Math.max(1, total))),
   )
   // The fixed sun and immutable world can record their shadow commands while
   // the loading ticket still owns the screen. Later clipmap recenters execute
@@ -198,6 +199,24 @@ async function boot(): Promise<void> {
       qualitySelection,
       postcardAudit,
     }
+  }
+
+  // Validation shortcuts (?view / ?pass / ?fixedTime) skip the enter gate.
+  const validationMode = flags.view !== null || flags.pass !== 'final' || flags.fixedTime !== null
+
+  // Every shader the park can ever ask for is built, driver-compiled, and
+  // used once behind the ticket screen. The Enter button appears only after
+  // this completes: entry is instant and roaming never hits a first-sight
+  // pipeline compile again. Validation runs keep their fast reload instead.
+  if (!validationMode) {
+    await warmupRenderer(
+      ctx,
+      registry,
+      pipeline,
+      (fraction) => ticket.setProgress('prewarm', 0.72 + 0.27 * fraction),
+      { invalidateShadows: () => sky?.invalidateShadowLevels() },
+    )
+    ticket.setProgress('ready', 1)
   }
 
   const loop = new GameLoop(ctx, registry)
@@ -232,8 +251,6 @@ async function boot(): Promise<void> {
   }
   loop.start()
 
-  // Validation shortcuts (?view / ?pass) skip the enter gate entirely.
-  const validationMode = flags.view !== null || flags.pass !== 'final' || flags.fixedTime !== null
   if (!validationMode) await ticket.showEnter()
   ticket.hide()
   sky?.resetShadowPerformance()

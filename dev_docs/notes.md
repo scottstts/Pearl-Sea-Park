@@ -873,3 +873,42 @@
     receiver channel, with ocean explicitly 0 and ordinary opaque surfaces 1,
     so no extra 4× MSAA target or graphics downgrade was introduced. Preserve
     `?pass=ao`, `ao-filtered`, `ao-applied`, and `ao-mask` as the proof chain.
+- 2026-07-12 freeze/blink/entry pass (measured in-browser, not guessed —
+  instrument first, the first two theories were both wrong):
+  - **The roaming freeze was never JS-visible.** GPUDevice-prototype probes
+    showed `createRenderPipeline` returns in ~0 ms and no long tasks fire;
+    Chrome compiles the native shader lazily on each pipeline's FIRST
+    submitted use, stalling the GPU process (CPU spike, GPU idle, rAF
+    back-pressured — exactly the reported symptom). Building WGSL for the
+    whole park is a separate ~3.1 s main-thread block if paid in one frame.
+    Fix: `render/warmup.ts` runs behind the ticket — chunked `compileAsync`
+    (one representative mesh per material × geometry-layout signature,
+    against the scene pass's exact target+MRT context or the pipeline cache
+    misses) + six real zero-dt frames with culling lifted, hidden subtrees
+    revealed, clipmap levels force-invalidated, and the exposure-meter pause
+    gate lifted. Enter appears only after this completes; verified: full
+    park roam + revealing every hidden subtree creates ZERO new pipelines.
+  - **The moving-shadow blink was the bundle refresh poisoning NodeFrame.**
+    NodeFrame is a singleton and every nested render reassigns its `.scene`;
+    after a static level rendered the bundle proxy scene, the same frame's
+    dynamic-caster pass read `frame.scene` = proxy scene (no layer-2
+    objects) and rendered an EMPTY moving-caster map — so moving objects'
+    shadows (and dynamic-on-dynamic shading) vanished for exactly the frames
+    where a level recentered, i.e. only while walking. Clipmaps now pin the
+    live scene at updateBefore entry and wrap the dynamic pass's frame.
+    Verified: invalidate-every-frame worst case keeps 595/595 dynamic draws.
+  - The AO reconstruction's raw-center fallback + fixed 0.5 m depth sigma
+    passed screen-locked noise through at thin members and grazing floors
+    (visible dither; strobing under motion). Reconstruction now blends to
+    the plain nine-tap mean where bilateral support is weak, scales depth
+    tolerance with |viewZ| (4 %, 8 cm floor), and epsilon-guards normal
+    normalization (MSAA-resolved normals can cancel to zero → NaN in WGSL).
+  - Agent-harness gotchas that cost hours: manual `pipeline.render()` calls
+    do NOT advance `nodeFrame.frameId` (only the renderer's animation loop
+    does), so FRAME-scoped nodes (clipmaps, GTAO, PassNode) silently freeze —
+    tick `renderer._nodes.nodeFrame.update()` between manual frames. A
+    hidden preview tab has a 0×0 drawing buffer (renders no-op; warmup
+    clamps to 64×36) and throttles `setTimeout` to 1 s. `drawImage(webgpu
+    canvas)` works even hidden for per-frame pixel probes. Walking-speed
+    single-frame pop detectors are parallax-dominated at 192×108 — only
+    still-camera or sub-pixel-crawl runs isolate real temporal artifacts.

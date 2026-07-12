@@ -18,9 +18,24 @@ Three r185's GTAO output is a raw RedFormat target driven by a repeating 5×5
 magic-square noise texture; it has no automatic denoise. Sampling that target
 directly at half resolution produced a gray fabric/weave across the ocean and
 sunlit architecture. The reconstruction samples the eight surrounding AO
-texels at full-resolution UVs, weights by view-depth difference and normal
-similarity, and falls back to the center when a discontinuity rejects the
-ring. The normal MRT's spare alpha is the AO-receiver mask (opaque default 1,
+texels at full-resolution UVs and weights by view-depth difference and normal
+similarity — with two hard robustness rules learned from the blink pass:
+
+- **The output is never a raw single sample.** The noise field is
+  screen-locked, so any pixel that falls back to its unfiltered center sample
+  strobes against sliding geometry at walking speed. Where bilateral support
+  is weak the result blends toward the plain nine-tap mean instead
+  (`smoothstep` on the summed neighbour weight), trading a slightly soft AO
+  on unsupported slivers for temporal stability.
+- **Depth similarity scales with view distance** (4 % of |viewZ|, floored at
+  8 cm). A fixed metre-scale sigma rejects every neighbour on grazing floors
+  at range, which is precisely where the raw-noise fallback then showed as
+  dither bands; true silhouettes still differ by far more than the relative
+  tolerance, so edges stay sharp. MSAA-resolved normals can cancel to zero
+  length at silhouettes, so all normals go through an epsilon-guarded
+  inverse square root rather than `normalize()` (NaN in WGSL fast math).
+
+The normal MRT's spare alpha is the AO-receiver mask (opaque default 1,
 ocean 0), avoiding another 4× MSAA attachment. `?pass=ao` shows raw gather;
 `ao-filtered`, `ao-applied`, and `ao-mask` isolate each subsequent decision.
 
@@ -70,3 +85,22 @@ Choices beyond the code:
   per clipmap target. Moving rides, wildlife, and props remain excluded and
   render through the existing live dynamic-caster map. The performance dataset
   reports static caster count, refresh count, and last/max CPU refresh time.
+- **NodeFrame is a singleton whose `scene` every nested render reassigns.**
+  The clipmap update pins the live scene before any bundle-scene level render
+  and hands the dynamic-caster pass an explicit frame wrapper. Without the
+  pin, any frame that refreshed a static level rendered the dynamic map from
+  the bundle proxy scene — zero layer-2 objects — so every moving object's
+  shadow (and all dynamic-on-dynamic shadowing) blinked off for exactly the
+  recenter frames while the camera walked.
+- **Loading-time warmup** (`render/warmup.ts`, awaited before the Enter
+  button appears): WGSL node-building is main-thread JS (~3 s for the whole
+  park if paid in one frame) and the browser compiles native shaders lazily
+  on each pipeline's first submitted use (GPU-process stall = the roaming
+  freeze). The warmup batch-`compileAsync`es one representative mesh per
+  material × geometry-layout signature against the scene pass's own render
+  target + MRT (pipeline caches key on that context state), then runs six
+  real zero-dt pipeline frames with culling lifted, hidden subtrees revealed,
+  all clipmap levels force-invalidated, and the exposure meter's pause gate
+  lifted, so every render/compute/shadow pipeline is created *and used* once
+  behind the ticket. Validation modes (`?view`/`?pass`/`?fixedTime`) skip it
+  for fast reloads and accept first-sight stutter instead.

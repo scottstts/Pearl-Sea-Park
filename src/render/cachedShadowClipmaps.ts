@@ -338,6 +338,14 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   override updateBefore(frame: NodeFrame): boolean | undefined {
     if (!this.light.parent) return undefined
     if (!this.initialized) this.initLevels()
+    // NodeFrame is a singleton whose `scene` is reassigned by every nested
+    // render. A static level refresh below renders the bundle proxy scene,
+    // which leaves `frame.scene` pointing at it — and the dynamic caster
+    // pass afterwards would then render that proxy scene (no layer-2
+    // objects) instead of the live world: an empty moving-caster map for
+    // exactly the recenter frame. That was the "moving shadows blink while
+    // walking" defect. Pin the live scene before any level renders.
+    const liveScene = frame.scene
     for (const levelLight of this.lights) {
       if (levelLight.parent) continue
       this.light.parent.add(levelLight.target)
@@ -474,7 +482,8 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
         )
       }
     }
-    this.updateDynamicCasterShadow(frame)
+    const dynamicFrame = Object.assign(Object.create(frame), { scene: liveScene }) as NodeFrame
+    this.updateDynamicCasterShadow(dynamicFrame)
     this.budgetAfter = budget
     return undefined
   }

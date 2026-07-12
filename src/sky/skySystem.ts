@@ -91,6 +91,17 @@ export class SkySystem implements GameSystem {
     this.clipmaps.setStaticCasterScene(staticShadows.scene, staticShadows.casterCount)
   }
 
+  /**
+   * Force every clipmap level to re-render on the next frame. The loading
+   * warmup uses this so the static-bundle shadow pipelines compile behind
+   * the ticket screen: on the very first render the clipmap update runs
+   * before the node graph exists, so the levels' bundle-scene render objects
+   * would otherwise wait for the first walking recenter to compile.
+   */
+  invalidateShadowLevels(): void {
+    this.clipmaps?.invalidate()
+  }
+
   shadowPerformanceSnapshot(): ReturnType<CachedShadowClipmapNode['staticPerformanceSnapshot']> | null {
     return this.clipmaps?.staticPerformanceSnapshot() ?? null
   }

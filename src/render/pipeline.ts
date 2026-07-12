@@ -1,15 +1,15 @@
 import { AgXToneMapping, NoToneMapping, SRGBColorSpace } from 'three'
 import { RenderPipeline } from 'three/webgpu'
-import type { Node } from 'three/webgpu'
+import type { Node, PassNode } from 'three/webgpu'
 import {
   Fn,
   If,
-  abs,
   dot,
   exp,
   exp2,
   float,
   getViewPosition,
+  inverseSqrt,
   max,
   mix,
   mrt,
@@ -55,6 +55,14 @@ export class RenderPipelineSystem implements GameSystem {
   private context: GameContext | null = null
 
   /**
+   * The scene pass (render target + MRT) — exposed so the loading-time warmup
+   * can precompile materials against the exact same render-context state the
+   * live frame uses. Pipelines compiled against any other target/MRT combo
+   * would miss the cache and recompile mid-roam.
+   */
+  scenePass: PassNode | null = null
+
+  /**
    * S3 hook: the medium system replaces this to composite aquatic fog and
    * god rays into the HDR chain. `extras.viewZNode` carries scene depth.
    */
@@ -87,6 +95,7 @@ export class RenderPipelineSystem implements GameSystem {
     // overrides only this named MRT output to 0. Reusing the normal target's
     // otherwise spare alpha avoids another full-resolution multisampled MRT.
     scenePass.setMRT(mrt({ output, normal: vec4(normalView, 1) }))
+    this.scenePass = scenePass
 
     const sceneColor = scenePass.getTextureNode('output')
     const sceneNormal = scenePass.getTextureNode('normal')
@@ -101,40 +110,60 @@ export class RenderPipelineSystem implements GameSystem {
     // pattern and performs no denoise unless the owner adds one. Reconstruct
     // at full resolution with the exact eight-neighbour ring: depth rejects
     // foreground/background bleeding and normal similarity preserves edges.
+    //
+    // The reconstruction must never emit a raw single sample. The noise field
+    // is screen-locked, so wherever the bilateral loses its neighbours (thin
+    // members, grazing floors, silhouettes over background) a raw fallback
+    // strobes against sliding geometry at walking speed — the "blinking
+    // shadows / dark areas flashing bright" defect. Two guards remove every
+    // such collapse without softening supported edges:
+    //   1. Depth similarity tolerance scales with view distance (a grazing
+    //      floor spans metres of view-z across one AO texel at range; true
+    //      silhouettes still differ by far more than 4 % of z).
+    //   2. Where bilateral support is still weak, blend toward the plain
+    //      nine-tap mean rather than the raw centre sample.
+    // MSAA-resolved normals can cancel to zero length at silhouette pixels;
+    // normalising those is NaN in WGSL fast math, so all normals go through
+    // an epsilon-guarded inverse square root.
     const projectionInverse = uniform(camera.projectionMatrixInverse)
     const filteredAo = Fn(() => {
       const centerUv = uv()
       const centerDepth = sceneDepth.sample(centerUv).r
-      const centerView = getViewPosition(centerUv, centerDepth, projectionInverse)
-      const centerNormal = sceneNormal.sample(centerUv).rgb.normalize()
-      const centerVisibility = aoTexture.sample(centerUv).r
-      const texel = vec2(1).div(aoResolution)
-      const visibilitySum = float(0).toVar()
-      const weightSum = float(0).toVar()
-      const offsets = [
-        [-1, -1], [0, -1], [1, -1],
-        [-1, 0], [1, 0],
-        [-1, 1], [0, 1], [1, 1],
-      ] as const
-
-      for (const [x, y] of offsets) {
-        const sampleUv = centerUv.add(texel.mul(vec2(x, y)))
-        const sampleDepth = sceneDepth.sample(sampleUv).r
-        const sampleView = getViewPosition(sampleUv, sampleDepth, projectionInverse)
-        const sampleNormal = sceneNormal.sample(sampleUv).rgb.normalize()
-        const depthWeight = exp(abs(sampleView.z.sub(centerView.z)).div(-0.5))
-        const normalWeight = pow(max(dot(centerNormal, sampleNormal), 0), 12)
-        const spatialWeight = x !== 0 && y !== 0 ? 0.70710678 : 1
-        const weight = depthWeight.mul(normalWeight).mul(spatialWeight)
-        visibilitySum.addAssign(aoTexture.sample(sampleUv).r.mul(weight))
-        weightSum.addAssign(weight)
-      }
-
-      const result = centerVisibility.toVar()
+      const result = float(1).toVar()
       If(centerDepth.lessThan(0.999999), () => {
-        If(weightSum.greaterThan(0.01), () => {
-          result.assign(visibilitySum.div(weightSum))
-        })
+        const centerView = getViewPosition(centerUv, centerDepth, projectionInverse)
+        const centerRaw = sceneNormal.sample(centerUv).rgb
+        const centerNormal = centerRaw.mul(inverseSqrt(max(dot(centerRaw, centerRaw), 1e-8)))
+        const centerVisibility = aoTexture.sample(centerUv).r
+        const texel = vec2(1).div(aoResolution)
+        const depthSigma = max(float(0.08), centerView.z.abs().mul(0.04))
+        const weightedSum = centerVisibility.toVar()
+        const weightSum = float(1).toVar()
+        const boxSum = centerVisibility.toVar()
+        const offsets = [
+          [-1, -1], [0, -1], [1, -1],
+          [-1, 0], [1, 0],
+          [-1, 1], [0, 1], [1, 1],
+        ] as const
+
+        for (const [x, y] of offsets) {
+          const sampleUv = centerUv.add(texel.mul(vec2(x, y)))
+          const sampleDepth = sceneDepth.sample(sampleUv).r
+          const sampleView = getViewPosition(sampleUv, sampleDepth, projectionInverse)
+          const sampleRaw = sceneNormal.sample(sampleUv).rgb
+          const sampleNormal = sampleRaw.mul(inverseSqrt(max(dot(sampleRaw, sampleRaw), 1e-8)))
+          const visibility = aoTexture.sample(sampleUv).r
+          const depthWeight = exp(sampleView.z.sub(centerView.z).abs().div(depthSigma).negate())
+          const normalWeight = pow(max(dot(centerNormal, sampleNormal), 0), 12)
+          const spatialWeight = x !== 0 && y !== 0 ? 0.70710678 : 1
+          const weight = depthWeight.mul(normalWeight).mul(spatialWeight)
+          weightedSum.addAssign(visibility.mul(weight))
+          weightSum.addAssign(weight)
+          boxSum.addAssign(visibility)
+        }
+
+        const support = smoothstep(0.35, 1.6, weightSum.sub(1))
+        result.assign(mix(boxSum.div(9), weightedSum.div(weightSum), support))
       })
       return result
     })()
@@ -264,5 +293,6 @@ export class RenderPipelineSystem implements GameSystem {
     this.pipeline = null
     this.meter = null
     this.context = null
+    this.scenePass = null
   }
 }

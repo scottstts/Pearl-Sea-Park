@@ -65,6 +65,7 @@ export function createTicketScreen(parent: HTMLElement): TicketScreen {
     audio: 'Tuning the music boxes',
     'debug-overlay': 'Hanging the gauges',
     'test-gallery': 'Arranging the gallery',
+    prewarm: 'Charging the great lanterns',
     ready: 'Ready',
   }
 
