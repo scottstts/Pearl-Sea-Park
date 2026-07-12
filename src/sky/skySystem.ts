@@ -106,6 +106,15 @@ export class SkySystem implements GameSystem {
     return this.clipmaps?.staticPerformanceSnapshot() ?? null
   }
 
+  /** Allocation-free counters read every frame by the hitch recorder. */
+  staticRefreshCount(): number {
+    return this.clipmaps?.liveStaticRefreshCount ?? 0
+  }
+
+  dynamicShadowRenderCount(): number {
+    return this.clipmaps?.liveDynamicRenderCount ?? 0
+  }
+
   resetShadowPerformance(): void {
     this.clipmaps?.resetStaticPerformance()
   }

@@ -224,6 +224,13 @@ async function boot(): Promise<void> {
   const performanceMonitor = new FramePerformanceMonitor(renderer)
   loop.onFrameEnd = (timing) => {
     performanceMonitor.sample(timing, ctx.time.frame)
+    performanceMonitor.noteFrame(
+      timing,
+      ctx.time.elapsed,
+      ctx.quality.renderScale,
+      sky?.staticRefreshCount() ?? 0,
+      sky?.dynamicShadowRenderCount() ?? 0,
+    )
     ctx.quality.submitFrame(timing.frameIntervalMs, timing.nowMs)
     if (ctx.time.frame % 60 === 0) {
       const info = renderer.info
@@ -239,6 +246,7 @@ async function boot(): Promise<void> {
         tier: ctx.quality.tier,
         renderScale: ctx.quality.renderScale,
         dynamicResolution: ctx.quality.debugSnapshot(),
+        hitches: performanceMonitor.hitches,
         staticShadows: sky?.shadowPerformanceSnapshot() ?? null,
         drawCalls: info.render.drawCalls,
         triangles: info.render.triangles,

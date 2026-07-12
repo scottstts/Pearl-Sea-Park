@@ -1,6 +1,6 @@
 import {
   BoxGeometry,
-  ConeGeometry,
+  CatmullRomCurve3,
   Curve,
   CylinderGeometry,
   InstancedMesh,
@@ -224,99 +224,343 @@ export class TorrentSystem implements GameSystem {
     // arrival pavilion's piles. Decorative foam quads on top of it read as
     // floating white patches.
 
-    // ── The train: five sculpted brass torpedo cars ──────────────────────
-    // Closed-lathe hull with a bow ring and tail cone, a recessed cockpit
-    // cavity with coaming (the old open-ended cockpit cylinder showed its
-    // culled interior), seat + headrest, side strakes, tail fins around a
-    // water-jet nozzle ring. Local +z = direction of travel.
-    const hullGeometry = new LatheGeometry(
-      [
-        new Vector2(0.02, -1.5),
-        new Vector2(0.24, -1.38),
-        new Vector2(0.44, -1.1),
-        new Vector2(0.56, -0.7),
-        new Vector2(0.62, -0.15),
-        new Vector2(0.6, 0.45),
-        new Vector2(0.52, 0.95),
-        new Vector2(0.36, 1.3),
-        new Vector2(0.14, 1.52),
-        new Vector2(0.02, 1.56),
-      ],
-      20,
-    )
+    // ── The train: five japanned hydro-sleds ──────────────────────────────
+    // A racing sled in deep torrent-teal lacquer over brass running trim:
+    // CatmullRom-smoothed boat-tail hull, riveted panel seams radius-keyed to
+    // the hull, brass deck spine and rub rails, visible axle bogies riding
+    // the rails, a leather cockpit (rolled bolster, bucket squab, headrest
+    // roll) behind a framed glass spray screen, a nacre-tipped wave-cutter
+    // figurehead at the bow, and a verdigris stern cowl with dark nozzle
+    // throat and three swept thickness-bearing fins. The rider's tail car
+    // carries a small lantern. Local +z = direction of travel; every extreme
+    // stays inside the audited envelope (half-width ≤ 0.62, z ∈ [−1.5, 1.62]).
+    const hullControls = [
+      new Vector3(0.03, -1.48, 0),
+      new Vector3(0.30, -1.34, 0),
+      new Vector3(0.46, -1.12, 0),
+      new Vector3(0.55, -0.82, 0),
+      new Vector3(0.60, -0.42, 0),
+      new Vector3(0.62, -0.02, 0),
+      new Vector3(0.60, 0.38, 0),
+      new Vector3(0.55, 0.72, 0),
+      new Vector3(0.46, 1.02, 0),
+      new Vector3(0.34, 1.24, 0),
+      new Vector3(0.20, 1.42, 0),
+      new Vector3(0.08, 1.54, 0),
+      new Vector3(0.02, 1.58, 0),
+    ]
+    const hullCurve = new CatmullRomCurve3(hullControls)
+    const hullProfile = hullCurve
+      .getPoints(26)
+      .map((p) => new Vector2(Math.min(0.62, Math.max(0.02, p.x)), p.y))
+    // The camera rides centimetres from this surface — a coarse lathe would
+    // read as flat facets (the descent-bell lesson), so 36 radial segments.
+    const hullGeometry = new LatheGeometry(hullProfile, 36)
     hullGeometry.rotateX(-Math.PI / 2) // profile +y → +z: nose forward
-    const cockpitCavity = new SphereGeometry(1, 16, 10)
-    const coaming = new TorusGeometry(1, 0.05, 8, 22)
-    const screenGeometry = new SphereGeometry(0.4, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.4)
-    const screenRim = new TorusGeometry(0.38, 0.025, 8, 28)
-    const screenMount = new CylinderGeometry(0.025, 0.035, 0.24, 10)
-    const seatGeometry = new BoxGeometry(0.56, 0.14, 0.5)
-    const seatBack = new BoxGeometry(0.5, 0.4, 0.12)
-    const headrest = new CylinderGeometry(0.09, 0.09, 0.3, 10)
-    const barGeometry = new TorusGeometry(0.3, 0.04, 8, 14, Math.PI)
-    const strake = new BoxGeometry(0.05, 0.08, 1.7)
-    const finGeometry = new ConeGeometry(0.3, 0.6, 8)
-    const nozzle = new TorusGeometry(0.24, 0.055, 8, 18)
-    const bowRing = new TorusGeometry(0.34, 0.04, 8, 18)
+    // Profile y ascends tail→nose, so the first bracketing segment wins.
+    const hullRadiusAt = (z: number): number => {
+      const points = hullProfile
+      if (z <= points[0].y) return points[0].x
+      for (let k = 1; k < points.length; k++) {
+        if (z <= points[k].y) {
+          const t = (z - points[k - 1].y) / (points[k].y - points[k - 1].y || 1e-6)
+          return points[k - 1].x + (points[k].x - points[k - 1].x) * t
+        }
+      }
+      return points[points.length - 1].x
+    }
+
+    // Point-to-point member: the armillary/telescope rule — parts that must
+    // visibly connect derive their pose from real endpoints, never from
+    // hand-tuned Euler leans.
+    const memberGeometry = new CylinderGeometry(1, 1, 1, 12)
+    const UP = new Vector3(0, 1, 0)
+    const memberBetween = (
+      from: Vector3,
+      to: Vector3,
+      radius: number,
+      material: (typeof lib)['brass'],
+    ): Mesh => {
+      const direction = new Vector3().subVectors(to, from)
+      const length = direction.length()
+      const member = new Mesh(memberGeometry, material)
+      member.scale.set(radius, length, radius)
+      member.quaternion.setFromUnitVectors(UP, direction.normalize())
+      member.position.copy(from).addScaledVector(direction, 0.5 * length)
+      return member
+    }
+
+    // Shared geometry (one allocation each, reused by all five cars).
+    // Panel seams bound the hull bays (tail cone, engine bay, cockpit bay,
+    // bow bay) — never crossing the cockpit opening (z −0.63…+0.53).
+    const SEAM_Z = [-1.22, -0.95, 0.62, 0.95]
+    const seamGeometries = SEAM_Z.map(
+      (z) => new TorusGeometry(hullRadiusAt(z) + 0.006, 0.018, 8, 44),
+    )
+    const rivetGeometry = new SphereGeometry(0.016, 6, 5)
+    const railGeometry = new CylinderGeometry(0.03, 0.03, 2.0, 10)
+    railGeometry.rotateX(Math.PI / 2)
+    const keelGeometry = new CylinderGeometry(0.045, 0.045, 1.9, 10)
+    keelGeometry.rotateX(Math.PI / 2)
+    const axleGeometry = new CylinderGeometry(0.035, 0.035, 1.16, 10)
+    axleGeometry.rotateZ(Math.PI / 2)
+    const wheelGeometry = new CylinderGeometry(0.105, 0.105, 0.07, 20)
+    wheelGeometry.rotateZ(Math.PI / 2)
+    const hubGeometry = new CylinderGeometry(0.045, 0.05, 0.035, 12)
+    hubGeometry.rotateZ(Math.PI / 2)
+    // The cockpit is a real open tub, not a capped pod: an inward-wound
+    // lathe (descending profile → faces the axis) keeps the interior visible
+    // from above with FrontSide materials — the pearl-diver funnel rule.
+    const tubGeometry = new LatheGeometry(
+      [
+        new Vector2(0.44, 0.0),
+        new Vector2(0.41, -0.09),
+        new Vector2(0.33, -0.19),
+        new Vector2(0.20, -0.26),
+        new Vector2(0.02, -0.285),
+      ],
+      28,
+    )
+    const bolsterGeometry = new TorusGeometry(1, 0.055, 12, 30)
+    const bolsterLipGeometry = new TorusGeometry(1, 0.016, 8, 30)
+    const squabGeometry = new SphereGeometry(1, 16, 10)
+    const backrestGeometry = new SphereGeometry(1, 16, 10)
+    const headrestGeometry = new CylinderGeometry(0.06, 0.06, 0.24, 12)
+    headrestGeometry.rotateZ(Math.PI / 2)
+    const armrestGeometry = new TorusGeometry(0.16, 0.022, 8, 18, Math.PI)
+    const barGeometry = new TorusGeometry(0.30, 0.035, 10, 22, Math.PI)
+    const knuckleGeometry = new SphereGeometry(0.05, 10, 8)
+    const dialBezelGeometry = new TorusGeometry(0.09, 0.014, 8, 20)
+    const dialFaceGeometry = new CylinderGeometry(0.08, 0.08, 0.014, 20)
+    const screenGeometry = new SphereGeometry(0.34, 18, 9, 0, Math.PI * 2, 0, Math.PI * 0.36)
+    const screenFrameGeometry = new TorusGeometry(0.31, 0.02, 8, 30)
+    const bowCollarGeometry = new TorusGeometry(hullRadiusAt(1.44) + 0.012, 0.028, 8, 24)
+    const bladeGeometry = new SphereGeometry(1, 14, 10)
+    const pearlGeometry = new SphereGeometry(0.075, 16, 12)
+    const cowlGeometry = new TorusGeometry(0.34, 0.075, 10, 26)
+    // Venturi nozzle: wide at the hull, narrowing aft — a machined exit,
+    // not a spike (a bare cone apex read as a weapon).
+    const throatGeometry = new CylinderGeometry(0.115, 0.26, 0.34, 22)
+    throatGeometry.rotateX(-Math.PI / 2)
+    const finBladeGeometry = new SphereGeometry(1, 14, 10)
+    const lanternGlobeGeometry = new SphereGeometry(0.055, 12, 9)
+    const lanternRingGeometry = new TorusGeometry(0.065, 0.008, 6, 16)
+
+    const tinyParts = new Set<Object3D>()
     for (let i = 0; i < CARS; i++) {
       const car = new Object3D()
-      const body = new Mesh(hullGeometry, lib.brass)
-      const cavity = new Mesh(cockpitCavity, lib.woodDark)
-      cavity.scale.set(0.45, 0.22, 0.6)
-      cavity.position.set(0, 0.5, -0.05)
-      const rim = new Mesh(coaming, lib.brass)
-      rim.scale.set(0.46, 0.62, 1)
-      rim.rotation.x = Math.PI / 2
-      rim.position.set(0, 0.56, -0.05)
-      const screen = new Mesh(screenGeometry, lib.glass)
-      const screenAssembly = new Object3D()
-      screenAssembly.position.set(0, 0.5, 0.62)
-      screenAssembly.rotation.x = -0.55
-      const screenEdge = new Mesh(screenRim, lib.verdigris)
-      screenEdge.rotation.x = Math.PI / 2
-      screenEdge.position.y = 0.124
-      screenAssembly.add(screen, screenEdge)
+
+      // Hull, keel, deck spine, rub rails, panel seams, rivets.
+      const body = new Mesh(hullGeometry, lib.lacquer)
+      car.add(body)
+      const keel = new Mesh(keelGeometry, lib.brass)
+      keel.position.set(0, -0.575, -0.05)
+      car.add(keel)
+      const spine = memberBetween(
+        new Vector3(0, 0.565, 0.42),
+        new Vector3(0, 0.295, 1.36),
+        0.035,
+        lib.brass,
+      )
+      car.add(spine)
       for (const side of [-1, 1]) {
-        const mount = new Mesh(screenMount, lib.verdigris)
-        mount.position.set(side * 0.31, -0.02, 0)
-        mount.rotation.z = side * 0.18
-        screenAssembly.add(mount)
+        const rail = new Mesh(railGeometry, lib.brass)
+        rail.position.set(side * 0.585, 0.02, -0.05)
+        car.add(rail)
       }
-      const seat = new Mesh(seatGeometry, lib.woodDark)
-      seat.position.set(0, 0.34, -0.12)
-      const back = new Mesh(seatBack, lib.woodDark)
-      back.position.set(0, 0.52, -0.44)
-      back.rotation.x = 0.15
-      const rest = new Mesh(headrest, lib.woodDark)
-      rest.rotation.z = Math.PI / 2
-      rest.position.set(0, 0.78, -0.5)
-      const bar = new Mesh(barGeometry, lib.iron)
-      bar.position.set(0, 0.56, 0.26)
-      bar.rotation.x = Math.PI / 2 + 0.35
-      car.add(body, cavity, rim, screenAssembly, seat, back, rest, bar)
+      for (let s = 0; s < SEAM_Z.length; s++) {
+        const seam = new Mesh(seamGeometries[s], lib.brass)
+        seam.position.z = SEAM_Z[s]
+        car.add(seam)
+      }
+      const rivets = new InstancedMesh(rivetGeometry, lib.brass, SEAM_Z.length * 14)
+      const rivetPose = new Matrix4()
+      let rivetIndex = 0
+      for (let s = 0; s < SEAM_Z.length; s++) {
+        const radius = hullRadiusAt(SEAM_Z[s]) + 0.012
+        for (let k = 0; k < 14; k++) {
+          const angle = ((k + 0.5) / 14) * Math.PI * 2
+          rivetPose.makeTranslation(
+            Math.cos(angle) * radius,
+            Math.sin(angle) * radius,
+            SEAM_Z[s] + 0.045,
+          )
+          rivets.setMatrixAt(rivetIndex++, rivetPose)
+        }
+      }
+      car.add(rivets)
+      tinyParts.add(rivets)
+
+      // Running gear: two visible axle bogies riding the rails.
+      for (const z of [-0.85, 0.85]) {
+        const axle = new Mesh(axleGeometry, lib.iron)
+        axle.position.set(0, -0.44, z)
+        car.add(axle)
+        for (const side of [-1, 1]) {
+          const wheel = new Mesh(wheelGeometry, lib.iron)
+          wheel.position.set(side * 0.55, -0.44, z)
+          car.add(wheel)
+          const hub = new Mesh(hubGeometry, lib.brass)
+          hub.position.set(side * 0.585, -0.44, z)
+          car.add(hub)
+          tinyParts.add(hub)
+        }
+      }
+
+      // Cockpit: open leather-lined tub sunk into the deck, bucket seat
+      // genuinely visible inside, rolled bolster riding the hull line.
+      const tub = new Mesh(tubGeometry, lib.leather)
+      tub.scale.set(1, 1, 1.32)
+      tub.position.set(0, 0.60, -0.05)
+      car.add(tub)
+      const bolster = new Mesh(bolsterGeometry, lib.leather)
+      bolster.scale.set(0.46, 0.615, 1)
+      bolster.rotation.x = Math.PI / 2
+      bolster.position.set(0, 0.60, -0.05)
+      car.add(bolster)
+      const bolsterLip = new Mesh(bolsterLipGeometry, lib.brass)
+      bolsterLip.scale.set(0.495, 0.655, 1)
+      bolsterLip.rotation.x = Math.PI / 2
+      bolsterLip.position.set(0, 0.635, -0.05)
+      car.add(bolsterLip)
+      const squab = new Mesh(squabGeometry, lib.leather)
+      squab.scale.set(0.27, 0.10, 0.25)
+      squab.position.set(0, 0.40, -0.10)
+      car.add(squab)
+      const backrest = new Mesh(backrestGeometry, lib.leather)
+      backrest.scale.set(0.24, 0.21, 0.075)
+      backrest.rotation.x = 0.20
+      backrest.position.set(0, 0.55, -0.44)
+      car.add(backrest)
+      const headrest = new Mesh(headrestGeometry, lib.leather)
+      headrest.position.set(0, 0.73, -0.50)
+      car.add(headrest)
       for (const side of [-1, 1]) {
-        const sideStrake = new Mesh(strake, lib.iron)
-        sideStrake.position.set(side * 0.6, 0.02, -0.1)
-        car.add(sideStrake)
-        const fin = new Mesh(finGeometry, lib.brass)
-        fin.scale.set(0.16, 1, 1)
-        fin.position.set(side * 0.42, 0.1, -1.32)
-        fin.rotation.z = side * 0.9
-        fin.rotation.x = -0.5
+        const armrest = new Mesh(armrestGeometry, lib.brass)
+        armrest.rotation.y = Math.PI / 2
+        armrest.rotation.z = side * 0.12
+        armrest.position.set(side * 0.33, 0.50, -0.14)
+        car.add(armrest)
+        tinyParts.add(armrest)
+      }
+      const bar = new Mesh(barGeometry, lib.brass)
+      bar.position.set(0, 0.55, 0.27)
+      bar.rotation.x = Math.PI / 2 + 0.35
+      car.add(bar)
+      for (const side of [-1, 1]) {
+        const barKnuckle = new Mesh(knuckleGeometry, lib.brass)
+        barKnuckle.scale.setScalar(0.8)
+        barKnuckle.position.set(side * 0.30, 0.50, 0.245)
+        car.add(barKnuckle)
+        tinyParts.add(barKnuckle)
+      }
+      const dialBezel = new Mesh(dialBezelGeometry, lib.brass)
+      const dialFace = new Mesh(dialFaceGeometry, lib.nacre)
+      dialFace.rotation.x = Math.PI / 2
+      const dial = new Object3D()
+      dial.add(dialBezel, dialFace)
+      dial.position.set(0, 0.50, 0.44)
+      dial.rotation.x = -0.85
+      car.add(dial)
+      tinyParts.add(dial)
+
+      // Spray screen: framed glass dome slice, raked low over the deck,
+      // rooted by real mounts that land on the hull.
+      const screenAssembly = new Object3D()
+      screenAssembly.position.set(0, 0.545, 0.58)
+      screenAssembly.rotation.x = -0.72
+      const screen = new Mesh(screenGeometry, lib.glass)
+      const screenFrame = new Mesh(screenFrameGeometry, lib.brass)
+      screenFrame.rotation.x = Math.PI / 2
+      screenFrame.position.y = 0.10
+      screenAssembly.add(screen, screenFrame)
+      screenAssembly.add(
+        memberBetween(new Vector3(0, 0.11, -0.31), new Vector3(0, 0.335, -0.02), 0.014, lib.brass),
+      )
+      for (const side of [-1, 1]) {
+        screenAssembly.add(
+          memberBetween(
+            new Vector3(side * 0.29, 0.085, -0.09),
+            new Vector3(side * 0.24, -0.12, 0.0),
+            0.018,
+            lib.brass,
+          ),
+        )
+      }
+      car.add(screenAssembly)
+
+      // Bow: collar, low wave-cutter blade continuing the deck spine, and a
+      // half-embedded nacre pearl at the very tip.
+      const bowCollar = new Mesh(bowCollarGeometry, lib.verdigris)
+      bowCollar.position.z = 1.44
+      car.add(bowCollar)
+      const blade = new Mesh(bladeGeometry, lib.brass)
+      blade.scale.set(0.04, 0.18, 0.40)
+      blade.position.set(0, 0.25, 1.18)
+      blade.rotation.x = -0.30
+      car.add(blade)
+      const pearl = new Mesh(pearlGeometry, lib.nacre)
+      pearl.position.set(0, 0.02, 1.545)
+      car.add(pearl)
+
+      // Stern: verdigris cowl, dark nozzle throat, three swept fins.
+      const cowl = new Mesh(cowlGeometry, lib.verdigris)
+      cowl.position.z = -1.36
+      car.add(cowl)
+      const throat = new Mesh(throatGeometry, lib.iron)
+      throat.position.z = -1.44
+      car.add(throat)
+      for (let f = 0; f < 3; f++) {
+        const angle = Math.PI / 2 + (f * Math.PI * 2) / 3
+        const fin = new Mesh(finBladeGeometry, lib.lacquer)
+        fin.scale.set(0.035, 0.16, 0.42)
+        fin.position.set(Math.cos(angle) * 0.34, Math.sin(angle) * 0.34, -1.12)
+        fin.rotation.z = angle - Math.PI / 2
+        fin.rotation.x = -0.55
         car.add(fin)
       }
-      const dorsalFin = new Mesh(finGeometry, lib.brass)
-      dorsalFin.scale.set(0.16, 1, 1)
-      dorsalFin.position.set(0, 0.42, -1.32)
-      dorsalFin.rotation.x = -0.5
-      const jet = new Mesh(nozzle, lib.verdigris)
-      jet.position.set(0, 0, -1.52)
-      const bow = new Mesh(bowRing, lib.verdigris)
-      bow.position.set(0, 0, 1.28)
-      car.add(dorsalFin, jet, bow)
+
+      // Head car carries a bow lamp; the tail car carries the stern lantern.
+      if (i === 0) {
+        const headlamp = new Object3D()
+        headlamp.position.set(0, 0.34, 1.30)
+        headlamp.add(
+          memberBetween(new Vector3(0, -0.10, -0.04), new Vector3(0, 0, 0), 0.014, lib.brass),
+        )
+        const lens = new Mesh(lanternGlobeGeometry, lib.lampGlobe)
+        headlamp.add(lens)
+        const collarRing = new Mesh(lanternRingGeometry, lib.brass)
+        collarRing.rotation.x = Math.PI / 2
+        headlamp.add(collarRing)
+        car.add(headlamp)
+        tinyParts.add(headlamp)
+      }
+      if (i === CARS - 1) {
+        const lantern = new Object3D()
+        lantern.position.set(0, 0.52, -1.30)
+        lantern.add(
+          memberBetween(new Vector3(0, -0.20, 0.12), new Vector3(0, -0.06, 0), 0.014, lib.brass),
+        )
+        const globe = new Mesh(lanternGlobeGeometry, lib.lampGlobe)
+        lantern.add(globe)
+        for (const ringY of [-0.03, 0.03]) {
+          const ring = new Mesh(lanternRingGeometry, lib.brass)
+          ring.position.y = ringY
+          lantern.add(ring)
+        }
+        car.add(lantern)
+        tinyParts.add(lantern)
+      }
+
       car.traverse((node) => {
         const mesh = node as Mesh
-        if (mesh.isMesh && mesh.material !== lib.glass) mesh.castShadow = true
+        if (!mesh.isMesh) return
+        let tiny = false
+        for (let p: Object3D | null = mesh; p && p !== car; p = p.parent) {
+          if (tinyParts.has(p)) tiny = true
+        }
+        // Tiny fittings and glass never cast; everything else does.
+        mesh.castShadow = !tiny && mesh.material !== lib.glass
       })
       markDynamicShadowCasters(car)
       this.group.add(car)

@@ -16,15 +16,41 @@ export interface PerformanceSnapshot {
   gpuComputeMs: number | null
 }
 
+/**
+ * One retained record per >2-vsync frame, with enough context to name the
+ * culprit after the fact: how much was main-thread JS vs presentation gap,
+ * whether the dynamic-resolution scale stepped (render-target reallocation),
+ * and whether shadow work (static bundle refresh / dynamic caster render)
+ * coincided. Surfaced through `canvas.dataset.performance` so a freeze seen
+ * in play is attributable without a profiler attached.
+ */
+export interface HitchRecord {
+  /** Park clock (seconds) when the frame landed. */
+  at: number
+  frameMs: number
+  cpuMs: number
+  renderScale: number
+  scaleChanged: boolean
+  staticShadowRefreshes: number
+  dynamicShadowRenders: number
+}
+
 const EMA = 0.08
+const HITCH_THRESHOLD_MS = 40
+const HITCH_RING = 24
 
 /** Non-blocking CPU, presentation-cadence, and WebGPU timestamp telemetry. */
 export class FramePerformanceMonitor {
+  readonly hitches: HitchRecord[] = []
+
   private cpuFrameMs = 1000 / 60
   private presentedFrameMs = 1000 / 60
   private gpuRenderMs: number | null = null
   private gpuComputeMs: number | null = null
   private resolvePending = false
+  private lastRenderScale = 1
+  private lastStaticRefreshes = 0
+  private lastDynamicRenders = 0
   private readonly renderer: WebGPURenderer
 
   constructor(renderer: WebGPURenderer) {
@@ -37,6 +63,33 @@ export class FramePerformanceMonitor {
       Math.min(timing.frameIntervalMs, 100) - this.presentedFrameMs
     ) * EMA
     this.resolveGpu()
+  }
+
+  /** Frames longer than two vsyncs get a retained, attributable record. */
+  noteFrame(
+    timing: FrameTiming,
+    atSeconds: number,
+    renderScale: number,
+    staticShadowRefreshes: number,
+    dynamicShadowRenders: number,
+  ): void {
+    const scaleChanged = renderScale !== this.lastRenderScale
+    this.lastRenderScale = renderScale
+    const staticDelta = staticShadowRefreshes - this.lastStaticRefreshes
+    this.lastStaticRefreshes = staticShadowRefreshes
+    const dynamicDelta = dynamicShadowRenders - this.lastDynamicRenders
+    this.lastDynamicRenders = dynamicShadowRenders
+    if (timing.frameIntervalMs < HITCH_THRESHOLD_MS) return
+    this.hitches.push({
+      at: Math.round(atSeconds * 10) / 10,
+      frameMs: Math.round(timing.frameIntervalMs),
+      cpuMs: Math.round(timing.cpuMs * 10) / 10,
+      renderScale,
+      scaleChanged,
+      staticShadowRefreshes: staticDelta,
+      dynamicShadowRenders: dynamicDelta,
+    })
+    if (this.hitches.length > HITCH_RING) this.hitches.shift()
   }
 
   snapshot(): PerformanceSnapshot {

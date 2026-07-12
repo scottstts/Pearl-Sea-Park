@@ -37,6 +37,8 @@ export class ParkMaterials {
   readonly canvasCream: MeshStandardNodeMaterial
   readonly foliage: MeshStandardNodeMaterial
   readonly soil: MeshStandardNodeMaterial
+  readonly lacquer: MeshStandardNodeMaterial
+  readonly leather: MeshStandardNodeMaterial
 
   constructor(medium: SeaMediumSystem) {
     const lit = (material: MeshStandardNodeMaterial, causticStrength = 1.25) => {
@@ -209,6 +211,45 @@ export class ParkMaterials {
         return m
       })(),
       1.1,
+    )
+
+    // ── Japanned lacquer: deep torrent-teal coachwork ──────────────────────
+    // Ride-vehicle body finish: a dark blue-green japan with the faint
+    // large-scale depth variation of hand-brushed lacquer and a tight clear
+    // coat. Grazing angles lift toward the sheen instead of washing out.
+    this.lacquer = lit(
+      (() => {
+        const m = new MeshStandardNodeMaterial()
+        m.metalness = 0.12
+        const depth = fbm2(positionWorld.xz.mul(0.9).add(positionWorld.y.mul(0.7)))
+        const viewDir = normalize(cameraPosition.sub(positionWorld))
+        const grazing = float(1).sub(dot(viewDir, normalWorld).abs())
+        m.colorNode = mix(
+          mix(vec3(0.016, 0.075, 0.085), vec3(0.045, 0.13, 0.14), depth),
+          vec3(0.10, 0.22, 0.22),
+          grazing.mul(grazing).mul(0.55),
+        )
+        m.roughnessNode = depth.mul(0.08).add(0.16)
+        return m
+      })(),
+    )
+
+    // ── Saddle leather: oxblood upholstery with worn grain ─────────────────
+    this.leather = lit(
+      (() => {
+        const m = new MeshStandardNodeMaterial()
+        m.metalness = 0
+        const grain = fbm2(positionWorld.xz.mul(11.0).add(positionWorld.y.mul(7.0)))
+        const wear = fbm2(positionWorld.xz.mul(1.7))
+        m.colorNode = mix(
+          mix(vec3(0.23, 0.075, 0.05), vec3(0.31, 0.115, 0.07), grain),
+          vec3(0.38, 0.17, 0.10),
+          wear.mul(0.35),
+        )
+        m.roughnessNode = grain.mul(0.18).add(wear.mul(0.12)).add(0.42)
+        return m
+      })(),
+      1.15,
     )
   }
 }

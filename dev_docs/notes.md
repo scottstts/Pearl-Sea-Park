@@ -912,3 +912,36 @@
     canvas)` works even hidden for per-frame pixel probes. Walking-speed
     single-frame pop detectors are parallax-dominated at 192×108 — only
     still-camera or sub-pixel-crawl runs isolate real temporal artifacts.
+- 2026-07-12 residual-hitch pass + Torrent train redesign:
+  - Remaining freeze tail after the warmup fix, attributed by measurement:
+    per-system update() allocation is ~0 KB/frame (no GC fuel — the earlier
+    530 KB/frame reading was the probe's own allocations), runtime-spawned
+    game props reuse library materials (pipeline cache hits, not compiles).
+    What's left: dynamic-resolution render-target reallocation on scale
+    steps (already heavily damped; do NOT make recovery jump — the
+    probe-upward-slowly lesson stands), an occasional heavy static-level
+    refresh coinciding with a loaded frame, and browser/driver noise
+    (pointer-lock transitions, Chrome pipeline-cache serialization early in
+    a session). `FramePerformanceMonitor.hitches` now retains the last 24
+    >40 ms frames with cpuMs, scale-change flag, and static/dynamic shadow
+    work deltas — read `canvas.dataset.performance` after feeling a freeze
+    before optimizing anything further.
+  - Instrumented sessions can poison the auto-quality cache: floor-bound
+    synthetic frames persist a LOWER tier for the next session
+    (`the-pearl:auto-quality:v2`). Clear it after harness abuse, or pass
+    `?tier=`.
+  - The Torrent train is redesigned (cars only — geometry/materials; track,
+    physics, ride logic untouched). New shared library materials: `lacquer`
+    (japanned torrent-teal coachwork, grazing sheen) and `leather` (oxblood
+    upholstery) — reusable for future vehicles. Craft patterns applied and
+    worth repeating: CatmullRom-sampled lathe profile with a radius helper
+    so seam rings/collars are radius-keyed to the hull; the cockpit as an
+    inward-wound open lathe tub (funnel-winding rule) so the seat is REALLY
+    visible instead of a capped pod (the old cars and the first draft both
+    failed this — a closed cavity sphere reads as a sealed hatch with the
+    headrest as its handle); nozzles are tapered venturis, never bare cone
+    apexes (reads as a spike); fins are squashed ellipsoids (thickness
+    ruling); rivet studs are one InstancedMesh per car with castShadow off.
+    Envelope discipline: half-width ≤ 0.62 (station column audit), length
+    within CAR_GAP minus coupling clearance, eye-clearance check at the rig
+    anchor before committing any cockpit member.

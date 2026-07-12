@@ -268,6 +268,15 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     this.staticCasterCount = casterCount
   }
 
+  /** Zero-allocation live counters for per-frame hitch attribution. */
+  get liveStaticRefreshCount(): number {
+    return this.staticRefreshes
+  }
+
+  get liveDynamicRenderCount(): number {
+    return this.dynamicRenderCount
+  }
+
   staticPerformanceSnapshot(): {
     casterCount: number
     refreshes: number

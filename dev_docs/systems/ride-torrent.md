@@ -48,8 +48,21 @@
 - Station: boarding deck + gable-roofed shelter + plaza on the existing
   court→torrent path; boarding flow is board → "Lower the lap bar" →
   2.2 s → launch; exits only while docked.
-- Cars carry a curved glass windscreen seated in a fitted verdigris perimeter
-  rim with two short structural mounts; the glass has no exposed cut edge.
+- The train (2026-07-12 redesign) is five japanned hydro-sleds: deep
+  torrent-teal lacquer hulls (CatmullRom profile, 36-segment lathe — the
+  camera rides centimetres away) over brass running trim. Craft rules baked
+  in: panel seams are radius-keyed tori BOUNDING hull bays, never crossing
+  the cockpit opening, with instanced rivet studs (castShadow off — tiny
+  fittings); the cockpit is an inward-wound open lathe tub (interior visible
+  by winding, no DoubleSide) with leather bolster/squab/backrest genuinely
+  inside; screen mounts, deck spine, and lamp stems are point-to-point
+  members; stern is a verdigris cowl around a tapered venturi throat (a bare
+  cone apex read as a spike) with three thickness-bearing swept fins; bow
+  carries a wave-cutter blade and half-embedded nacre pearl. Head car has a
+  bow lamp, tail car a stern lantern (lampGlobe, inside bloom hierarchy).
+  Every extreme stays inside the audited envelope: half-width ≤ 0.62,
+  z ∈ [−1.5, 1.62]; the rig eye (0, 0.82, −0.12) keeps ≥0.35 m clearance
+  from every member ahead of it.
 - The wreck is one coherent broken hull: tapered keel, ten shaped ribs,
   longitudinal stringers, attached broken plank courses, and a leaning mast
   with cross-tree and iron crow's ring. It remains open at the track thread.
