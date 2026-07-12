@@ -22,11 +22,11 @@ export const CHANNEL_HEAVE_SCALE = 0.42
 const BUOYANCY_RESOLUTION = 64
 
 /**
- * Bounded heightfield water (water-optics skill): the grotto channel is the
- * game's one real liquid. State = (height, velocity) ping-ponged between RG
- * storage textures; a static mask holds the channel shape so ripples reflect
- * off the banks. Impulses (bow wake, drips, the drop splash) inject velocity
- * as gaussian bumps — unused slots simply carry zero amplitude.
+ * Bounded heightfield water (water-optics skill) — the game's real simulated
+ * liquid (the wishing well drives it with coins). State = (height, velocity)
+ * ping-ponged between RG storage textures; a static mask holds the basin
+ * shape so ripples reflect off the banks. Impulses inject velocity as
+ * gaussian bumps — unused slots simply carry zero amplitude.
  */
 export class ChannelSim {
   readonly size: number

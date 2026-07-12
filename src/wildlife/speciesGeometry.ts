@@ -2,6 +2,9 @@ import {
   BufferAttribute,
   BufferGeometry,
   CatmullRomCurve3,
+  ConeGeometry,
+  CylinderGeometry,
+  SphereGeometry,
   TubeGeometry,
   Vector3,
 } from 'three'
@@ -170,23 +173,63 @@ export function createRayGeometry(manta = false): BufferGeometry {
 
 export function createTurtleGeometry(): BufferGeometry {
   const writer = new WildlifeMeshWriter()
-  writer.ellipsoid([0, 0.05, 0], [0.78, 0.28, 1], 14, 7)
-  writer.ellipsoid([0, 0, 0.92], [0.28, 0.24, 0.34], 10, 5)
-  for (const side of [-1, 1]) {
-    const frontA = writer.vertex(side * 0.48, 0, 0.45, side)
-    const frontTip = writer.vertex(side * 1.18, -0.04, 0.74, side)
-    const frontB = writer.vertex(side * 0.42, -0.08, 0.03, side)
-    const backA = writer.vertex(side * 0.42, -0.05, -0.45, side * 0.7)
-    const backTip = writer.vertex(side * 0.88, -0.08, -0.72, side * 0.7)
-    const backB = writer.vertex(side * 0.32, -0.1, -0.76, side * 0.7)
-    if (side < 0) {
-      writer.triangle(frontA, frontB, frontTip)
-      writer.triangle(backA, backB, backTip)
-    } else {
-      writer.triangle(frontA, frontTip, frontB)
-      writer.triangle(backA, backTip, backB)
-    }
+  // Carapace with scute ledges: a ring body whose radii step instead of
+  // sweeping smoothly, giving the shell its plated silhouette; a flatter
+  // plastron closes the underside. (The old turtle was two ellipsoids with
+  // single-triangle flippers — cardboard from below.)
+  writer.ringBody(
+    [
+      { z: 0.95, rx: 0.16, ry: 0.08, morph: 0 },
+      { z: 0.74, rx: 0.5, ry: 0.2, morph: 0 },
+      { z: 0.66, rx: 0.56, ry: 0.26, morph: 0 },
+      { z: 0.34, rx: 0.68, ry: 0.3, morph: 0 },
+      { z: 0.28, rx: 0.72, ry: 0.34, morph: 0 },
+      { z: -0.06, rx: 0.75, ry: 0.35, morph: 0 },
+      { z: -0.14, rx: 0.72, ry: 0.31, morph: 0 },
+      { z: -0.48, rx: 0.62, ry: 0.27, morph: 0 },
+      { z: -0.56, rx: 0.55, ry: 0.22, morph: 0 },
+      { z: -0.82, rx: 0.3, ry: 0.12, morph: 0 },
+      { z: -0.96, rx: 0.1, ry: 0.05, morph: 0 },
+    ],
+    14,
+  )
+  writer.ellipsoid([0, -0.12, 0.05], [0.58, 0.14, 0.85], 12, 5)
+  // Keel ridge beads along the spine.
+  for (let i = 0; i < 5; i++) {
+    const z = 0.55 - i * 0.3
+    writer.ellipsoid([0, 0.32 - Math.abs(z) * 0.12, z], [0.09, 0.05, 0.14], 6, 3)
   }
+  // Neck and beaked head.
+  const neck = new CylinderGeometry(0.13, 0.17, 0.42, 8)
+  neck.rotateX(Math.PI / 2 - 0.25)
+  neck.translate(0, 0.02, 1.05)
+  writer.appendGeometry(neck, () => 0)
+  neck.dispose()
+  writer.ellipsoid([0, 0.1, 1.3], [0.19, 0.17, 0.24], 9, 5)
+  const beak = new ConeGeometry(0.1, 0.16, 8)
+  beak.rotateX(Math.PI / 2)
+  beak.translate(0, 0.05, 1.55)
+  writer.appendGeometry(beak, () => 0)
+  beak.dispose()
+  // Flippers: swept, tapered paddles with real thickness. Sphere geometry
+  // scaled/rotated/translated then appended, with the flap channel rising
+  // toward the tip (same morph convention the material animates).
+  for (const side of [-1, 1]) {
+    const front = new SphereGeometry(1, 10, 6)
+    front.scale(0.52, 0.055, 0.2)
+    front.rotateY(side * 0.55)
+    front.translate(side * 0.92, -0.05, 0.42)
+    writer.appendGeometry(front, (p) => side * Math.min(1, Math.abs(p.x) / 1.3))
+    front.dispose()
+    const back = new SphereGeometry(1, 9, 5)
+    back.scale(0.32, 0.05, 0.16)
+    back.rotateY(side * 2.35)
+    back.translate(side * 0.62, -0.08, -0.68)
+    writer.appendGeometry(back, (p) => side * 0.6 * Math.min(1, Math.abs(p.x) / 0.85))
+    back.dispose()
+  }
+  // Tail nub.
+  writer.ellipsoid([0, -0.04, -1.0], [0.07, 0.05, 0.14], 6, 3)
   return writer.compile()
 }
 
@@ -238,27 +281,101 @@ export function createJellyGeometry(): BufferGeometry {
 }
 
 export function createSeahorseGeometry(): BufferGeometry {
+  // Spine runs crown → arched neck → plump belly → a tail that genuinely
+  // CURLS forward under the body. The body is a unit tube post-scaled to a
+  // per-ring radius profile (tube winding stays trustworthy; hand-built
+  // rings on a curved frame are easy to get inside-out).
   const path = new CatmullRomCurve3([
-    new Vector3(0, -0.65, -0.08),
-    new Vector3(0.1, -0.46, -0.2),
-    new Vector3(0.02, -0.16, -0.08),
-    new Vector3(-0.05, 0.16, 0.02),
-    new Vector3(0.04, 0.45, 0.04),
-    new Vector3(0.12, 0.63, 0.14),
+    new Vector3(0.08, 0.6, 0.1),
+    new Vector3(-0.02, 0.44, 0.0),
+    new Vector3(-0.06, 0.18, -0.03),
+    new Vector3(0.0, -0.12, -0.02),
+    new Vector3(0.05, -0.4, -0.1),
+    new Vector3(0.0, -0.62, -0.26),
+    new Vector3(-0.02, -0.64, -0.44),
+    new Vector3(0.0, -0.5, -0.52),
+    new Vector3(0.02, -0.44, -0.42),
   ])
-  const tube = new TubeGeometry(path, 28, 0.105, 7, false)
+  const TUBULAR = 30
+  const RADIAL = 7
+  const smooth01 = (t: number) => t * t * (3 - 2 * t)
+  const radiusAt = (t: number) => {
+    if (t < 0.32) return 0.055 + 0.07 * smooth01(t / 0.32)
+    if (t < 0.5) return 0.125 - 0.012 * smooth01((t - 0.32) / 0.18)
+    return 0.014 + 0.099 * Math.pow(1 - (t - 0.5) / 0.5, 1.4)
+  }
+  const tube = new TubeGeometry(path, TUBULAR, 1, RADIAL, false)
+  const position = tube.getAttribute('position')
+  const ringVertices = RADIAL + 1
+  const spinePoint = new Vector3()
+  const vertex = new Vector3()
+  for (let j = 0; j <= TUBULAR; j++) {
+    const t = j / TUBULAR
+    path.getPointAt(t, spinePoint)
+    const radius = radiusAt(t)
+    for (let i = 0; i < ringVertices; i++) {
+      const index = j * ringVertices + i
+      vertex.fromBufferAttribute(position, index).sub(spinePoint).multiplyScalar(radius).add(spinePoint)
+      position.setXYZ(index, vertex.x, vertex.y, vertex.z)
+    }
+  }
+  tube.computeVertexNormals()
   const writer = new WildlifeMeshWriter()
-  writer.appendGeometry(tube, (p) => Math.max(0, Math.min(1, (0.65 - p.y) / 1.3)))
+  writer.appendGeometry(tube, (p) => Math.max(0, Math.min(1, (0.5 - p.y) / 1.1)))
   tube.dispose()
-  writer.ellipsoid([0.1, 0.66, 0.15], [0.18, 0.15, 0.22], 10, 5)
-  const snoutTop = writer.vertex(0.03, 0.73, 0.26, 0)
-  const snoutTip = writer.vertex(-0.02, 0.69, 0.62, 0)
-  const snoutBottom = writer.vertex(0.04, 0.64, 0.27, 0)
-  writer.triangle(snoutTop, snoutTip, snoutBottom)
-  const finRootTop = writer.vertex(0, 0.35, -0.08, 0.2)
-  const finTip = writer.vertex(0, 0.23, -0.42, 0.4)
-  const finRootBottom = writer.vertex(0, 0.02, -0.12, 0.55)
-  writer.triangle(finRootTop, finTip, finRootBottom)
+  // Tail-tip bead closes the open tube end inside the curl.
+  writer.ellipsoid([0.02, -0.44, -0.42], [0.02, 0.02, 0.02], 5, 3, () => 1)
+
+  // Head, tapered tube snout, coronet, and fins with actual thickness (the
+  // old snout and dorsal fin were single flat triangles — cardboard cutouts
+  // from the side they culled on).
+  writer.ellipsoid([0.08, 0.66, 0.14], [0.13, 0.12, 0.17], 10, 6)
+  const snout = new CylinderGeometry(0.022, 0.05, 0.3, 7)
+  snout.rotateX(Math.PI / 2 - 0.32)
+  snout.translate(0.06, 0.6, 0.32)
+  writer.appendGeometry(snout, () => 0)
+  snout.dispose()
+  const coronet = new ConeGeometry(0.05, 0.11, 5)
+  coronet.translate(0.08, 0.8, 0.1)
+  writer.appendGeometry(coronet, () => 0)
+  coronet.dispose()
+  writer.ellipsoid([-0.05, 0.16, -0.17], [0.015, 0.2, 0.08], 6, 4, () => 0.35)
+  writer.ellipsoid([0.21, 0.6, 0.16], [0.04, 0.08, 0.025], 6, 4, () => 0.1)
+  writer.ellipsoid([-0.05, 0.6, 0.16], [0.04, 0.08, 0.025], 6, 4, () => 0.1)
+  return writer.compile()
+}
+
+/**
+ * A sea butterfly (pteropod) for the Sun Garden: plump body, two broad
+ * wing lobes with real thickness, tiny tail streamer and antennae knobs.
+ * morphWeight is the flutter channel — 0 on the body, rising toward the
+ * wing tips so a vertical sine in the material reads as wingbeats.
+ */
+export function createSunButterflyGeometry(): BufferGeometry {
+  const writer = new WildlifeMeshWriter()
+  writer.ellipsoid([0, 0, 0], [0.035, 0.04, 0.11], 8, 5)
+  writer.ellipsoid([0, 0.015, 0.115], [0.028, 0.028, 0.035], 6, 4)
+  for (const side of [-1, 1]) {
+    // Forewing and hindwing lobes, root overlapping the body.
+    writer.ellipsoid(
+      [side * 0.105, 0.01, 0.025],
+      [0.105, 0.009, 0.06],
+      8,
+      4,
+      (x) => Math.min(1, Math.abs(x) / 0.19),
+    )
+    writer.ellipsoid(
+      [side * 0.07, 0.005, -0.065],
+      [0.07, 0.008, 0.042],
+      7,
+      4,
+      (x) => Math.min(1, Math.abs(x) / 0.13),
+    )
+    // Antenna knob.
+    writer.ellipsoid([side * 0.02, 0.035, 0.15], [0.008, 0.008, 0.008], 4, 3)
+  }
+  // Tail streamer with thickness.
+  writer.ellipsoid([0, 0, -0.14], [0.012, 0.008, 0.05], 5, 3, () => 0.3)
   return writer.compile()
 }
 

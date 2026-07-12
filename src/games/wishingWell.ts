@@ -28,7 +28,7 @@ import type { GameContext } from '../runtime/context'
 import type { SeaMediumSystem } from '../sea/medium'
 import type { DistrictServices } from '../world/districts/atrium'
 import { terrainHeight } from '../world/terrain'
-import { CHANNEL_HEAVE_SCALE, ChannelSim } from '../rides/grotto/channelSim'
+import { CHANNEL_HEAVE_SCALE, ChannelSim } from '../sea/channelSim'
 import type { ArmThrow, DynamicProp } from './types'
 import { syncDynamicProp } from './types'
 
@@ -40,7 +40,7 @@ interface WellCoin extends DynamicProp {
   splashed: boolean
 }
 
-/** A circular 64² descendant of the Grotto heightfield, driven by real coins. */
+/** A circular 64² bounded-water heightfield, driven by real coins. */
 export class WishingWell {
   readonly group = new Object3D()
 

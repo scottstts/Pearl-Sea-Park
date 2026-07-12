@@ -22,7 +22,6 @@ type CabinPrototype = {
   body: BufferGeometry
   frame: BufferGeometry
   hanger: BufferGeometry
-  glass: BufferGeometry
   interior: BufferGeometry
 }
 
@@ -31,7 +30,7 @@ type CabinSlot = {
   mesh: InstancedMesh
 }
 
-/** Five shared draws for the complete eight-cabin fleet. */
+/** Four shared draws for the complete eight-cabin fleet. */
 export class PearlLineCabinFleet {
   readonly group = new Object3D()
   private readonly slots: CabinSlot[]
@@ -45,7 +44,6 @@ export class PearlLineCabinFleet {
       this.createSlot(prototype.body, materials.nacre, 'pearl-cabin:body'),
       this.createSlot(prototype.frame, materials.brass, 'pearl-cabin:frame'),
       this.createSlot(prototype.hanger, materials.iron, 'pearl-cabin:hanger'),
-      this.createSlot(prototype.glass, materials.glass, 'pearl-cabin:glass', false),
       this.createSlot(prototype.interior, materials.woodDark, 'pearl-cabin:interior'),
     ]
   }
@@ -89,7 +87,6 @@ export function createPearlLineCabinPrototype(): CabinPrototype {
   const body: BufferGeometry[] = []
   const frame: BufferGeometry[] = []
   const hanger: BufferGeometry[] = []
-  const glass: BufferGeometry[] = []
   const interior: BufferGeometry[] = []
 
   // Flared lower saloon: an extruded coach profile rather than a box.
@@ -121,6 +118,11 @@ export function createPearlLineCabinPrototype(): CabinPrototype {
   frame.push(cylinderBetween(new Vector3(-0.58, -0.02, -0.9), new Vector3(-0.58, -0.02, 0.9), 0.045, 8))
   frame.push(cylinderBetween(new Vector3(0.58, -0.02, -0.9), new Vector3(0.58, -0.02, 0.9), 0.045, 8))
 
+  // OPEN saloon by ruling: no glass anywhere. Corner and mid posts carry
+  // the canopy; a waist-high nacre panel band (capped by a brass rail)
+  // closes the lower bay so seated guests read as safe, while everything
+  // above the waist is open water view in every direction. The forward
+  // starboard bay stays fully open as the doorway.
   for (const side of [-1, 1]) {
     const x = side * 0.79
     for (const z of [-0.91, 0, 0.91]) {
@@ -128,22 +130,27 @@ export function createPearlLineCabinPrototype(): CabinPrototype {
     }
     frame.push(cylinderBetween(new Vector3(x, 0.72, -0.96), new Vector3(x, 0.72, 0.96), 0.032, 8))
     frame.push(cylinderBetween(new Vector3(x, 1.66, -0.98), new Vector3(x, 1.66, 0.98), 0.035, 8))
+    frame.push(cylinderBetween(new Vector3(x, 1.1, -0.96), new Vector3(x, 1.1, side > 0 ? 0.02 : 0.96), 0.03, 8))
     for (const z of [-0.46, 0.46]) {
-      glass.push(boxPart(0.025, 0.82, 0.78, new Vector3(side * 0.775, 1.18, z)))
+      if (side > 0 && z > 0) continue // doorway bay — open to the floor
+      // toNonIndexed: the body slot's extrusions are non-indexed and
+      // mergeGeometries refuses mixed indexing.
+      body.push(boxPart(0.035, 0.34, 0.82, new Vector3(side * 0.78, 0.945, z)).toNonIndexed())
     }
   }
   for (const end of [-1, 1]) {
     const z = end * 0.955
     frame.push(cylinderBetween(new Vector3(-0.79, 0.72, z), new Vector3(0.79, 0.72, z), 0.032, 8))
     frame.push(cylinderBetween(new Vector3(-0.79, 1.66, z), new Vector3(0.79, 1.66, z), 0.035, 8))
-    glass.push(boxPart(1.42, 0.82, 0.025, new Vector3(0, 1.18, end * 0.945)))
+    frame.push(cylinderBetween(new Vector3(-0.79, 1.1, z), new Vector3(0.79, 1.1, z), 0.03, 8))
+    body.push(boxPart(1.5, 0.34, 0.035, new Vector3(0, 0.945, end * 0.95)).toNonIndexed())
   }
 
   // Door furniture on the platform-facing side remains visible at distance.
   frame.push(spherePart(0.055, new Vector3(0.83, 1.16, 0.12), 10, 7))
   frame.push(boxPart(0.055, 0.28, 0.035, new Vector3(0.835, 1.16, 0)))
 
-  // Two upholstered wooden benches and backrests inside the glazed saloon.
+  // Two upholstered wooden benches and backrests inside the open saloon.
   for (const end of [-1, 1]) {
     interior.push(boxPart(1.3, 0.1, 0.34, new Vector3(0, 0.52, end * 0.62)))
     interior.push(boxPart(1.3, 0.42, 0.075, new Vector3(0, 0.75, end * 0.8)))
@@ -166,7 +173,6 @@ export function createPearlLineCabinPrototype(): CabinPrototype {
     body: mergeParts(body),
     frame: mergeParts(frame),
     hanger: mergeParts(hanger),
-    glass: mergeParts(glass),
     interior: mergeParts(interior),
   }
 }

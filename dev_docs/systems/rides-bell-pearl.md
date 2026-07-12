@@ -2,12 +2,13 @@
 
 ## Vehicle seat rig (`rides/vehicleSeat.ts`)
 
-- `VehicleSeatRig` is the moving-vehicle counterpart to `SeatSystem` (which
-  remains bench-only): smooth blend in, camera locked to a vehicle-local eye
-  with full free-look (vehicle attitude × seat yaw × look), smooth blend out.
+- `VehicleSeatRig` is the one seating rig in the game (bench sitting and its
+  `SeatSystem` were removed 2026-07-12): smooth blend in, camera locked to a
+  vehicle-local eye with full free-look (vehicle attitude × seat yaw × look),
+  smooth blend out.
 - Exits are gated by `rig.canExit` — rides flip it at docks only, so movement
-  keys can never dump a guest into open water mid-ride (SeatSystem's
-  any-key-to-leave behaviour is wrong for vehicles).
+  keys can never dump a guest into open water mid-ride (an
+  any-key-to-leave behaviour would be wrong for vehicles).
 - On exit the rig writes the camera's final yaw/pitch back into
   `PlayerSystem.setLook` before re-enabling control — without that the camera
   snaps to the pre-ride orientation on the handover frame.
@@ -95,3 +96,18 @@
   ONE atomic eval, and polls must sample finer than the window they detect.
 - Full-cycle proofs ran: opening descent → step ashore → walk; board →
   cruise → alight at the far station; forced docked-bottom → ascend.
+
+## 2026-07-12 standing-issues update
+
+- Descent station: the bell-mouth collar is a closed clockwise lathe whose
+  throat wraps below the deck underside (the old open ribbon rendered
+  inside-out — the "inner rim ring" bug); the fascia profile is closed;
+  ArchKit.stepsRing is a single watertight tread lathe at every plaza.
+- Pearl Line: route lives in rides/pearlRoute.ts, swept offline against dome
+  crowns / wheel envelope / midway roof / seabed (`auditPearlRoute`). The
+  west leg now clears the Sun Garden dome by ~7 m. Ride logic is a state
+  machine — cars stop ONLY for a waiting guest, run station-to-station
+  non-stop at 3.9 m/s (1.5×), and hold until the rider steps off and walks
+  clear. The pulse-dwell drive described above is historical.
+- Cabins are open (glass slot deleted; four instanced draws): waist-high
+  nacre panels + brass waist rail, forward-starboard bay open as the door.

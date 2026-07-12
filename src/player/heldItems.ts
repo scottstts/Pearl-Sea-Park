@@ -18,7 +18,6 @@ const REQUIRED_RIDE_STAMPS = [
   'great-wheel',
   'carousel',
   'torrent',
-  'grotto',
 ] as const
 
 /**

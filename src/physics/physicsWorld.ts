@@ -23,6 +23,13 @@ export class PhysicsSystem implements GameSystem {
 
     // Terrain heightfield: rapier stores heights COLUMN-major
     // (index = column * (nrows+1) + row), rows advancing along Z.
+    // The global grid's ~9.4 m cells cannot represent the Great Wheel's
+    // dredged basin (15 m deep over a 13 m slope) — guests clipped through
+    // the collider/visual mismatch and fell under the field. A dense local
+    // patch owns the basin; the coarse samples inside it sink far below so
+    // the patch surface is the only ground there. (Basin anchor literals
+    // match terrainHeight's — see world/terrain.ts.)
+    const BASIN = { x: 175, z: 40, half: 44, divisions: 88, sinkRadius: 30 }
     const divisions = 128
     const samples = divisions + 1
     const heights = new Float32Array(samples * samples)
@@ -30,7 +37,9 @@ export class PhysicsSystem implements GameSystem {
       for (let row = 0; row < samples; row++) {
         const x = (col / divisions - 0.5) * TERRAIN_EXTENT
         const z = (row / divisions - 0.5) * TERRAIN_EXTENT
-        heights[col * samples + row] = terrainHeight(x, z)
+        const insideBasinPatch =
+          Math.abs(x - BASIN.x) < BASIN.sinkRadius && Math.abs(z - BASIN.z) < BASIN.sinkRadius
+        heights[col * samples + row] = insideBasinPatch ? -60 : terrainHeight(x, z)
       }
     }
     const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
@@ -41,6 +50,29 @@ export class PhysicsSystem implements GameSystem {
         z: TERRAIN_EXTENT,
       }),
       ground,
+    )
+    // Dense basin patch: ~1 m cells matching the visual mesh density. Its
+    // half-extent (44) reaches past the coarse grid's sink-slope influence
+    // (sinkRadius + one 9.4 m cell), so no invisible pit ring survives.
+    const patchSamples = BASIN.divisions + 1
+    const patchHeights = new Float32Array(patchSamples * patchSamples)
+    for (let col = 0; col < patchSamples; col++) {
+      for (let row = 0; row < patchSamples; row++) {
+        const x = BASIN.x + (col / BASIN.divisions - 0.5) * BASIN.half * 2
+        const z = BASIN.z + (row / BASIN.divisions - 0.5) * BASIN.half * 2
+        patchHeights[col * patchSamples + row] = terrainHeight(x, z)
+      }
+    }
+    const basinBody = world.createRigidBody(
+      RAPIER.RigidBodyDesc.fixed().setTranslation(BASIN.x, 0, BASIN.z),
+    )
+    world.createCollider(
+      RAPIER.ColliderDesc.heightfield(BASIN.divisions, BASIN.divisions, patchHeights, {
+        x: BASIN.half * 2,
+        y: 1,
+        z: BASIN.half * 2,
+      }),
+      basinBody,
     )
 
     // Query pipeline is only valid after the first step — verify then.
@@ -57,6 +89,8 @@ export class PhysicsSystem implements GameSystem {
       [-200, 150],
       [80, -180],
       [-350, -100],
+      [175, 40], // Great Wheel basin floor — exercises the dense patch
+      [163, 52], // basin slope — the old fall-through region
     ]) {
       const ray = new RayCtor({ x, y: 50, z }, { x: 0, y: -1, z: 0 })
       const hit = world.castRay(ray, 500, true)

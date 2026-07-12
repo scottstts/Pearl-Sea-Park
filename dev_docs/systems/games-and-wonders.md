@@ -83,3 +83,16 @@
 - Compile/lint/bundle validation is supplemented by the 60 Hz Kraken
   integration above. The existing 240 s Grotto solver stress result covers
   the identical well equation at a denser impulse cadence.
+
+## 2026-07-12 standing-issues update
+
+- Kraken Bell is display-only: no interaction, no swing; the hammer lies
+  statically beside the strike pad facing the board; the tower is a tapered
+  board with rail rungs, a real closed-lathe bell on a yoke, and verdigris
+  tentacles. Ring the Narwhal's figure is a sculpted breaching bust with a
+  helix-wrapped tusk (physics colliders unchanged). Pearl Diver's board has
+  recessed funnel pockets, a crest, and side wings.
+- The turtle feeding station is removed; the 'Grotto Pearl' penny press is
+  now 'Sun Garden' at the garden door (the eight-pocket book stays full).
+- The wishing well's water sim moved to src/sea/channelSim.ts (the Grotto,
+  its former home, no longer exists).

@@ -1,6 +1,6 @@
 import { terrainHeight } from './terrain'
-import { PARK_PATHS, PARK_PLAN } from './parkLayout'
-export { FACILITY_ENTRANCE_SIGNS, PARK_PATHS, PARK_PLAN } from './parkLayout'
+import { MIDWAY_APRON, PARK_PATHS, PARK_PLAN } from './parkLayout'
+export { FACILITY_ENTRANCE_SIGNS, MIDWAY_APRON, PARK_PATHS, PARK_PLAN } from './parkLayout'
 export type { FacilityEntranceSign } from './parkLayout'
 
 /** Ground height at a plan anchor. */
@@ -16,11 +16,11 @@ const KEEPOUT_DISCS: { x: number; z: number; r: number }[] = [
   { x: PARK_PLAN.wheel.x, z: PARK_PLAN.wheel.z, r: 28 },
   { x: PARK_PLAN.carousel.x, z: PARK_PLAN.carousel.z, r: PARK_PLAN.carousel.plazaRadius + 2 },
   { x: PARK_PLAN.torrent.station.x, z: PARK_PLAN.torrent.station.z, r: 14 },
+  { x: MIDWAY_APRON.x, z: MIDWAY_APRON.z, r: MIDWAY_APRON.radius + 2 },
   { x: PARK_PLAN.menagerie.x, z: PARK_PLAN.menagerie.z, r: 16 },
   { x: PARK_PLAN.menagerie.sunGarden.x, z: PARK_PLAN.menagerie.sunGarden.z, r: 11 },
   { x: PARK_PLAN.menagerie.jellyCourt.x, z: PARK_PLAN.menagerie.jellyCourt.z, r: PARK_PLAN.menagerie.jellyCourt.radius + 2 },
   { x: PARK_PLAN.menagerie.turtleLagoon.x, z: PARK_PLAN.menagerie.turtleLagoon.z, r: PARK_PLAN.menagerie.turtleLagoon.radius + 2 },
-  { x: PARK_PLAN.grotto.x, z: PARK_PLAN.grotto.z, r: 12 },
   { x: PARK_PLAN.observatory.x, z: PARK_PLAN.observatory.z, r: 12.5 },
   { x: PARK_PLAN.cafe.x, z: PARK_PLAN.cafe.z, r: 11 },
   // Pearl Line stations (rides/pearlLine.ts docks).

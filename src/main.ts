@@ -15,7 +15,6 @@ import { PhysicsSystem } from './physics/physicsWorld'
 import { HeldItemSystem } from './player/heldItems'
 import { InteractionSystem } from './player/interact'
 import { PlayerSystem } from './player/player'
-import { SeatSystem } from './player/seats'
 import { TeleportSystem } from './player/teleport'
 import { LensDripSystem } from './render/lensDrips'
 import { RenderPipelineSystem } from './render/pipeline'
@@ -25,7 +24,6 @@ import { FramePerformanceMonitor } from './render/performanceMonitor'
 import { CarouselSystem } from './rides/carousel'
 import { DescentBellSystem } from './rides/descentBell'
 import { GreatWheelSystem } from './rides/greatWheel'
-import { GrottoSystem } from './rides/grotto/grottoSystem'
 import { GamesSystem } from './games/gamesSystem'
 import { PearlLineSystem } from './rides/pearlLine'
 import { TorrentSystem } from './rides/torrent'
@@ -145,8 +143,6 @@ async function boot(): Promise<void> {
       player = registry.add(new PlayerSystem(physics))
       registry.add(new PauseCardSystem(player))
       const interaction = registry.add(new InteractionSystem())
-      const seats = registry.add(new SeatSystem(player, interaction))
-      services.seats = seats
       services.interaction = interaction
       heldItems = registry.add(new HeldItemSystem())
     }
@@ -161,7 +157,6 @@ async function boot(): Promise<void> {
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))
     registry.add(new TorrentSystem(services, player))
-    registry.add(new GrottoSystem(services, player, medium))
     const carousel = registry.add(new CarouselSystem(services, player))
     registry.add(new WildlifeSystem(services, medium))
     registry.add(new BubbleFountainSystem(services, medium))

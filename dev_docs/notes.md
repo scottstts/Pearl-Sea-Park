@@ -429,3 +429,415 @@
     plane UVs increase upward; WebGPU `screenUV` increases downward. Evaluate
     the rain field with flipped Y and negate the refraction Y offset on the
     return to screen space, or running drops travel upward.
+- 2026-07-12 standing-issues pass, descent bell (single-side fixes):
+  - LatheGeometry facing is decidable on paper: normal/winding = (dy, −dx) of
+    the profile tangent, so an ASCENDING profile segment faces +r (outward),
+    descending faces the axis, top runs face up only when traversed inward.
+    Decorative rings must be CLOSED clockwise loops (outer wall up → top
+    inward → inner wall down → bottom outward); the deck's bell-mouth collar
+    was an open counter-clockwise ribbon and rendered fully inside-out — the
+    reported "inner rim ring" see-through. Audit any open lathe against this
+    rule before blaming materials or adding DoubleSide (which costs fill rate
+    everywhere and hides the real authoring bug).
+  - The rebuilt collar's throat now drops below the deck underside (2.33 m <
+    2.38 m) so the plank sandwich's raw inner cut is never visible from the
+    bell; closing a profile can double as cladding for adjacent open edges.
+  - `ArchKit.stepsRing` is now a single closed radius-keyed lathe (tread +
+    nosing + buried skirt). The old open cylinder + torus cap left a hollow
+    see-through annulus between plaza edge and cap at EVERY plaza (hub, bell
+    terrace, observatory, atrium, carousel, pearl stations, jelly, torrent).
+    Envelope kept: top y+0.14, outer ≈ radius+0.62, so existing colliders
+    and stacked-staircase call sites are untouched.
+- 2026-07-12 standing-issues pass, grand atrium (urn planter redesign):
+  - `ArchKit.urn` is now a real pedestal PLANTER: stepped marble plinth,
+    watertight closed-lathe verdigris vessel (base/cavetto/knopped stem/
+    gadrooned bowl/rolled rim/interior wall+floor), `lib.soil` fill, a
+    13-frond sea-fern rosette in the new `lib.foliage`, and the nacre pearl
+    now SITS half-embedded in the soil instead of hovering over the mouth.
+    All call sites (atrium, esplanade, overlook, jelly court) inherit it.
+  - New shared materials: `foliage` (teal fern, FrontSide — fronds are
+    closed tubes so no DoubleSide tax) and `soil` (dark loam). Both take
+    caustics via `lit()` like every underwater material.
+  - Fronds are chains of tapering capped cylinders with sphere knuckles
+    (`frondGeometry` in archkit/modules.ts) — per the fan-coral ruling,
+    organic shapes get authored thickness, never flat cards. Variation is a
+    fixed jitter table; ArchKit stays deterministic with no RNG.
+  - Urns now get physics cylinders at their call sites (solid structure
+    rule): r≈0.48·scale, added in detailAtrium/detailEsplanade.
+- 2026-07-12 standing-issues pass, tidal court (Bubble Fountain full redesign):
+  - The fountain now has a PERMANENT sculpted centerpiece in the reflecting
+    pool (three closed-lathe tiers: marble basin drum, verdigris scallop
+    bowl on a knopped stem, brass calyx cradling a 0.85 m nacre hero pearl,
+    eight point-to-point scroll struts) plus three fixed rings of physical
+    jet mouths: 8 crown horns (calyx lip), 8 tilted mid horns (tier-one
+    dish), 16 verdigris lily nozzles at r=17 in the pool. Jets fire from
+    REAL nozzles — the old design slid its emission radius 8→22 m, which is
+    what read as "spinning light beams"; plume bases must never move.
+  - Plumes are coherent air columns now: per-bubble packet gating keyed to
+    LAUNCH time (`launch = time − age·riseTime`) makes bursts travel up a
+    column as one slug; entrainment cone (spread ∝ age^1.6) keeps columns
+    tight at the mouth. Light shafts hug the same jet frames with the same
+    cone so light threads THROUGH air instead of free-standing sabres.
+  - `timeUniform` is absolute elapsed time, never the show-local clock —
+    resetting it at show start teleported every airborne bubble.
+  - The fountain never disappears between shows: an idle cue (crown 4.2 m,
+    mid 2.2 m, outer 0) breathes continuously. Perf split: a ~30 %-budget
+    ambient InstancedMesh (jets mod 16 = crown+mid only) is always on; the
+    ~70 % show pool toggles `visible` with the schedule so idle vertex cost
+    stays small. Distinct hash seed offsets per pool — identical
+    instanceIndex seeds would render duplicate z-fighting bubbles.
+  - Columns fade out approaching y≈−0.4 (Silver Ceiling dissolve) — cue
+    heights can then be authored freely without breaching the surface; the
+    finale crown column deliberately dissolves INTO the ceiling.
+  - Tidal Court's eight lagoon-ring pedestals (open lathe + hovering pearl)
+    are replaced by the shared `kit.urn` planters with colliders.
+- 2026-07-12 standing-issues pass, midway hall:
+  - Roads must terminate at a junction plaza, never inside a hall floor. The
+    hub and grotto roads used to end/start INSIDE the midway floor plates —
+    diagonal mosaic, curbs, and brass inlays crisscrossing (the reported
+    mess) — and the hub road also clipped the cafe plaza en route. New
+    scheme: `MIDWAY_APRON` (r=7 forecourt at (100,133), tangent to the
+    hall's south edge z=140), all roads end at its rim, the hub road bends
+    at (40,124) which clears the cafe keepout by >1.5 m, and a 4 m spur
+    links the cafe to that bend. Apron is in KEEPOUT_DISCS; its plaza is
+    anchored at raw terrainHeight so its top is flush with path tops.
+  - When re-sculpting a physics game fixture, keep the tuned collider frame
+    FIXED and sculpt around it: the narwhal is now a breaching closed-lathe
+    torpedo whose snout tip lands exactly under the unchanged tusk collider
+    axis (x, baseY+1.375..2.925, z−0.35); ring-scoring numbers untouched.
+    Tusk spiral = shrinking-radius helix TubeGeometry wrapped on the cone.
+  - Pearl Diver pockets are recessed funnels: an inward-wound lathe
+    (descending profile → faces the axis) rotated −π/2 so the throat recedes
+    into the board; the funnel interior is VISIBLE because of the winding —
+    no DoubleSide needed. Funnel tails must stay shorter than the board
+    depth or they poke out the back as see-through holes.
+  - Kraken Bell is display-only by ruling: interaction, strike logic, and
+    the swing animation are gone; the hammer lies statically (head flat on
+    the ground beside the strike pad, face toward the board, handle resting
+    back). The puck/bell physics rig is kept as dormant set dressing.
+  - High-striker tower = flattened 4-segment tapered cylinder (rotateY π/4
+    then scale z) — a cheap way to get a tapering board silhouette;
+    graduation rungs mount BETWEEN the rails, not floating on the face.
+- 2026-07-12 standing-issues pass, cafe:
+  - Sign placement near a junction must be solved against ALL constraints at
+    once: the boot audit rejects <0.35 m path clearance, and the sign's frame
+    LEGS (±1.55 m local x after yaw) must clear the plaza curb, not just the
+    sign center. Cafe sign now at (cafe.x−10.2, cafe.z+0.4); the first two
+    candidate spots failed on the new hub-road legs — check every path
+    segment before committing a sign move.
+  - The cafe "ring" is a circular BAR: closed clockwise lathe with an actual
+    counter top (r 1.58→2.02 at +1.06) — an open lathe ribbon has no top
+    surface and reads as a mystery ring. Middle filled by a marble pedestal
+    + brass samovar + nacre finial so the ring reads as furniture with a
+    purpose. Brass trim now hugs the rim (the old canopy torus floated 0.2 m
+    above the open profile with nothing holding it).
+- 2026-07-12 standing-issues pass, observatory:
+  - The armillary is now a real instrument: sculpted closed-lathe pedestal,
+    a 23.4°-tilted assembly (two meridians, broad equator, both tropics at
+    r·cos/sin of the tilt, ecliptic), polar axis rod with finial + socket
+    boss, nacre globe, and two cradle struts. KEY TECHNIQUE: build one
+    assembly Matrix4 (tilt + position) and compute every attachment point
+    THROUGH it (`toWorld`) — hand-deriving tilted contact points is exactly
+    how parts end up floating. The axis foot height feeds back into the
+    assembly center so the socket always lands on the capital.
+- 2026-07-12 standing-issues pass, leviathan overlook:
+  - The urn row sat EXACTLY on the balustrade line (both authored at
+    centerZ−1) — when two features share a coordinate, check which one owns
+    the line. Planters now stand at centerZ+0.5 (1.5 m inside the rail),
+    mid-segment in x so they miss the balustrade joints, with colliders.
+  - Telescopes are a tube TRAIN on one parametric sight line: define pivot +
+    sight direction once, pose every part (draw tube, barrel, objective
+    bell, eyecup, counterweight) at scalar offsets `along(t)` with one
+    shared quaternion — segment radii/lengths chosen to overlap at the
+    seams. Fork yoke (cheeks + axle + trunnions) roots the line to the
+    baluster pedestal. Same pattern as the armillary: one frame, offsets
+    through it, never hand-placed world coordinates per part.
+- 2026-07-12 standing-issues pass, great wheel:
+  - The basin fall-through was a COLLIDER RESOLUTION mismatch, not a terrain
+    bug: the global Rapier heightfield is 128 divisions over 1200 m (9.4 m
+    cells) vs the 1.5 m visual mesh — a 15 m-deep pit over a 13 m slope
+    polygonizes meters away from the visuals. Fix pattern: a dense local
+    heightfield patch (88 div over ±44 m ≈ 1 m cells) owns the basin, and
+    the coarse samples strictly inside sink to −60 so the patch is the only
+    top surface. CRITICAL: the patch must extend one full coarse cell past
+    the sink radius, or the sink slope forms an invisible pit ring around
+    the patch. Boot raycast check now samples the basin floor and slope.
+    Reuse this pattern for any future steep local feature.
+  - The pier ran to hx−17.8 while the rim circle crosses deck height at
+    hx−19.49 — the wheel carved through the deck end (the reported "bite").
+    Deck now ends at hx−21.4 (rim max reach 20.32, docked hull ≈21.0), with
+    end rails leaving a central boarding gap and the gateway moved onto the
+    deck. Docked-gondola floor rides level with the deck (dockY=pierY+1.75).
+  - Gondolas are open-air nautilus boats: closed-lathe hull with real
+    interior (rim at chest height, no glass by ruling), ring bench with
+    finished ends, keel, stern spiral crest (one arc end lands ON the rim),
+    gate posts at the entry gap facing local −x — cars cancel rotor spin so
+    local −x always faces the pier when docked. Pivot axles now visibly
+    span the rim pair, and a zigzag lattice braces the two rims.
+  - Ride state machine (cruising→arriving→boarding→riding→unloading→
+    clearing): the wheel spins constantly, decelerates only when the guest
+    stands at the pier head (`playerAtDock`, r=4.5 around the deck end),
+    waits while they decide, runs EXACTLY one revolution when boarded
+    (angle-accumulated, no pulse stops), and resumes only after the guest
+    steps off AND leaves the zone. `positiveAngle` (wrap into [0,2π)) picks
+    the next arriving gondola — signed deltas pick one that just passed.
+- 2026-07-12 standing-issues pass, carousel (+ wildlife seahorse):
+  - Mount sculpting toolkit in carousel.ts: `bendArc` (bends a geometry's +Y
+    into a Y-Z arc — turns straight lathe torpedoes into arcing dolphin/
+    narwhal bodies and even bends cones into curved dorsal fins), `torpedo`
+    (closed lathe), `limb` (tapering knuckled chains for necks/whip tails).
+    All six species rebuilt: bent bodies, thickness-bearing fins/flukes
+    (squashed ellipsoids, never flat cones), helix-wrapped narwhal tusk,
+    scute-stepped turtle shell lathe, and a shared crafted saddle (seat,
+    rolled cantle, brass pommel, skirt, straps + stirrup rings).
+  - Boarding rule per Scott: hop on ANYWHERE around the platform even while
+    it spins — one center interactable picks the nearest LOWER-deck mount to
+    the player at press time (upper deck excluded by distance naturally);
+    dismount any time to the radially nearest plaza point. The dismount
+    anchor is a live Vector3 following the ridden mount (interaction holds
+    the reference), so the prompt stays in the rider's view cone. The old
+    per-mount view-cone picker and the stopped-only gating are gone; the
+    run/rest timetable remains as ambience only.
+  - Carousel body: rounding-board fascia (closed lathe ring) now carries the
+    bulb run, canopy has 12 brass ribs + 28 pennant valance cones + spire
+    finial with nacre pearl; mirror core gets arched panel frames and
+    mouldings.
+  - Wildlife seahorse: body is a unit TubeGeometry post-scaled per ring to a
+    radius profile (belly bulge → whip tail) — tapering a tube by scaling
+    vertices toward their spine point PRESERVES the tube's winding, where
+    hand-ringing a curved Frenet frame risks inside-out quads. Tail now
+    genuinely curls; snout/coronet/dorsal/pectorals are 3D (the old snout
+    and fin were single flat triangles).
+- 2026-07-12 standing-issues pass, the Torrent (major rework):
+  - `terrainHeight` now lives in the LEAF module world/terrainHeight.ts
+    (only ../core/noise2.ts, explicit .ts imports) so offline audits under
+    `node --experimental-strip-types` can sample the exact game field.
+    world/terrain.ts re-exports it; nothing else changed. Audited modules
+    must import only .ts-suffixed leaves — that's why facilitySigns works.
+  - Track authoring moved to rides/torrentTrack.ts (pure math) with
+    `auditTorrentTrack()` wired into `npm run audit:geometry`: enforces
+    ≥0.55 m seabed clearance wherever ground > −45, seam up-dot ≥ 0.999,
+    a breaching hump, and a completing lap (integrated with the runtime
+    physics). Current numbers: clearance 0.87 m, seam 0.999996, lap 64.6 s,
+    peak 35 m/s.
+  - TWO track-under-sand causes found numerically: (a) the DROP-OFF RIM
+    JITTER locally extends the shelf to z≈−270 near the helix/dive corridor
+    — never trust RIM_Z=−250 as "the void starts here"; sample the field.
+    The helix moved to (−26,−298) (fully past the local rim) and the dive
+    now skims the shelf at ground+1.3 until the measured lip, then plunges
+    with the cliff. (b) The old return leg was a hairpin (z −161→−179→−171)
+    the centripetal spline swung wide on; replaced with a monotonic brake
+    arc curving home to the seam.
+  - The "twisted mess" at the loop seam was PARALLEL-TRANSPORT HOLONOMY:
+    transporting up-vectors around a closed loop does not return to the
+    start. Fix per refs/roller_coaster.html: analytic banked frames —
+    up ∝ G·worldUp + min(v²κ, G·tanMAX)·(horizontal curvature dir),
+    projected ⊥ tangent, window-smoothed. Periodic by construction.
+  - The "directions all over the place" train was a LEFT-HANDED basis:
+    side = tangent×up fed to makeBasis gives a reflection, and
+    setFromRotationMatrix on it produces garbage. Right-handed rule:
+    right = up × tangent, basis(right, up, tangent) — the reference calls
+    this exact bug out. With the proper basis, rig baseYaw π faces the
+    camera down the car's +z = the HEAD of the train.
+  - Ride flow: E boards AND arms (launch 2.4 s later — no separate lap-bar
+    interaction), one loop, brake-capture only after stateTime>10 (the
+    brake zone contains the launch point), dock at the platform mark,
+    E to step off; relaunch is only reachable through the boarding
+    interaction, which is disabled while anyone is seated.
+  - Station canopy west columns moved from st.x+0.4 (INSIDE the rail
+    envelope — plinths in the track) to st.x−2.2 with the gable widened to
+    span both rows. Cars got closed hulls with recessed cockpit cavities +
+    coamings (open-ended cylinders show culled interiors), fins, nozzle
+    rings; track ties got spine webs; supports got flared feet + clamps.
+- 2026-07-12 standing-issues pass, menagerie gardens:
+  - The 'menagerie' entrance marker is removed by ruling — the junction
+    between the three gardens is not a destination. Removing an entry from
+    FACILITY_ENTRANCE_SIGNS removes the sign, its atlas tile, its collider,
+    AND its teleport node in one edit (teleport derives from that roster).
+    The spoke paths and the three garden signs stay.
+- 2026-07-12 standing-issues pass, sun garden:
+  - The dome now holds its promised "greenhouse of flowers and butterflies":
+    a brass sun lantern (marble pedestal, lampGlobe globe, 8 ray cones,
+    warm PointLight) as the garden's own sun, an annular parterre (closed
+    marble curb + soil ring lathes) of golden anemones (verdigris stalk,
+    brass petal crowns, nacre hearts) and exported `frondGeometry` ferns,
+    four kit.urn planters with colliders, and two registered bench seats
+    facing the lantern.
+  - Sea butterflies (44 pteropods) reuse the jelly/seahorse GPU pattern:
+    instanceOrigin/instancePhase attributes, all drift + wingbeat in vertex
+    TSL (morphWeight is the flutter channel rising toward wing tips), zero
+    per-frame CPU. This is the sanctioned way to add ambient life —
+    NOT a boid swarm (those stay removed by ruling).
+  - The five-way path knot at the menagerie junction is now a roundabout
+    plaza (r 6.5, flush with path tops); all three garden spokes start at
+    its rim via a computed `spokeStart` (center + 6.5·unit(end−center)).
+    Same junction-plaza cure as the Midway apron.
+- 2026-07-12 standing-issues pass, jelly court:
+  - The two urns stood dead-center in the colonnade's GATE openings (urns
+    at ±x r 12.2 vs gates at columns i 3/4 and 10/11 — the ±x lanes). Four
+    planters now sit on the court diagonals with colliders. When placing
+    furniture inside a ring colonnade, check the gate angles first.
+  - Livelier medusae, all still vertex-TSL: a second-harmonic shimmer on
+    the bell contraction, an asymmetric upward DART on each squeeze
+    (pulse.max(0)^1.6 — jets rise on contraction then sink), tentacle
+    billow lag on the morphWeight channel, and court jellies now breathe
+    their faint emissive with the pulse instead of holding it constant.
+- 2026-07-12 standing-issues pass, turtle lagoon:
+  - Turtle feeding is REMOVED by ruling (overrides the design-doc verb
+    list): feeding station, pellets, `wildlife/turtle-attractor` event, the
+    ambientLife listener, and the turtles' attraction steering are all
+    gone. The `food-cone` HeldItemKind union member remains (state-only,
+    harmless).
+  - The "star-like flicker" was COPLANAR Z-FIGHTING: the water disc sat at
+    exactly the plaza plate's top (both lagoonY+0.18), and CircleGeometry
+    is a triangle FAN from a center vertex — the fight resolves per
+    triangle, radiating star-shaped from the center, camera-independent.
+    Any disc laid on a plate needs real vertical separation. The lagoon now
+    has a true section: dark sandy bed at +0.22, water surface at +0.46
+    inside the rim throat (turtles bob right at the new surface).
+  - Water remake, single draw: radial depth gradient (turquoise shallows →
+    deep center), two crossing swells + concentric wake rings in the
+    normal, grazing-angle sheen, and an fbm foam thread hugging the marble
+    rim. Same one-pass philosophy as the Tidal Court pool (no reflector).
+  - Turtles re-sculpted: scute-stepped ringBody carapace + plastron + keel
+    beads, neck/beaked head, and swept paddle flippers with thickness
+    (scaled/rotated spheres via appendGeometry, flap weights toward tips).
+- 2026-07-12 standing-issues pass, grotto of pearls REMOVED (Scott's ruling):
+  - Full wipe: GrottoSystem + registration deleted; sign/teleport node,
+    grotto road, and keep-out removed; the reef massif + boarding gorge +
+    channel cuts removed from terrainHeight (Rapier field and flora follow
+    automatically); the massif reef-stone sand tint removed; grotto jellies
+    removed; grotto audio (cave convolver bus, shell organ, drips, ride
+    hum) and the three grotto events removed.
+  - Survivors, deliberately: `ChannelSim` moved to src/sea/channelSim.ts —
+    the Wishing Well drives it, it was never grotto-specific. The medium's
+    generic `interior` uniform/`setInterior` stays as capability (rests at
+    0). Ride-stamp roster is 5 (ticket/completed adjusted); the ninth
+    postcard is now 'sun-garden' (the boot audit enforces the ten names);
+    the 'Grotto Pearl' penny press became 'Sun Garden' at the garden door
+    so the eight-pocket penny book stays complete.
+  - dev_docs/systems/ride-grotto.md carries a REMOVED banner; treat its
+    content as historical only.
+- 2026-07-12 standing-issues pass, pearl line:
+  - The route now lives in rides/pearlRoute.ts (leaf module) with
+    `auditPearlRoute()` in `npm run audit:geometry`: sweeps the cabin
+    envelope (3.34 m under the cable, ±1 m) against every dome crown
+    (analytic ellipsoids), the Great Wheel envelope, the Midway gable, and
+    the seabed (station approaches get a graded ground-hug budget — the
+    glide-in legitimately reaches 0.31 m). Scott's sighting confirmed
+    numerically: the old (−148,−12,102)→(−122,−12,8) leg carved the Sun
+    Garden dome; the leg now swings to (−166,−10.5,96)→(−136,−10.5,−2) and
+    clears by 6.96 m. Aerial routes are audit contracts now, not reviews.
+  - Ride contract rebuilt as a state machine (cruising→arriving→boarding→
+    riding→unloading): the line NEVER stops on its own; a guest standing on
+    a platform (r 6.5) glides the next cabin in (forward-distance argmin,
+    same positive-wrap lesson as the wheel); walking away releases it;
+    boarding runs non-stop to the OTHER station at 1.5× the old speed
+    (3.9 m/s); after alighting the state returns to 'boarding' since the
+    guest is still on the platform — it self-releases when they leave.
+    Global pulse-dwell (DWELL/STATION_WINDOW machinery) is gone.
+  - Cabins are OPEN by ruling: the glass slot is deleted (fleet is four
+    draws); waist-high nacre panels + a brass waist rail close the lower
+    bays, the forward-starboard bay stays floor-open as the doorway, and
+    everything above the waist is unobstructed in all directions. Gotcha:
+    the body slot's extrusions are non-indexed — new box parts in that slot
+    need `.toNonIndexed()` or mergeGeometries refuses the mix.
+  - Seat camera baseYaw π = cabin local +z = direction of travel (the
+    VehicleSeatRig convention: identity camera looks −z, π flips it onto
+    the vehicle's forward axis).
+- 2026-07-12 ride-feel pass (bench removal + wheel camera/pacing):
+  - Bench sitting is REMOVED by ruling: benches are scenery (geometry +
+    collider only). player/seats.ts (SeatSystem) is deleted end-to-end —
+    main.ts registration, the `seats` slot on DistrictServices, all four
+    registerBenchSeat call sites (esplanade, atrium ring, observatory,
+    sun garden), and the 'seats' ticket-screen label. Do not re-add sit
+    prompts; the only seating rig is rides/vehicleSeat.ts (VehicleSeatRig).
+  - Seat-eye placement rule: anchor the eye to the SEAT geometry, not the
+    vehicle origin. The wheel's eye was (0, −0.1, 0) — 4 cm off the pivot
+    axle tube, so the near plane (0.1) sliced the "attachment bar" for the
+    whole ride. Now (0, −0.48, 0): 0.72 m above the bench seat top (−1.20),
+    0.26 m above the hull rim, 0.42 m under the axle. Check every authored
+    eye against ALL members within ~0.6 m (axle, arms, rim, crest), not
+    just the obvious hull.
+  - Rotating-frame clearance is a spacing problem, not a phase problem: the
+    wheel's rim-pair lattice (32 struts, 11.25° z=0 crossings) passed 0.65 m
+    from half the 12 pivots, and 1.875° was already the OPTIMAL phase
+    (crossings repeat every gcd(11.25°,30°)=3.75°; max-min = half that). Fix
+    was re-noding: 24 struts, nodes every 15° land exactly on pivot angles
+    at the rims, crossings 7.5° (2.6 m) from every pivot. When props share a
+    rotor with a camera, compute the worst-case pass analytically first.
+  - Exact-landing stops for constant-speed rides: integrate
+    `step = min(speed·dt, remaining)` and hard-zero speed at the clamp.
+    Never detect-then-ease: with the 1.4/s speed smoothing the old wheel
+    kept ~0.05 rad/s at detection and drifted ~0.7 m up the rim past the
+    dock (Scott saw the gondola finish above the bridge end); and a decel
+    `target = remaining·k` WITHOUT `min(cruise, …)` surges (0.6·1.1 ≈ 10×
+    cruise — the "suddenly speeds up to finish" bug). Riding is now flat
+    cruise + clamp (verified: end error exactly 0, max speed 1.0000×
+    cruise); arriving uses gain 0.3 (overdamped vs the smoothing, no
+    sawing) with a 0.03 rad/s floor → docks at 0.6 m/s rim, exact angle,
+    so the gondola floor lands flush with the deck as dockY intends.
+- 2026-07-12 Torrent ride-feel pass (roll twists, pacing, brake crawl):
+  - Coaster banking construction lessons (both failures shipped before
+    being caught): (1) NEVER normalize the horizontal curvature residue
+    and scale by full κ — a pure vertical bend (plunge, hump) pours its
+    pitch curvature into microscopic lateral spline noise and the track
+    corkscrews senselessly; bank from κ_lateral (the horizontal component
+    of the curvature vector) so vertical bends roll exactly zero.
+    (2) NEVER boxcar-smooth up VECTORS — near-opposing raws (S-bend at the
+    cliff lip) cancel, and the normalized residue points anywhere (~120°
+    observed). Smooth the SIGNED BANK ANGLE as a scalar in the zero-roll
+    frame (refUp = worldUp ⊥ tangent, side = tangent × refUp, up =
+    refUp·cos b + side·sin b): cancellation is impossible and |bank| ≤ cap
+    by construction. Roll is now audited: ≤34° bank, ≤7°/m roll rate.
+  - Ride pacing with honest physics: tune from a speed PROFILE (print v
+    every 25 m via the shared integrator), not from feel or hand energy
+    budgets alone. Two stall traps sat exactly at the v-floor (0.5 m/s):
+    the shelf-return saddle (58 s crawl) and the breach hump — invisible
+    in lapSeconds alone until it doubled. trackAccel() is now the ONE
+    shared authority (runtime + design pass + simulator); rhythm is an
+    audit contract (dive ≥20 m/s, helix crest in [2,15] m/s).
+  - Brake runs: servo-to-slow-speed across a long zone is a crawl (the
+    complaint "extremely slow at the end"). Cruise home at a real speed
+    with target min(V_RETURN, √(2·a·remaining)), min()-only so brakes
+    never push, decel capped, exact-landing dock (same as the wheel).
+- 2026-07-12 Torrent knot pass (Scott: "the track tied a knot"):
+  - Spline knots come from AUTHORING, not sampling: any place the intended
+    flow reverses direction across a single Catmull-Rom control point
+    (dive NE → next point back SW) makes the spline swing a loop/cusp.
+    Never author a 180° with one point; spread heading changes evenly
+    across several points, or re-phase the element so entry/exit tangents
+    match the neighbouring legs (the helix became 1.5 turns starting at
+    θ₀ = 90°: entry tangent = the westbound sweep, exit = the eastbound
+    unwind — the turnaround vanished instead of being smoothed).
+  - Audits must cover the failure CLASS, not just known symptoms: the
+    track audit checked clearance/seam/speeds but nothing about curvature,
+    so a visible knot passed. Added: max tangent turn rate ≤14°/m (a cusp
+    measures 50–500°/m; sane track ~10) and min self-distance ≥6 m between
+    samples >14 m apart along the arc. When a human finds a defect class
+    numerically detectable, add the metric the same day.
+  - Diagnose spline geometry numerically FIRST (sort samples by turn rate,
+    print worst locations) — my two guesses about which corner was the
+    knot were both wrong; the scan found s≈694 (splash tail hairpin) and
+    s≈242 (helix approach doubling back) instantly.
+- 2026-07-12 breach foam + shadow streaming (Scott's underwater screenshot):
+  - RULING (supersedes an earlier edge-fade patch): NO bespoke per-structure
+    water-pierce dressing, ever. The ocean surface shader already owns the
+    interface for EVERY opaque structure that pokes through the water —
+    depth-tested intersection and shading from above, framebuffer-refracted
+    Snell window from below — exactly like the arrival pavilion's piles
+    (the reference; it has zero custom dressing). The Torrent and Great
+    Wheel decorative foam quads read as floating white patches from below
+    and were DELETED, not softened. If a pierce point ever looks wrong,
+    fix the ocean shader, not the structure.
+  - Cached shadow clipmaps + a fast camera: two systemic lessons in
+    render/cachedShadowClipmaps.ts. (1) Reactive recentering puts the
+    freshest shadow gap exactly where a rider is LOOKING (ahead); lead the
+    desired centers by smoothed light-space velocity (≤1 s of travel,
+    clamped to 0.3·halfWidth) — zero extra renders. (2) Never hand a
+    shared per-frame budget out in fixed index order: fine levels go dirty
+    every frame at speed and STARVE the mid levels, whose eventual
+    catch-up pops whole shadow sections in. Select by urgency (lag over
+    recenter threshold, invalid = ∞). Verified by offline simulation of
+    the recenter math (worst excursion 0.34 of the sampled box at 28 m/s,
+    all levels bounded render rates).

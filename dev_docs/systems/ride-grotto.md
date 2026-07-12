@@ -1,4 +1,11 @@
-# Grotto of Pearls (S11)
+# Grotto of Pearls (S11) — REMOVED 2026-07-12
+
+> **This attraction no longer exists.** Scott's standing-issues ruling wiped
+> the Grotto from the park: system deleted, sign/teleport node removed, the
+> paved way and keep-out removed, and the reef massif/gorge/channel terrain
+> cuts reverted to open plateau. The only surviving descendant is the
+> bounded-water sim, now at `src/sea/channelSim.ts`, which the Wishing Well
+> drives. Everything below is historical.
 
 ## Route and ride timing
 

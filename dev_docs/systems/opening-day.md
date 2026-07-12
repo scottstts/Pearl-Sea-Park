@@ -47,6 +47,18 @@ map/texel sizes, dirty bits, age, update budget, direction delta, scaled bias,
 static render counts, and the dynamic-caster map/layer/render count. The fixed
 sun never causes continuous static-world refreshes.
 
+2026-07-12 (Scott's Torrent ride pass): two fixes for "shadow appears one
+section at a time" at ride speed (~28 m/s). (1) Recentering now LEADS the
+camera: desired centers bias ahead along smoothed light-space velocity by up
+to 1 s of travel, clamped to 0.3·halfWidth — the terrain a rider approaches
+is shadowed before arrival, at zero extra renders. (2) The refresh budget is
+handed to the most-lagged dirty level first (urgency = lag over recenter
+threshold; invalid = ∞) instead of lowest-index-first, which let a fast
+camera keep the fine levels dirty every frame and starve the mid levels —
+their eventual catch-up was the visible section pop. Verified by simulation:
+at 28 m/s the camera never exceeds 0.34 of any sampled box, every level
+renders at a bounded rate (L2 1.9/s, L3 0.7/s), boxes lead by 8–23 m.
+
 ## Measured image and performance path
 
 - `render/exposureMeter.ts`: 64×36 encoded luminance, asynchronous readback,
@@ -110,3 +122,9 @@ Runtime constraints surfaced by that check:
 - rapier3d-compat 0.19.3 has a known generated-wrapper init warning despite
   successful initialization, so physics suppresses only that exact message
   while preserving and immediately restoring all other console warnings.
+
+## 2026-07-12 standing-issues update
+
+- The ten-postcard contract swaps 'treasury' (Grotto — removed) for
+  'sun-garden'. Ride-stamp roster is five (grotto stamp removed);
+  `ticket/completed` fires on the five ride gates.

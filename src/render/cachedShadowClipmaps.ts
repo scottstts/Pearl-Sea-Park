@@ -40,6 +40,12 @@ const DIRTY_MOVED = 1 << 3
 const DIRTY_EXPIRED = 1 << 4
 const DIRTY_DIRECTION = 1 << 5
 
+/** How far ahead (in seconds of travel) recentering leads a moving camera. */
+const LEAD_SECONDS = 1
+
+/** Extra down-sun slab depth so ground far below a high camera stays inside. */
+const DEPTH_REACH = 70
+
 interface ClipmapLight extends Object3D {
   target: Object3D
   castShadow: true
@@ -189,6 +195,8 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   private readonly lights: ClipmapLight[] = []
   private readonly worldToLight = new Matrix4()
   private readonly lastDirection = new Vector3()
+  private readonly lastCameraLight = new Vector3(Number.NaN, Number.NaN, Number.NaN)
+  private readonly velocityLight = new Vector3()
   private readonly dynamicCenter = new Vector3(Number.NaN, Number.NaN, Number.NaN)
   private readonly directionCos: number
   private dynamicLight: ClipmapLight | null = null
@@ -316,15 +324,32 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     CAMERA_WORLD.setFromMatrixPosition(this.camera.matrixWorld)
     CAMERA_LIGHT.copy(CAMERA_WORLD).applyMatrix4(this.worldToLight)
 
+    // Camera velocity in light space (smoothed). Recentering leads a moving
+    // camera by up to LEAD_SECONDS so the terrain a rider is approaching is
+    // shadowed BEFORE they arrive — purely reactive recentering always put
+    // the freshest gap exactly where a fast camera was looking.
+    const deltaTime = Math.min(0.1, Math.max(1e-3, frame.deltaTime || 1 / 60))
+    if (Number.isNaN(this.lastCameraLight.x) || directionChanged) {
+      this.velocityLight.set(0, 0, 0)
+    } else {
+      const blend = Math.min(1, deltaTime * 5)
+      this.velocityLight.x +=
+        ((CAMERA_LIGHT.x - this.lastCameraLight.x) / deltaTime - this.velocityLight.x) * blend
+      this.velocityLight.y +=
+        ((CAMERA_LIGHT.y - this.lastCameraLight.y) / deltaTime - this.velocityLight.y) * blend
+    }
+    this.lastCameraLight.copy(CAMERA_LIGHT)
+    const lightSpeed = Math.hypot(this.velocityLight.x, this.velocityLight.y)
+
     let budget = this.firstUpdate || directionChanged ? this.levels : this.updateBudget
     this.budgetBefore = budget
     this.firstUpdate = false
     let finestTexel = 0
 
+    // ── Pass 1: state, lead-biased desired centers, dirty reasons ────────
     for (let index = 0; index < this.levels; index++) {
       const state = this.levelStates[index]
-      const levelLight = this.lights[index]
-      const shadow = levelLight.shadow
+      const shadow = this.lights[index].shadow
       const camera = shadow.camera
       const texelWidth = (camera.right - camera.left) / shadow.mapSize.width
       if (index === 0) finestTexel = texelWidth
@@ -335,8 +360,16 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       state.normalBias = shadow.normalBias
       state.age++
 
-      state.desiredX = Math.round(CAMERA_LIGHT.x / texelWidth) * texelWidth
-      state.desiredY = Math.round(CAMERA_LIGHT.y / texelWidth) * texelWidth
+      // Lead clamped to 0.3·halfWidth: the camera stays well inside the
+      // sampled box (0.88·halfWidth) even fully ahead-biased.
+      const lead =
+        lightSpeed > 1e-3
+          ? Math.min(LEAD_SECONDS, (state.halfWidth * 0.3) / lightSpeed)
+          : 0
+      const targetX = CAMERA_LIGHT.x + this.velocityLight.x * lead
+      const targetY = CAMERA_LIGHT.y + this.velocityLight.y * lead
+      state.desiredX = Math.round(targetX / texelWidth) * texelWidth
+      state.desiredY = Math.round(targetY / texelWidth) * texelWidth
       const zQuantum = state.halfWidth * 0.5
       state.desiredZ = Math.round(CAMERA_LIGHT.z / zQuantum) * zQuantum
       const dynamic = index < this.dynamicLevels
@@ -362,35 +395,41 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       if (expired) dirtyReasons |= DIRTY_EXPIRED
       if (directionChanged) dirtyReasons |= DIRTY_DIRECTION
       state.dirtyReasons = dirtyReasons
+    }
 
-      const canRender = dynamic || state.forceDirty || budget > 0
-      if (dirtyReasons !== 0 && canRender) {
-        if (!dynamic && !state.forceDirty) budget--
-        state.centerX = state.desiredX
-        state.centerY = state.desiredY
-        state.centerZ = state.desiredZ
-        state.valid = true
-        state.forceDirty = false
-        state.age = 0
-        state.renderCount++
-
-        LEVEL_CENTER.set(
-          state.centerX,
-          state.centerY,
-          state.centerZ + state.halfWidth + this.lightMargin,
-        ).applyMatrix4(LIGHT_ORIENTATION)
-        levelLight.position.copy(LEVEL_CENTER)
-        levelLight.target.position.copy(LEVEL_CENTER).add(LIGHT_DIRECTION)
-        levelLight.updateMatrixWorld(true)
-        levelLight.target.updateMatrixWorld(true)
-        shadow.needsUpdate = true
-        const shadowNode = this.shadowNodes[index] as unknown as InternalShadowNode
-        if (shadowNode.shadowMap) {
-          shadowNode.updateShadow(frame)
-          shadow.needsUpdate = false
-        }
+    // ── Pass 2: render forced/dynamic levels always, then hand the budget
+    // to the MOST-LAGGED dirty levels first. The old lowest-index-first
+    // order let a fast camera keep the fine levels dirty every frame and
+    // starve the mid levels — their eventual catch-up was the "shadow
+    // appears one section at a time" pop during rides.
+    const pending: { index: number; urgency: number }[] = []
+    for (let index = 0; index < this.levels; index++) {
+      const state = this.levelStates[index]
+      if (state.dirtyReasons === 0) continue
+      const dynamic = index < this.dynamicLevels
+      if (dynamic || state.forceDirty) {
+        this.renderLevel(index, frame)
+        continue
       }
+      const recenterDistance = Math.max(1e-6, state.halfWidth * this.guardBand * 0.5)
+      const urgency = state.valid
+        ? Math.max(
+            Math.abs(state.desiredX - state.centerX),
+            Math.abs(state.desiredY - state.centerY),
+          ) / recenterDistance
+          + (state.desiredZ !== state.centerZ ? 10 : 0)
+        : Infinity
+      pending.push({ index, urgency })
+    }
+    pending.sort((a, b) => b.urgency - a.urgency)
+    for (const entry of pending) {
+      if (budget <= 0) break
+      budget--
+      this.renderLevel(entry.index, frame)
+    }
 
+    for (let index = 0; index < this.levels; index++) {
+      const state = this.levelStates[index]
       if (state.valid) {
         this.levelData[index].set(
           state.centerX,
@@ -403,6 +442,36 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     this.updateDynamicCasterShadow(frame)
     this.budgetAfter = budget
     return undefined
+  }
+
+  /** Commit a level's desired center and render its shadow map. */
+  private renderLevel(index: number, frame: NodeFrame): void {
+    const state = this.levelStates[index]
+    const levelLight = this.lights[index]
+    const shadow = levelLight.shadow
+    state.centerX = state.desiredX
+    state.centerY = state.desiredY
+    state.centerZ = state.desiredZ
+    state.valid = true
+    state.forceDirty = false
+    state.age = 0
+    state.renderCount++
+
+    LEVEL_CENTER.set(
+      state.centerX,
+      state.centerY,
+      state.centerZ + state.halfWidth + this.lightMargin,
+    ).applyMatrix4(LIGHT_ORIENTATION)
+    levelLight.position.copy(LEVEL_CENTER)
+    levelLight.target.position.copy(LEVEL_CENTER).add(LIGHT_DIRECTION)
+    levelLight.updateMatrixWorld(true)
+    levelLight.target.updateMatrixWorld(true)
+    shadow.needsUpdate = true
+    const shadowNode = this.shadowNodes[index] as unknown as InternalShadowNode
+    if (shadowNode.shadowMap) {
+      shadowNode.updateShadow(frame)
+      shadow.needsUpdate = false
+    }
   }
 
   /** Force every level, or only levels overlapping a world-space sphere. */
@@ -491,9 +560,17 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       shadow.camera.top = halfWidth
       shadow.camera.bottom = -halfWidth
       shadow.camera.near = this.shadowCameraNear
+      // Down-sun reach = halfWidth + DEPTH_REACH past the level center. The
+      // center tracks the CAMERA's light-space depth, so a rider 40–60 m
+      // above the seabed (Torrent plunge/helix) pushed the ground below
+      // OUTSIDE the old margin+2·halfWidth slab of the finest level — and
+      // because level blending weighs XY only, that level CLAIMED the region
+      // and returned lit: whole chunks of ground shadow popped in and out as
+      // the z-center requantized. DEPTH_REACH covers the park's full
+      // camera-over-ground range (~80 m · sin 42° + z-quantum lag).
       shadow.camera.far = Math.max(
         this.shadowCameraNear + 1,
-        Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2),
+        Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2 + DEPTH_REACH),
       )
       shadow.camera.updateProjectionMatrix()
       // A non-default mask prevents Three from replacing this with the main

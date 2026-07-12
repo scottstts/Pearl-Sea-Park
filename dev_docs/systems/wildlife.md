@@ -59,3 +59,19 @@
   remains the lighting/material baseline.
 - Offline procedural-mesh audit passed for every retained archetype; the
   largest repeated shape is the 298-vertex/494-triangle seahorse.
+
+## 2026-07-12 standing-issues update
+
+- Turtle feeding is removed by ruling (station, pellets, attractor event,
+  attraction steering). The lagoon has a real water section now: sandy bed
+  disc at +0.22, remade surface at +0.46 (depth gradient, swell + wake-ring
+  normals, rim foam) — the old disc z-fought the plaza plate coplanarly,
+  which read as a star-shaped flicker through the circle fan.
+- Turtles and seahorses are re-sculpted (scute-stepped carapace, paddle
+  flippers with thickness; tapered tube seahorse with curled tail); jellies
+  gained pulse-darting, tentacle billow, and breathing emissive.
+- Sun Garden holds the "flowers and butterflies" promise: sun lantern,
+  anemone/frond parterre, planters, benches, and 44 GPU-fluttered sea
+  butterflies (instanceOrigin/instancePhase pattern, zero per-frame CPU).
+- The menagerie junction is a roundabout plaza; garden spokes start at its
+  rim. Grotto jellies are gone with the Grotto.

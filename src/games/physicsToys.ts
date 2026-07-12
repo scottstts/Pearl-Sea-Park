@@ -1,13 +1,16 @@
 import type { RigidBody } from '@dimforge/rapier3d-compat'
 import {
   BoxGeometry,
+  CatmullRomCurve3,
   ConeGeometry,
   CylinderGeometry,
-  Group,
+  LatheGeometry,
   Mesh,
   Object3D,
   SphereGeometry,
   TorusGeometry,
+  TubeGeometry,
+  Vector2,
   Vector3,
 } from 'three'
 import { registerBookmark } from '../core/debug'
@@ -34,7 +37,6 @@ export class PhysicsToys {
   private readonly props: ScoredProp[] = []
   private readonly horn = new Vector3()
   private readonly pockets: { position: Vector3; points: number }[] = []
-  private hammer: Group | null = null
   private puck: { body: RigidBody; mesh: Mesh; restY: number; bellY: number; ringing: boolean } | null = null
   private wins = 0
   private hatAwarded = false
@@ -79,25 +81,94 @@ export class PhysicsToys {
 
     const counter = new Mesh(new BoxGeometry(8, 0.9, 2.2), lib.woodDark)
     counter.position.set(x, ground + 0.45, z + 1.2)
-    const plinth = new Mesh(new CylinderGeometry(1.45, 1.6, 0.55, 32), lib.marble)
-    plinth.position.set(x, baseY + 0.2, z)
-    const narwhal = new Mesh(new SphereGeometry(1, 28, 18), lib.nacre)
-    narwhal.scale.set(1.5, 0.68, 0.72)
-    narwhal.rotation.x = -0.12
-    narwhal.position.set(x, baseY + 1.05, z)
-    const tail = new Mesh(new ConeGeometry(0.68, 1.2, 4), lib.nacre)
-    tail.rotation.x = Math.PI / 2
-    tail.rotation.z = Math.PI / 4
-    tail.position.set(x, baseY + 1, z + 1.6)
-    const horn = new Mesh(new ConeGeometry(0.16, 1.55, 20), lib.brass)
+
+    // Marble splash collar the bust breaches out of — a closed clockwise
+    // lathe with a real interior, replacing the plain plinth cylinder.
+    const collar = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(0.2, 0),
+          new Vector2(1.6, 0),
+          new Vector2(1.66, 0.14),
+          new Vector2(1.52, 0.28),
+          new Vector2(1.18, 0.38),
+          new Vector2(0.95, 0.5),
+          new Vector2(0.84, 0.62),
+          new Vector2(0.74, 0.6),
+          new Vector2(0.66, 0.44),
+          new Vector2(0.4, 0.36),
+          new Vector2(0.2, 0.34),
+          new Vector2(0.2, 0),
+        ],
+        36,
+      ),
+      lib.marble,
+    )
+    collar.position.set(x, baseY - 0.05, z)
+
+    // The narwhal itself: a plump breaching torpedo (closed lathe — belly,
+    // shoulders, melon swell, tapering snout), tilted so the snout tip lands
+    // exactly under the tusk axis at (x, baseY+1.54, z−0.35). The physics
+    // cone and ring-scoring cylinder are untouched.
+    const body = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(0.02, 0),
+          new Vector2(0.34, 0.02),
+          new Vector2(0.5, 0.14),
+          new Vector2(0.585, 0.38),
+          new Vector2(0.6, 0.62),
+          new Vector2(0.54, 0.9),
+          new Vector2(0.44, 1.1),
+          new Vector2(0.36, 1.22),
+          new Vector2(0.315, 1.3),
+          new Vector2(0.24, 1.38),
+          new Vector2(0.12, 1.46),
+          new Vector2(0.02, 1.5),
+        ],
+        28,
+      ),
+      lib.nacre,
+    )
+    body.scale.set(0.92, 1, 1) // subtle oval cross-section
+    body.rotation.x = -0.32
+    body.position.set(x, baseY + 0.12, z + 0.12)
+
+    // Spiral tusk: the visual cone matches the fixed physics cone, and a
+    // shrinking helix wrap gives the signature left-hand twist.
+    const horn = new Mesh(new ConeGeometry(0.145, 1.55, 18), lib.brass)
     horn.position.set(x, baseY + 2.15, z - 0.35)
+    const helixPoints: Vector3[] = []
+    for (let i = 0; i <= 36; i++) {
+      const t = i / 36
+      const angle = t * Math.PI * 6
+      const radius = 0.15 * (1 - t) + 0.012
+      helixPoints.push(new Vector3(Math.cos(angle) * radius, -0.775 + 1.55 * t, Math.sin(angle) * radius))
+    }
+    const spiral = new Mesh(
+      new TubeGeometry(new CatmullRomCurve3(helixPoints), 72, 0.021, 6),
+      lib.brass,
+    )
+    spiral.position.copy(horn.position)
     this.horn.set(x, baseY + 1.38, z - 0.35)
-    const eye = new Mesh(new SphereGeometry(0.065, 12, 8), lib.iron)
-    eye.position.set(x - 0.55, baseY + 1.3, z - 0.58)
-    this.group.add(counter, plinth, narwhal, tail, horn, eye)
+
+    this.group.add(counter, collar, body, horn, spiral)
+
+    // Pectoral paddles and both eyes, seated on the tilted body's surface.
+    for (const side of [-1, 1]) {
+      const fin = new Mesh(new SphereGeometry(1, 14, 10), lib.nacre)
+      fin.scale.set(0.4, 0.09, 0.2)
+      fin.rotation.y = side * 0.35
+      fin.rotation.z = side * -0.55
+      fin.position.set(x + side * 0.5, baseY + 0.78, z - 0.02)
+      const eye = new Mesh(new SphereGeometry(0.05, 12, 8), lib.iron)
+      eye.position.set(x + side * 0.265, baseY + 1.275, z - 0.4)
+      this.group.add(fin, eye)
+    }
+
     emitCounterJoinery(this.fixtureWriter, lib, x, ground, z + 1.2, 8, 2.2)
     physics.addStaticBox(x, ground + 0.45, z + 1.2, 4, 0.45, 1.1)
-    physics.addStaticCylinder(x, baseY + 0.2, z, 0.28, 1.6)
+    physics.addStaticCylinder(x, baseY + 0.2, z, 0.28, 1.7)
     const hornBody = world.createRigidBody(
       rapier.RigidBodyDesc.fixed().setTranslation(x, baseY + 2.15, z - 0.35),
     )
@@ -187,6 +258,20 @@ export class PhysicsToys {
     backboard.position.set(x, ground + 2.6, 146.5)
     this.group.add(backboard)
     emitBackboardFrame(this.fixtureWriter, lib, x, ground + 2.6, 146.27, 5.8, 3.4)
+
+    // Each pocket is a real recessed funnel, not a torus stuck on a flat
+    // board: an inward-wound lathe throat (visible interior — the winding
+    // faces the axis) capped by a nacre gate disc, behind the brass rim.
+    const funnelProfile = new LatheGeometry(
+      [
+        new Vector2(0.46, 0),
+        new Vector2(0.3, -0.18),
+        new Vector2(0.16, -0.28),
+        new Vector2(0.145, -0.32),
+      ],
+      24,
+    )
+    funnelProfile.rotateX(-Math.PI / 2) // throat recedes into the board (+z)
     for (const [offset, height, points] of [
       [-1.45, 2.2, 10],
       [0, 2.85, 50],
@@ -194,8 +279,37 @@ export class PhysicsToys {
     ] as const) {
       const pocket = new Mesh(new TorusGeometry(0.48, 0.075, 10, 32), lib.brass)
       pocket.position.set(x + offset, ground + height, 146.28)
-      this.group.add(pocket)
+      const funnel = new Mesh(funnelProfile, lib.woodDark)
+      funnel.position.copy(pocket.position)
+      const gate = new Mesh(new CylinderGeometry(0.15, 0.15, 0.04, 18), lib.nacre)
+      gate.rotation.x = Math.PI / 2
+      gate.position.set(x + offset, ground + height, 146.58)
+      // Brass score lozenge under each pocket mouth.
+      const plaque = new Mesh(new BoxGeometry(0.34, 0.34, 0.05), lib.brass)
+      plaque.rotation.z = Math.PI / 4
+      plaque.position.set(x + offset, ground + height - 0.78, 146.32)
+      this.group.add(pocket, funnel, gate, plaque)
       this.pockets.push({ position: pocket.position.clone(), points })
+    }
+
+    // Crest and side wings finish the fixture: a scalloped crown rail with
+    // a pearl medallion, and two angled return wings tying the board to the
+    // ramp so it no longer floats as a lone slab.
+    const crownRail = new Mesh(new BoxGeometry(6.1, 0.22, 0.24), lib.woodDark)
+    crownRail.position.set(x, ground + 4.42, 146.5)
+    const medallionRing = new Mesh(new TorusGeometry(0.3, 0.055, 10, 26), lib.brass)
+    medallionRing.position.set(x, ground + 4.75, 146.48)
+    const medallion = new Mesh(new SphereGeometry(0.21, 16, 12), lib.nacre)
+    medallion.position.set(x, ground + 4.75, 146.48)
+    this.group.add(crownRail, medallionRing, medallion)
+    for (const side of [-1, 1]) {
+      const finial = new Mesh(new SphereGeometry(0.12, 12, 9), lib.brass)
+      finial.position.set(x + side * 2.95, ground + 4.42, 146.5)
+      const wing = new Mesh(new BoxGeometry(0.16, 3.0, 1.5), lib.woodDark)
+      wing.rotation.y = side * 0.42
+      wing.position.set(x + side * 3.16, ground + 2.4, 147.15)
+      this.group.add(finial, wing)
+      physics.addStaticBox(x + side * 3.16, ground + 2.4, 147.15, 0.12, 1.5, 0.78, side * 0.42)
     }
     const lipLeft = new Mesh(new BoxGeometry(0.15, 0.4, 9.8), lib.brass)
     const lipRight = lipLeft.clone()
@@ -245,7 +359,7 @@ export class PhysicsToys {
 
   private buildKrakenBell(ctx: GameContext, ground: number): void {
     const lib = this.services.materials.lib!
-    const { physics, interaction } = this.services
+    const { physics } = this.services
     const world = physics.world!
     const rapier = physics.rapier!
     const x = 114
@@ -253,18 +367,77 @@ export class PhysicsToys {
     const restY = ground + 0.72
     const bellY = ground + 6.25
 
-    const tower = new Mesh(new BoxGeometry(2.2, 6.3, 0.45), lib.woodDark)
-    tower.position.set(x, ground + 3.2, z)
+    // Tapered tower board: a flattened four-sided frustum instead of the old
+    // plain slab, with graduation rungs mounted BETWEEN the two brass rails.
+    const towerGeometry = new CylinderGeometry(0.58, 1.02, 6.1, 4, 1)
+    towerGeometry.rotateY(Math.PI / 4)
+    towerGeometry.scale(1, 1, 0.3)
+    const tower = new Mesh(towerGeometry, lib.woodDark)
+    tower.position.set(x, ground + 3.1, z)
     const railLeft = new Mesh(new CylinderGeometry(0.055, 0.055, 5.5, 10), lib.brass)
     const railRight = railLeft.clone()
     railLeft.position.set(x - 0.42, ground + 3.35, z - 0.28)
     railRight.position.set(x + 0.42, ground + 3.35, z - 0.28)
-    const bell = new Mesh(new ConeGeometry(0.58, 0.7, 24, 1, true), lib.brass)
-    bell.position.set(x, bellY, z - 0.32)
-    bell.rotation.x = Math.PI
-    this.group.add(tower, railLeft, railRight, bell)
+    this.group.add(tower, railLeft, railRight)
+    const rungGeometry = new CylinderGeometry(0.022, 0.022, 0.84, 8)
+    rungGeometry.rotateZ(Math.PI / 2)
+    for (let i = 0; i < 8; i++) {
+      const rung = new Mesh(rungGeometry, lib.brass)
+      rung.position.set(x, ground + 1.35 + i * 0.62, z - 0.28)
+      this.group.add(rung)
+    }
+
+    // The bell proper: a closed clockwise lathe (lip, waist, shoulder, then
+    // the interior you can see from below), a clapper on a hanger rod, hung
+    // from the yoke crossbar that emitHighStrikerTrim raises over the tower.
+    const bell = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(0.5, 0),
+          new Vector2(0.585, 0.03),
+          new Vector2(0.57, 0.1),
+          new Vector2(0.47, 0.28),
+          new Vector2(0.33, 0.46),
+          new Vector2(0.18, 0.58),
+          new Vector2(0.05, 0.63),
+          new Vector2(0.04, 0.6),
+          new Vector2(0.16, 0.52),
+          new Vector2(0.3, 0.4),
+          new Vector2(0.42, 0.22),
+          new Vector2(0.46, 0.06),
+          new Vector2(0.5, 0),
+        ],
+        30,
+      ),
+      lib.brass,
+    )
+    bell.position.set(x, bellY - 0.12, z - 0.32)
+    const hangerRod = new Mesh(new CylinderGeometry(0.012, 0.012, 0.26, 8), lib.iron)
+    hangerRod.position.set(x, bellY + 0.28, z - 0.32)
+    const link = new Mesh(new CylinderGeometry(0.02, 0.02, 0.5, 8), lib.brass)
+    link.position.set(x, bellY + 0.72, z - 0.32)
+    const clapper = new Mesh(new SphereGeometry(0.07, 12, 9), lib.iron)
+    clapper.position.set(x, bellY + 0.05, z - 0.32)
+    this.group.add(bell, hangerRod, link, clapper)
+
     emitHighStrikerTrim(this.fixtureWriter, lib, x, ground, z)
     physics.addStaticBox(x, ground + 3.2, z + 0.15, 1.1, 3.15, 0.23)
+
+    // Two verdigris kraken tentacles coil up the tower flanks, rooted in the
+    // marble foot — chains of tapering members with knuckles, tips curling.
+    for (const side of [-1, 1]) {
+      this.buildTentacle(
+        [
+          new Vector3(x + side * 1.05, ground + 0.05, z + 0.1),
+          new Vector3(x + side * 1.42, ground + 0.95, z + 0.02),
+          new Vector3(x + side * 1.28, ground + 1.85, z - 0.08),
+          new Vector3(x + side * 0.92, ground + 2.45, z - 0.05),
+          new Vector3(x + side * 0.78, ground + 2.72, z + 0.12),
+        ],
+        [0.15, 0.11, 0.075, 0.045],
+        lib.verdigris,
+      )
+    }
 
     const puckBody = world.createRigidBody(
       rapier.RigidBodyDesc.dynamic()
@@ -282,35 +455,58 @@ export class PhysicsToys {
     this.puck = { body: puckBody, mesh: puckMesh, restY, bellY, ringing: false }
     physics.addStaticBox(x, ground + 0.42, z - 0.35, 0.45, 0.2, 0.3)
 
-    const hammer = new Group()
-    hammer.position.set(x, ground + 1.2, z + 1.1)
-    const handle = new Mesh(new CylinderGeometry(0.055, 0.065, 2.1, 12), lib.woodDark)
-    handle.position.y = 0.95
+    // The hammer is a static prop now (no interaction, no swing): laid down
+    // beside the strike pad as if just set there — head flat on the ground,
+    // striking face toward the board, handle resting back toward the hall.
     const head = new Mesh(new CylinderGeometry(0.34, 0.34, 0.72, 20), lib.brass)
-    head.rotation.z = Math.PI / 2
-    head.position.y = 1.9
-    hammer.add(handle, head)
-    this.hammer = hammer
-    this.group.add(hammer)
-
-    interaction?.register({
-      position: new Vector3(x, ground + 1.2, z + 2.2),
-      radius: 3.3,
-      prompt: 'Swing the Kraken hammer',
-      onInteract: () => this.strikeKraken(ctx),
-    })
+    head.position.set(x - 0.85, ground + 0.36, z - 0.15)
+    const handleFrom = new Vector3(x - 0.62, ground + 0.4, z + 0.05)
+    const handleTo = new Vector3(x - 0.1, ground + 0.09, z + 2.0)
+    const handleDirection = new Vector3().subVectors(handleTo, handleFrom)
+    const handle = new Mesh(
+      new CylinderGeometry(0.05, 0.062, handleDirection.length(), 12),
+      lib.woodDark,
+    )
+    handle.position.copy(handleFrom).add(handleTo).multiplyScalar(0.5)
+    handle.quaternion.setFromUnitVectors(
+      new Vector3(0, 1, 0),
+      handleDirection.clone().normalize(),
+    )
+    const buttCap = new Mesh(new SphereGeometry(0.07, 10, 8), lib.brass)
+    buttCap.position.copy(handleTo)
+    this.group.add(head, handle, buttCap)
+    physics.addStaticCylinder(x - 0.85, ground + 0.36, z - 0.15, 0.36, 0.34)
+    void ctx
   }
 
-  private strikeKraken(ctx: GameContext): void {
-    const puck = this.puck
-    if (!puck) return
-    const timing = Math.sin(ctx.time.elapsed * 2.6) * 0.5 + 0.5
-    const power = 0.35 + timing * 0.65
-    puck.body.setTranslation({ x: 114, y: puck.restY, z: 146.15 }, true)
-    puck.body.setLinvel({ x: 0, y: 0, z: 0 }, true)
-    puck.body.setLinvel({ x: 0, y: 7.5 + power * 4.2, z: 0 }, true)
-    puck.ringing = false
-    this.krakenBest = Math.max(this.krakenBest, power)
+  /** A tapering organic limb: capped cylinder segments with sphere knuckles. */
+  private buildTentacle(
+    spine: Vector3[],
+    radii: number[],
+    material: Parameters<SlotWriter['place']>[0],
+  ): void {
+    const up = new Vector3(0, 1, 0)
+    for (let i = 0; i < spine.length - 1; i++) {
+      const a = spine[i]
+      const b = spine[i + 1]
+      const radius = radii[Math.min(i, radii.length - 1)]
+      const direction = new Vector3().subVectors(b, a)
+      const segment = new Mesh(
+        new CylinderGeometry(radius * 0.78, radius, direction.length(), 10),
+        material,
+      )
+      segment.position.copy(a).add(b).multiplyScalar(0.5)
+      segment.quaternion.setFromUnitVectors(up, direction.clone().normalize())
+      this.group.add(segment)
+      if (i > 0) {
+        const knuckle = new Mesh(new SphereGeometry(radius * 1.08, 10, 8), material)
+        knuckle.position.copy(a)
+        this.group.add(knuckle)
+      }
+    }
+    const tip = new Mesh(new SphereGeometry(radii[radii.length - 1] * 0.85, 10, 8), material)
+    tip.position.copy(spine[spine.length - 1])
+    this.group.add(tip)
   }
 
   fixedUpdate(ctx: GameContext, dt: number): void {
@@ -363,16 +559,12 @@ export class PhysicsToys {
     }
   }
 
-  update(ctx: GameContext): void {
+  update(): void {
     for (const prop of this.props) syncDynamicProp(prop)
     const puck = this.puck
     if (puck) {
       const p = puck.body.translation()
       puck.mesh.position.set(p.x, p.y, p.z)
-    }
-    if (this.hammer) {
-      const sweep = Math.sin(ctx.time.elapsed * 2.6)
-      this.hammer.rotation.z = -0.8 + sweep * 0.66
     }
   }
 

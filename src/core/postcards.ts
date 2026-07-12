@@ -9,7 +9,9 @@ export const POSTCARD_VIEWS = [
   { name: 'wishing-well', intent: 'Carousel lights ripple across the physical wishing well' },
   { name: 'snell', intent: "Snell's window fills the Observatory oculus" },
   { name: 'whale', intent: 'Shadow first, then the whale eye at the Overlook' },
-  { name: 'treasury', intent: 'The pearl treasury reads as a galaxy in the Grotto' },
+  // The Grotto (and its pearl-treasury postcard) was removed from the park;
+  // the Sun Garden's glasshouse interior takes the ninth frame.
+  { name: 'sun-garden', intent: 'Blooms and butterflies under the Sun Garden glass' },
   { name: 'fountain', intent: 'Light-threaded bubble columns crown Tidal Court' },
 ] as const
 

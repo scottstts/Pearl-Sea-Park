@@ -9,3 +9,12 @@
 - Dense flora and micro-dressing never cast directional shadows. A former final traversal accidentally re-enabled shadows after seagrass disabled them, submitting up to 120,000 grass triangles to shadow rendering; substantial reef forms are now the only flora casters.
 - Watch exposure: sand albedo is deliberately dark-ish (0.48–0.58) because caustics (×1.15) + sun 3.4 + fog inscatter stack up; if the seabed blows out again, look at that stack before touching the tonemap.
 - Bookmarks: `?view=dropoff` (postcard 4 staging), `?view=gardens`.
+
+## 2026-07-12 standing-issues update
+
+- `terrainHeight` lives in world/terrainHeight.ts (a leaf module with .ts
+  imports) so offline geometry audits sample the exact game field;
+  world/terrain.ts re-exports it. The grotto massif/gorge/channel cuts and
+  the massif reef-stone sand tint were removed with the Grotto.
+- The Great Wheel basin gets a dense local physics heightfield patch — see
+  physics/physicsWorld.ts and rides-wheel-carousel.md.

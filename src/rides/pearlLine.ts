@@ -21,29 +21,41 @@ import { inParkFootprint } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
 import { VehicleSeatRig } from './vehicleSeat'
 import { PearlLineCabinFleet } from './pearlLineCabin'
+import {
+  PEARL_HANG,
+  PEARL_STATION_ANCHORS,
+  createPearlRouteCurve,
+  pearlStationCableY,
+} from './pearlRoute'
 
 const CABIN_COUNT = 8
-const CRUISE_SPEED = 2.6
-const STATION_SPEED = 0.001
-const DWELL_SECONDS = 9
-// Keep the glide-in window SHORT: the slowdown is global (one cable), so a
-// wide window near either station puts the whole line into a long crawl.
-const STATION_WINDOW = 6
-const CRUISE_Y = -12 // 14 m over the -26 m floor
+const CRUISE_SPEED = 7.8 // 2× the previous 3.9, per Scott's ride pass
 
 interface Station {
   name: string
   s: number // arc-length of the dock point
   position: Vector3
   exit: Vector3
-  pulsedAtS: number // cable position of this station's last pulse
 }
 
+type LineState =
+  | 'cruising' // constant loop, nobody waiting
+  | 'arriving' // guest waiting on a platform — glide the next cabin in
+  | 'boarding' // cabin held at the platform while the guest decides
+  | 'riding' // guest aboard — non-stop to the other station
+  | 'unloading' // held at the destination until the guest steps off
+
 /**
- * The Pearl Line (plan §9.6): a pulse-gondola cable loop over the whole park —
- * 8 brass-and-glass cabins, ~1 km of cable at 14 m, stations at the Atrium
- * and the Wheel Pier. The entire line slows while any cabin traverses a
- * station and halts for boarding; cabins sway on the shared current field.
+ * The Pearl Line (plan §9.6): a cable-gondola loop over the whole park —
+ * 8 open brass cabins, ~1 km of cable at 14 m, stations at the Atrium and
+ * the Wheel Pier. The route lives in pearlRoute.ts (offline-audited against
+ * every dome, the wheel envelope, and the seabed).
+ *
+ * Ride contract: the cars never stop on their own. A guest standing on
+ * either platform makes the NEXT arriving cabin stop there (walking away
+ * releases it); board with E — the camera faces the direction of travel —
+ * and the line runs non-stop to the other station and holds. E steps off;
+ * nothing moves again until the guest is off and clear.
  */
 export class PearlLineSystem implements GameSystem {
   readonly id = 'pearl-line'
@@ -61,9 +73,11 @@ export class PearlLineSystem implements GameSystem {
   private cabinFleet: PearlLineCabinFleet | null = null
   private readonly cabinTilt: { roll: number; pitch: number }[] = []
   private stations: Station[] = []
+  private state: LineState = 'cruising'
+  private waitStation = -1 // stations[] index the guest is waiting at
+  private destStation = -1 // stations[] index the ride is bound for
+  private dockedCabin = -1
   private ridingCabin = -1
-  // Pulse drive: one global dwell — the whole line halts, both platforms load.
-  private dwellTimer = 0
   private readonly scratchA = new Vector3()
   private readonly scratchB = new Vector3()
 
@@ -78,32 +92,10 @@ export class PearlLineSystem implements GameSystem {
     const { physics } = this.services
     const kit = new ArchKit(lib)
 
-    // ── The loop ──────────────────────────────────────────────────────────
-    // Stations dip the cable to boarding height; everything else cruises.
-    // Legs are routed CLEAR of the atrium and observatory domes — the first
-    // draft flew straight through the observatory's glass.
-    const atriumStation = new Vector3(-34, 0, 210)
-    const wheelStation = new Vector3(146, 0, 58)
-    const waypoints: Vector3[] = [
-      atriumStation.clone(), // 0 — Esplanade West station (y patched below)
-      new Vector3(-90, CRUISE_Y, 172),
-      new Vector3(-148, CRUISE_Y, 102),
-      new Vector3(-122, CRUISE_Y, 8),
-      new Vector3(-55, CRUISE_Y, -66),
-      new Vector3(35, CRUISE_Y, -82),
-      new Vector3(112, CRUISE_Y, -28),
-      wheelStation.clone(), // 7 — Wheel Pier station
-      new Vector3(170, CRUISE_Y, 140),
-      new Vector3(118, CRUISE_Y, 212),
-      new Vector3(36, -11.5, 268),
-      new Vector3(-30, -11.5, 278),
-    ]
-    // Cabin origin hangs 3.22 m under the cable; dock with floor at platform.
-    const stationCableY = (v: Vector3) => terrainHeight(v.x, v.z) + 0.43 + 3.22
-    waypoints[0].y = stationCableY(atriumStation)
-    waypoints[7].y = stationCableY(wheelStation)
-
-    const curve = new CatmullRomCurve3(waypoints, true, 'centripetal', 0.6)
+    // ── The loop (authored + audited in pearlRoute.ts) ───────────────────
+    const atriumStation = PEARL_STATION_ANCHORS.atrium.clone()
+    const wheelStation = PEARL_STATION_ANCHORS.wheel.clone()
+    const curve = createPearlRouteCurve()
     this.curve = curve
     this.loopLength = curve.getLength()
 
@@ -161,7 +153,12 @@ export class PearlLineSystem implements GameSystem {
       }
       kit.gableRoof(w, v.x, y + 4.55, v.z, 8.8, 5.6, 1.25)
       const exit = new Vector3(v.x, y + 0.1, v.z + 3.6)
-      return { name, s: findS(new Vector3(v.x, stationCableY(v), v.z)), position: new Vector3(v.x, y, v.z), exit, pulsedAtS: -1000 }
+      return {
+        name,
+        s: findS(new Vector3(v.x, pearlStationCableY(v), v.z)),
+        position: new Vector3(v.x, y, v.z),
+        exit,
+      }
     }
     this.stations = [
       buildStation(atriumStation, 'Esplanade West'),
@@ -235,57 +232,88 @@ export class PearlLineSystem implements GameSystem {
       const interaction = this.services.interaction
       const seatEye = new Vector3(0, 1.35, -0.35)
 
-      for (const station of this.stations) {
+      this.stations.forEach((station, index) => {
         interaction.register({
           position: station.position.clone().setY(station.position.y + 1.3),
           radius: 5,
           prompt: 'Board the Pearl Line',
           onInteract: () => {
-            const cabin = this.dwellingCabinAt(station)
-            if (cabin === -1 || rig.seated) return
-            this.ridingCabin = cabin
-            this.dwellTimer = Math.max(this.dwellTimer, 4) // hold the doors
-            rig.attach(this.cabins[cabin], seatEye, Math.PI, ctx.camera)
+            if (this.state !== 'boarding' || this.waitStation !== index) return
+            if (this.dockedCabin === -1 || rig.seated) return
+            this.ridingCabin = this.dockedCabin
+            this.destStation = 1 - index // the OTHER station, non-stop
+            this.state = 'riding'
+            // baseYaw π puts the seat camera on the cabin's +z — the
+            // direction of travel.
+            rig.attach(this.cabins[this.ridingCabin], seatEye, Math.PI, ctx.camera)
+            rig.canExit = false
             ctx.events.emit('ticket/punched', { ride: 'pearl-line' })
             ctx.events.emit('ride/pearl-riding', { riding: true })
           },
-          enabled: () => !rig.seated && this.dwellingCabinAt(station) !== -1,
+          enabled: () =>
+            !rig.seated &&
+            this.state === 'boarding' &&
+            this.waitStation === index &&
+            this.dockedCabin !== -1,
         })
         interaction.register({
           position: station.position.clone().setY(station.position.y + 1.3),
           radius: 14,
           prompt: `Alight at ${station.name}`,
           onInteract: () => {
-            if (!rig.seated || this.ridingCabin === -1) return
+            if (!rig.seated || this.state !== 'unloading' || this.destStation !== index) return
             rig.requestExit(station.exit)
             ctx.events.emit('ride/pearl-riding', { riding: false })
+            // The guest lands ON the platform: the cabin keeps waiting for
+            // them (boarding state) and releases once they walk clear.
             this.ridingCabin = -1
+            this.waitStation = index
+            this.destStation = -1
+            this.state = 'boarding'
           },
-          enabled: () =>
-            rig.seated &&
-            this.ridingCabin !== -1 &&
-            this.dwellingCabinAt(station) === this.ridingCabin,
+          enabled: () => rig.seated && this.state === 'unloading' && this.destStation === index,
         })
-      }
+      })
     }
+  }
+
+  /** Cable distance still to advance before `to` reaches `target`. */
+  private forwardDistance(from: number, target: number): number {
+    return (((target - from) % this.loopLength) + this.loopLength) % this.loopLength
   }
 
   /** Shortest forward/backward distance between arc positions on the loop. */
   private loopDistance(a: number, b: number): number {
-    const raw = Math.abs(((a - b) % this.loopLength + this.loopLength) % this.loopLength)
-    return Math.min(raw, this.loopLength - raw)
+    const forward = this.forwardDistance(a, b)
+    return Math.min(forward, this.loopLength - forward)
   }
 
   private cabinS(index: number): number {
     return (this.cableS + (index * this.loopLength) / CABIN_COUNT) % this.loopLength
   }
 
-  private dwellingCabinAt(station: Station): number {
-    if (this.dwellTimer <= 0) return -1
+  /** The cabin with the least cable left to travel to the station. */
+  private nextArrival(station: Station): { index: number; ahead: number } {
+    let best = -1
+    let bestAhead = Infinity
     for (let i = 0; i < CABIN_COUNT; i++) {
-      if (this.loopDistance(this.cabinS(i), station.s) < 2.6) return i
+      const ahead = this.forwardDistance(this.cabinS(i), station.s)
+      if (ahead < bestAhead) {
+        bestAhead = ahead
+        best = i
+      }
     }
-    return -1
+    return { index: best, ahead: bestAhead }
+  }
+
+  /** True while the guest stands on the given station platform. */
+  private playerAt(station: Station): boolean {
+    if (!this.player) return false
+    const p = this.player.position
+    return (
+      Math.hypot(p.x - station.position.x, p.z - station.position.z) < 6.5 &&
+      Math.abs(p.y - station.position.y) < 3.5
+    )
   }
 
   private placeCabins(elapsed: number): void {
@@ -297,7 +325,7 @@ export class PearlLineSystem implements GameSystem {
       const u = s / this.loopLength
       const point = curve.getPointAt(u, this.scratchA)
       const tangent = curve.getTangentAt(u, this.scratchB)
-      cabin.position.set(point.x, point.y - 3.22, point.z)
+      cabin.position.set(point.x, point.y - PEARL_HANG, point.z)
       const yaw = Math.atan2(tangent.x, tangent.z)
       // Sway: current field + a slow breathing roll, stronger between stations.
       const tilt = this.cabinTilt[i]
@@ -315,48 +343,80 @@ export class PearlLineSystem implements GameSystem {
 
   update(ctx: GameContext, dt: number): void {
     if (!this.curve) return
+    const rig = this.rig
 
-    // Pulse drive: slow through station windows; when a cabin centres a
-    // platform, halt the WHOLE line once (both platforms load together) and
-    // don't pulse again until the cable has advanced well past the spot.
     let target = CRUISE_SPEED
-    if (this.dwellTimer > 0) {
-      this.dwellTimer -= dt
-      target = 0
-    } else {
-      for (const station of this.stations) {
-        let nearest = Infinity
-        for (let i = 0; i < CABIN_COUNT; i++) {
-          const d = this.loopDistance(this.cabinS(i), station.s)
-          nearest = Math.min(nearest, d)
-          if (d < STATION_WINDOW) {
-            const approach =
-              STATION_SPEED + (CRUISE_SPEED - STATION_SPEED) * (d / STATION_WINDOW)
-            target = Math.min(target, Math.max(approach, 0.7))
+    switch (this.state) {
+      case 'cruising': {
+        target = CRUISE_SPEED
+        if (rig && !rig.seated) {
+          const waiting = this.stations.findIndex((station) => this.playerAt(station))
+          if (waiting !== -1) {
+            this.state = 'arriving'
+            this.waitStation = waiting
           }
         }
-        // Per-station cooldown: a pulse at one platform must never swallow
-        // an arrival at the other (near-commensurate spacings do exactly that).
-        const advanced =
-          ((this.cableS - station.pulsedAtS) % this.loopLength + this.loopLength) % this.loopLength
-        if (nearest < 1.4 && advanced > 24) {
-          this.dwellTimer = DWELL_SECONDS
-          station.pulsedAtS = this.cableS
+        break
+      }
+      case 'arriving': {
+        // Glide the next cabin into the guest's platform; release if they go.
+        const station = this.stations[this.waitStation]
+        if (!station || !this.playerAt(station)) {
+          this.state = 'cruising'
+          this.waitStation = -1
+          break
         }
+        const arrival = this.nextArrival(station)
+        target = Math.min(CRUISE_SPEED, Math.max(0.12, arrival.ahead * 0.8))
+        if (arrival.ahead < 0.05) {
+          this.state = 'boarding'
+          this.dockedCabin = arrival.index
+        }
+        break
+      }
+      case 'boarding': {
+        target = 0
+        const station = this.stations[this.waitStation]
+        if (!station || (rig && !rig.seated && !this.playerAt(station))) {
+          this.state = 'cruising'
+          this.waitStation = -1
+          this.dockedCabin = -1
+        }
+        break
+      }
+      case 'riding': {
+        // Non-stop to the destination; ease in over the last metres only.
+        const station = this.stations[this.destStation]
+        if (!station) {
+          this.state = 'cruising'
+          break
+        }
+        const remaining = this.forwardDistance(this.cabinS(this.ridingCabin), station.s)
+        target = remaining < 14 ? Math.max(0.12, remaining * 0.8) : CRUISE_SPEED
+        if (remaining < 0.05) {
+          this.state = 'unloading'
+          this.dockedCabin = this.ridingCabin
+          if (rig) rig.canExit = true
+        }
+        break
+      }
+      case 'unloading': {
+        target = 0
+        break
       }
     }
 
-    // Gentle acceleration toward the target speed.
+    // Gentle acceleration toward the target speed; a held line is truly held.
     this.speed += (target - this.speed) * Math.min(1, dt * 1.6)
+    if ((this.state === 'boarding' || this.state === 'unloading') && this.speed < 0.005) {
+      this.speed = 0
+    }
     this.cableS = (this.cableS + this.speed * dt) % this.loopLength
 
     this.placeCabins(ctx.time.elapsed)
-    this.rig?.update(ctx.camera, dt)
-    if (this.rig && this.ridingCabin !== -1) {
-      // Exits are only offered while the cabin is held at a station.
-      this.rig.canExit = this.stations.some(
-        (st) => this.dwellingCabinAt(st) === this.ridingCabin,
-      )
+    rig?.update(ctx.camera, dt)
+    if (rig && this.ridingCabin !== -1) {
+      rig.canExit = this.state === 'unloading'
     }
   }
 

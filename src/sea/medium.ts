@@ -61,7 +61,7 @@ export class SeaMediumSystem implements GameSystem {
   readonly id = 'sea-medium'
 
   private readonly timeUniform = uniform(0)
-  /** 0 = open sea, 1 = deep inside an interior (grotto): kills fog glow + rays. */
+  /** 0 = open sea, 1 = deep inside an enclosed interior: kills fog glow + rays. */
   private readonly interior = uniform(0)
   private caustics: CausticsPass | null = null
   private particulates: InstancedMesh | null = null
@@ -178,7 +178,7 @@ export class SeaMediumSystem implements GameSystem {
    * caustics inherit occlusion for free. Every underwater lit material gets
    * this (terrain, architecture, props).
    */
-  /** Interiors (the grotto) fade the open-sea glow as the camera goes deep. */
+  /** Enclosed interiors fade the open-sea glow as the camera goes deep. */
   setInterior(value: number): void {
     this.interior.value = Math.min(1, Math.max(0, value))
   }

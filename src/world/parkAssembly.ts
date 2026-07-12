@@ -7,7 +7,6 @@ import {
   PointLight,
   TorusGeometry,
   Vector2,
-  Vector3,
 } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import { cameraPosition, float, mix, normalGeometry, normalize, positionWorld, sin, uniform, vec3 } from 'three/tsl'
@@ -17,7 +16,7 @@ import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from './districts/atrium'
-import { PARK_PATHS, PARK_PLAN, anchorGround } from './parkPlan'
+import { MIDWAY_APRON, PARK_PATHS, PARK_PLAN, anchorGround } from './parkPlan'
 import {
   detailCafe,
   detailEsplanade,
@@ -45,7 +44,7 @@ export class ParkAssemblySystem implements GameSystem {
   }
 
   init(ctx: GameContext): void {
-    const { physics, materials, amenities, seats } = this.services
+    const { physics, materials, amenities } = this.services
     const lib = materials.lib
     if (!lib) throw new Error('ParkAssemblySystem requires materials')
     const kit = new ArchKit(lib)
@@ -115,12 +114,6 @@ export class ParkAssemblySystem implements GameSystem {
         const bx = esp.x + side * (esp.width / 2 - 1.2)
         amenities.addBenchFacing(bx, espY + 0.1, z, esp.x, z)
         physics.addStaticBox(bx, espY + 0.45, z, 0.32, 0.34, 0.9)
-        seats?.registerBenchSeat({
-          eye: new Vector3(bx, espY + 1.35, z),
-          lookAt: new Vector3(esp.x - side * 30, espY + 2, z),
-          exit: new Vector3(bx - side * 1.3, espY + 0.1, z),
-          prompt: 'Sit a while',
-        })
       }
     }
     detailEsplanade({ kit, writer: w, materials: lib, physics }, espY)
@@ -227,6 +220,14 @@ export class ParkAssemblySystem implements GameSystem {
     const mid = PARK_PLAN.midway
     const midY = terrainHeight(mid.x, mid.z) + 0.1
     groundedPath(mid.x - mid.width / 2, mid.z, mid.x + mid.width / 2, mid.z, mid.depth)
+    // Forecourt apron: the designed junction where the hub road arrives,
+    // tangent to the hall's south floor edge. Anchored so its plate top
+    // sits flush with the grounded path tops (terrain + 0.18).
+    const apronY = terrainHeight(MIDWAY_APRON.x, MIDWAY_APRON.z)
+    kit.mosaicPlaza(w, MIDWAY_APRON.x, apronY, MIDWAY_APRON.z, MIDWAY_APRON.radius)
+    physics.addStaticCylinder(MIDWAY_APRON.x, apronY + 0.09, MIDWAY_APRON.z, 0.16, MIDWAY_APRON.radius + 0.3)
+    lamp(MIDWAY_APRON.x - MIDWAY_APRON.radius + 1, apronY + 0.18, MIDWAY_APRON.z - 2, true)
+    lamp(MIDWAY_APRON.x + MIDWAY_APRON.radius - 1, apronY + 0.18, MIDWAY_APRON.z - 2, true)
     const hallColumns = 6
     for (let i = 0; i <= hallColumns; i++) {
       const x = mid.x - mid.width / 2 + (i / hallColumns) * mid.width
@@ -289,12 +290,6 @@ export class ParkAssemblySystem implements GameSystem {
       const yaw = Math.atan2(bx - obs.x, bz - obs.z)
       amenities.addBenchFacing(bx, obsY + 0.18, bz, obs.x, obs.z)
       physics.addStaticBox(bx, obsY + 0.5, bz, 0.9, 0.34, 0.3, yaw)
-      seats?.registerBenchSeat({
-        eye: new Vector3(bx, obsY + 1.4, bz),
-        lookAt: new Vector3(bx, obsY + 40, bz - 6),
-        exit: new Vector3(bx + Math.sin(yaw) * 1.3, obsY + 0.2, bz + Math.cos(yaw) * 1.3),
-        prompt: 'Recline and watch the ceiling',
-      })
     }
     detailObservatory({ kit, writer: w, materials: lib, physics }, obsY)
 

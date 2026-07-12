@@ -1,5 +1,7 @@
 import {
   BoxGeometry,
+  BufferGeometry,
+  CatmullRomCurve3,
   Color,
   ConeGeometry,
   CylinderGeometry,
@@ -11,6 +13,7 @@ import {
   PointLight,
   SphereGeometry,
   TorusGeometry,
+  TubeGeometry,
   Vector2,
   Vector3,
 } from 'three'
@@ -31,6 +34,7 @@ const PERIOD = 26 // seconds per revolution
 const RIDE_SECONDS = 34
 const STOP_SECONDS = 14
 const BOB_AMPLITUDE = 0.22
+const LOWER_MOUNTS = 16
 
 interface Mount {
   group: Object3D
@@ -40,7 +44,6 @@ interface Mount {
   figureBaseY: number
   phase: number
   name: string
-  interactPosition: Vector3
 }
 
 /**
@@ -62,10 +65,11 @@ export class CarouselSystem implements GameSystem {
   private readonly group = new Object3D()
   private readonly rotor = new Object3D()
   private readonly mounts: Mount[] = []
+  /** Follows the ridden mount so the dismount prompt is always in view. */
+  private readonly exitAnchor = new Vector3()
   private rotorAngle = 0
   private speed = 0
   private phaseClock = 0
-  private stopped = true
   private riding = -1
 
   constructor(services: DistrictServices, player: PlayerSystem | null) {
@@ -121,7 +125,7 @@ export class CarouselSystem implements GameSystem {
     skirt.position.y = 0.2
     rotor.add(floor, skirt)
 
-    // Mirror core with brass fluting.
+    // Mirror core with brass fluting, arched panel frames, and mouldings.
     const mirror = new MeshStandardNodeMaterial()
     mirror.color = new Color(0xf4f6f8)
     mirror.metalness = 1
@@ -135,6 +139,21 @@ export class CarouselSystem implements GameSystem {
       const flute = new Mesh(new BoxGeometry(0.09, 3.7, 0.09), lib.brass)
       flute.position.set(Math.sin(angle) * 1.82, 2.0, Math.cos(angle) * 1.82)
       rotor.add(flute)
+      // Arched frame over each mirror panel, flat against the core.
+      const panelArch = new Mesh(new TorusGeometry(0.42, 0.035, 8, 18, Math.PI), lib.brass)
+      const midAngle = angle + Math.PI / 10
+      panelArch.position.set(Math.sin(midAngle) * 1.78, 3.15, Math.cos(midAngle) * 1.78)
+      panelArch.rotation.y = midAngle
+      rotor.add(panelArch)
+    }
+    for (const [ringY, ringR] of [
+      [0.28, 1.86],
+      [3.82, 1.74],
+    ] as const) {
+      const moulding = new Mesh(new TorusGeometry(ringR, 0.06, 8, 40), lib.brass)
+      moulding.rotation.x = Math.PI / 2
+      moulding.position.y = ringY
+      rotor.add(moulding)
     }
 
     // Upper deck ring + rail.
@@ -166,21 +185,74 @@ export class CarouselSystem implements GameSystem {
       rotor.add(strut)
     }
 
-    // Canopy + finial.
+    // Canopy: ribbed tent cone over a rounding-board fascia, scalloped
+    // valance, and a spire finial — the parts that make a carousel read as
+    // a carousel instead of a cone on a drum.
     const canopy = new Mesh(new ConeGeometry(8.7, 2.6, 48, 1, true), lib.canvasCream)
     canopy.position.y = 7.55
     const canopyRing = new Mesh(new TorusGeometry(8.62, 0.1, 10, 64), lib.brass)
     canopyRing.rotation.x = Math.PI / 2
     canopyRing.position.y = 6.3
-    const finial = new Mesh(new SphereGeometry(0.42, 16, 12), lib.brass)
-    finial.position.y = 9.05
-    rotor.add(canopy, canopyRing, finial)
+    rotor.add(canopy, canopyRing)
+    const roundingBoard = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(8.42, 5.75),
+          new Vector2(8.6, 5.78),
+          new Vector2(8.66, 5.9),
+          new Vector2(8.66, 6.22),
+          new Vector2(8.56, 6.32),
+          new Vector2(8.38, 6.35),
+          new Vector2(8.36, 6.04),
+          new Vector2(8.42, 5.75),
+        ],
+        64,
+      ),
+      lib.canvasCream,
+    )
+    rotor.add(roundingBoard)
+    const ribUp = new Vector3(0, 1, 0)
+    const apex = new Vector3(0, 8.78, 0)
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2
+      const edge = new Vector3(Math.sin(angle) * 8.6, 6.36, Math.cos(angle) * 8.6)
+      const direction = new Vector3().subVectors(apex, edge)
+      const rib = new Mesh(new CylinderGeometry(0.035, 0.05, direction.length(), 8), lib.brass)
+      rib.position.copy(edge).add(apex).multiplyScalar(0.5)
+      rib.quaternion.setFromUnitVectors(ribUp, direction.clone().normalize())
+      rotor.add(rib)
+    }
+    for (let i = 0; i < 28; i++) {
+      const angle = ((i + 0.5) / 28) * Math.PI * 2
+      const pennant = new Mesh(new ConeGeometry(0.22, 0.34, 6), lib.canvasCream)
+      pennant.position.set(Math.sin(angle) * 8.6, 5.62, Math.cos(angle) * 8.6)
+      pennant.rotation.x = Math.PI
+      pennant.scale.z = 0.3
+      rotor.add(pennant)
+    }
+    const finial = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(0.3, 0),
+          new Vector2(0.36, 0.1),
+          new Vector2(0.12, 0.35),
+          new Vector2(0.17, 0.6),
+          new Vector2(0.02, 0.95),
+        ],
+        14,
+      ),
+      lib.brass,
+    )
+    finial.position.y = 8.72
+    const finialPearl = new Mesh(new SphereGeometry(0.16, 14, 10), lib.nacre)
+    finialPearl.position.y = 9.72
+    rotor.add(finial, finialPearl)
 
-    // Bulbs: canopy edge + upper-deck edge + core crown.
+    // Bulbs: rounding-board run + upper-deck edge + core crown.
     const bulbSpecs: [number, number, number][] = []
     for (let i = 0; i < 36; i++) {
       const angle = (i / 36) * Math.PI * 2
-      bulbSpecs.push([Math.sin(angle) * 8.55, 6.32, Math.cos(angle) * 8.55])
+      bulbSpecs.push([Math.sin(angle) * 8.74, 6.06, Math.cos(angle) * 8.74])
     }
     for (let i = 0; i < 24; i++) {
       const angle = (i / 24) * Math.PI * 2
@@ -242,7 +314,6 @@ export class CarouselSystem implements GameSystem {
         figureBaseY,
         phase: (i * Math.PI * 2) / 7.3,
         name: kind,
-        interactPosition: new Vector3(),
       })
     }
 
@@ -257,7 +328,7 @@ export class CarouselSystem implements GameSystem {
     })
     markDynamicShadowCasters(rotor)
     ctx.scene.add(this.group)
-    this.updateRotor(0)
+    this.updateRotor()
 
     registerBookmark({
       name: 'carousel',
@@ -266,44 +337,71 @@ export class CarouselSystem implements GameSystem {
       note: 'Carrousel des Abysses',
     })
 
-    // ── Boarding: look at a mount while the platform rests ───────────────
+    // ── Boarding: hop on ANYWHERE around the platform, spinning or not ────
+    // Press E anywhere around the carousel and the nearest lower-deck mount
+    // (at that moment) picks you up; press E while riding and you dismount
+    // to the nearest plaza point outside the platform. No timetable gating.
     if (this.player && this.services.interaction) {
       const rig = new VehicleSeatRig(this.player)
       this.rig = rig
       const interaction = this.services.interaction
-      const exit = new Vector3(cx, plazaY + 0.1, cz - plazaRadius + 2.2)
+      const player = this.player
+      const scratch = new Vector3()
 
-      this.mounts.forEach((mount, i) => {
-        interaction.register({
-          position: mount.interactPosition,
-          radius: 5.5,
-          prompt: `Ride the ${mount.name}`,
-          onInteract: () => {
-            if (!this.stopped || rig.seated) return
-            this.riding = i
-            rig.attach(mount.figure, new Vector3(0, 1.28, -0.52), Math.PI, ctx.camera)
-            ctx.events.emit('ticket/punched', { ride: 'carousel' })
-            ctx.events.emit('ride/carousel-riding', { riding: true })
-          },
-          enabled: () => this.stopped && !rig.seated,
-        })
-      })
       interaction.register({
         position: this.center,
-        radius: 12,
+        radius: plazaRadius + 4.5,
+        prompt: 'Ride the carrousel',
+        onInteract: () => {
+          if (rig.seated) return
+          // Nearest lower-deck mount to the guest right now.
+          const at = player.position
+          let best = -1
+          let bestDistance = Infinity
+          for (let i = 0; i < LOWER_MOUNTS; i++) {
+            this.mounts[i].group.getWorldPosition(scratch)
+            const d = scratch.distanceTo(at)
+            if (d < bestDistance) {
+              bestDistance = d
+              best = i
+            }
+          }
+          if (best === -1) return
+          this.riding = best
+          rig.attach(this.mounts[best].figure, new Vector3(0, 1.28, -0.52), Math.PI, ctx.camera)
+          rig.canExit = true
+          ctx.events.emit('ticket/punched', { ride: 'carousel' })
+          ctx.events.emit('ride/carousel-riding', { riding: true })
+        },
+        enabled: () => !rig.seated,
+      })
+      interaction.register({
+        position: this.exitAnchor,
+        radius: 7,
         prompt: 'Dismount',
         onInteract: () => {
           if (!rig.seated || this.riding === -1) return
+          // Drop off at the nearest plaza point: radially out from wherever
+          // the mount is when the guest asks.
+          this.mounts[this.riding].group.getWorldPosition(scratch)
+          const dx = scratch.x - cx
+          const dz = scratch.z - cz
+          const inv = 1 / Math.max(0.001, Math.hypot(dx, dz))
+          const exit = new Vector3(
+            cx + dx * inv * (plazaRadius - 2.2),
+            plazaY + 0.1,
+            cz + dz * inv * (plazaRadius - 2.2),
+          )
           rig.requestExit(exit)
           ctx.events.emit('ride/carousel-riding', { riding: false })
           this.riding = -1
         },
-        enabled: () => rig.seated && this.riding !== -1 && this.stopped,
+        enabled: () => rig.seated && this.riding !== -1,
       })
     }
   }
 
-  private updateRotor(elapsed: number): void {
+  private updateRotor(): void {
     this.rotor.rotation.y = this.rotorAngle
     for (const mount of this.mounts) {
       const bob =
@@ -314,25 +412,27 @@ export class CarouselSystem implements GameSystem {
       const length = Math.max(0.2, mount.rodTopY - topOfFigure)
       mount.rod.scale.y = length
       mount.rod.position.y = topOfFigure + length / 2
-      // Interact anchors follow the mounts (world position).
-      mount.group.getWorldPosition(mount.interactPosition)
-      mount.interactPosition.y += 1.2
     }
-    void elapsed
+    if (this.riding !== -1) {
+      this.mounts[this.riding].group.getWorldPosition(this.exitAnchor)
+      this.exitAnchor.y += 1.2
+    } else {
+      this.exitAnchor.copy(this.center)
+    }
   }
 
   update(ctx: GameContext, dt: number): void {
-    // Timetable: run RIDE_SECONDS, rest STOP_SECONDS, forever.
+    // Timetable: run RIDE_SECONDS, rest STOP_SECONDS, forever. Guests can
+    // hop on and off regardless — the cycle is ambience, not a gate.
     this.phaseClock += dt
     const cycle = RIDE_SECONDS + STOP_SECONDS
     const inStop = this.phaseClock % cycle > RIDE_SECONDS
-    this.stopped = inStop && this.speed < 0.02
     const target = inStop ? 0 : (Math.PI * 2) / PERIOD
     this.speed += (target - this.speed) * Math.min(1, dt * 0.9)
     this.rotorAngle += this.speed * dt
-    this.updateRotor(ctx.time.elapsed)
+    this.updateRotor()
     this.rig?.update(ctx.camera, dt)
-    if (this.rig && this.riding !== -1) this.rig.canExit = this.stopped
+    if (this.rig && this.riding !== -1) this.rig.canExit = true
   }
 
   dispose(ctx: GameContext): void {
@@ -349,6 +449,7 @@ interface MountMaterials {
   teal: MeshStandardNodeMaterial
   brass: MeshStandardNodeMaterial
   wood: MeshStandardNodeMaterial
+  eye: MeshStandardNodeMaterial
 }
 
 function mountMaterials(lib: {
@@ -369,85 +470,323 @@ function mountMaterials(lib: {
     teal: tint(0x3f8f86, 0.5),
     brass: lib.brass,
     wood: lib.woodDark,
+    eye: tint(0x14181a, 0.35),
   }
 }
 
-/** Plump, toy-like sea mounts from primitive compositions (plan §2 shape). */
+/**
+ * Bend a geometry's local +Y axis into an arc in the Y-Z plane. Positive
+ * curvature leans the top toward +z. This is what turns straight lathe
+ * torpedoes into arcing dolphin/narwhal bodies and curling necks — sculpted
+ * silhouettes instead of stacked spheres.
+ */
+function bendArc(geometry: BufferGeometry, curvature: number): BufferGeometry {
+  if (Math.abs(curvature) < 1e-6) return geometry
+  const R = 1 / curvature
+  const position = geometry.getAttribute('position')
+  for (let i = 0; i < position.count; i++) {
+    const y = position.getY(i)
+    const z = position.getZ(i)
+    const theta = y / R
+    position.setY(i, Math.sin(theta) * (R - z))
+    position.setZ(i, R - Math.cos(theta) * (R - z))
+  }
+  position.needsUpdate = true
+  geometry.computeVertexNormals()
+  return geometry
+}
+
+/** Solid-of-revolution torpedo along +Y (tail at 0, nose at the top). */
+function torpedo(profile: [number, number][], segments = 20): LatheGeometry {
+  return new LatheGeometry(profile.map(([r, y]) => new Vector2(r, y)), segments)
+}
+
+/** Tapering limb through spine points — real thickness, never a flat card. */
+function limb(
+  g: Object3D,
+  material: MeshStandardNodeMaterial,
+  spine: Vector3[],
+  radii: number[],
+): void {
+  const up = new Vector3(0, 1, 0)
+  for (let i = 0; i < spine.length - 1; i++) {
+    const a = spine[i]
+    const b = spine[i + 1]
+    const radius = radii[Math.min(i, radii.length - 1)]
+    const direction = new Vector3().subVectors(b, a)
+    const segment = new Mesh(
+      new CylinderGeometry(radius * 0.78, radius, direction.length(), 8),
+      material,
+    )
+    segment.position.copy(a).add(b).multiplyScalar(0.5)
+    segment.quaternion.setFromUnitVectors(up, direction.clone().normalize())
+    g.add(segment)
+    if (i > 0) {
+      const knuckle = new Mesh(new SphereGeometry(radius * 1.05, 8, 6), material)
+      knuckle.position.copy(a)
+      g.add(knuckle)
+    }
+  }
+}
+
+/**
+ * Carved carousel mounts. Bodies are bent closed lathes; fins, flukes, and
+ * crests are squashed ellipsoids or limb chains with genuine thickness; each
+ * animal wears a crafted saddle (seat, rolled cantle, pommel, skirt, and
+ * stirrups on straps). Plump toy silhouettes, sculpted rather than stacked.
+ */
 function buildMount(kind: MountKind, m: MountMaterials): Object3D {
   const g = new Object3D()
-  const add = (mesh: Mesh, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, rx = 0, rz = 0) => {
+  const add = (mesh: Mesh, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, rx = 0, rz = 0, ry = 0) => {
     mesh.position.set(x, y, z)
     mesh.scale.set(sx, sy, sz)
-    mesh.rotation.x = rx
-    mesh.rotation.z = rz
+    mesh.rotation.set(rx, ry, rz)
     g.add(mesh)
     return mesh
   }
-  const sphere = (mat: MeshStandardNodeMaterial) => new Mesh(new SphereGeometry(1, 18, 14), mat)
-  const cone = (mat: MeshStandardNodeMaterial) => new Mesh(new ConeGeometry(1, 1, 14), mat)
+  const sphere = (mat: MeshStandardNodeMaterial, ws = 14, hs = 10) =>
+    new Mesh(new SphereGeometry(1, ws, hs), mat)
+  const cone = (mat: MeshStandardNodeMaterial) => new Mesh(new ConeGeometry(1, 1, 12), mat)
+  const eyes = (x: number, y: number, z: number) => {
+    for (const side of [-1, 1]) {
+      const eye = new Mesh(new SphereGeometry(0.032, 8, 6), m.eye)
+      eye.position.set(side * x, y, z)
+      g.add(eye)
+    }
+  }
 
   if (kind === 'seahorse') {
-    add(sphere(m.nacre), 0, 0.05, 0.02, 0.3, 0.42, 0.26) // belly
-    add(sphere(m.nacre), 0, 0.52, 0.14, 0.22, 0.28, 0.2) // chest
-    add(sphere(m.nacre), 0, 0.86, 0.2, 0.17, 0.19, 0.17) // head
-    add(cone(m.coral), 0, 0.84, 0.44, 0.07, 0.3, 0.07, Math.PI / 2, 0) // snout
-    const tail = new Mesh(new TorusGeometry(0.22, 0.08, 8, 18, Math.PI * 1.6), m.nacre)
-    add(tail, 0, -0.34, -0.08, 1, 1, 1, 0, Math.PI / 2)
-    add(cone(m.coral), 0, 0.62, -0.16, 0.2, 0.34, 0.06, -0.5, 0) // dorsal fin
-  } else if (kind === 'dolphin') {
-    add(sphere(m.teal), 0, 0.28, 0, 0.3, 0.3, 0.62) // body
-    add(sphere(m.nacre), 0, 0.16, 0.1, 0.24, 0.2, 0.5) // belly
-    add(cone(m.teal), 0, 0.3, 0.72, 0.14, 0.34, 0.14, Math.PI / 2, 0) // rostrum
-    add(cone(m.teal), 0, 0.66, -0.05, 0.16, 0.3, 0.07, -0.4, 0) // dorsal
-    add(cone(m.teal), 0.02, 0.3, -0.68, 0.34, 0.2, 0.08, Math.PI / 2, Math.PI / 2) // flukes
-  } else if (kind === 'turtle') {
-    add(sphere(m.teal), 0, 0.3, 0, 0.44, 0.3, 0.52) // shell
-    add(sphere(m.coral), 0, 0.16, 0, 0.4, 0.16, 0.46) // plastron
-    add(sphere(m.nacre), 0, 0.34, 0.56, 0.16, 0.15, 0.17) // head
-    for (const [fx, fz] of [
-      [-0.42, 0.3],
-      [0.42, 0.3],
-      [-0.4, -0.34],
-      [0.4, -0.34],
-    ]) {
-      add(sphere(m.nacre), fx, 0.16, fz, 0.2, 0.07, 0.3, 0, fx > 0 ? -0.4 : 0.4)
-    }
-  } else if (kind === 'ray') {
-    add(sphere(m.teal), 0, 0.3, 0, 0.34, 0.14, 0.5) // body
-    add(cone(m.teal), -0.52, 0.3, -0.02, 0.5, 0.9, 0.08, Math.PI / 2, Math.PI / 2) // wing L
-    add(cone(m.teal), 0.52, 0.3, -0.02, 0.5, 0.9, 0.08, Math.PI / 2, -Math.PI / 2) // wing R
-    add(sphere(m.nacre), 0, 0.32, 0.4, 0.16, 0.1, 0.16) // head
-    add(cone(m.coral), 0, 0.3, -0.62, 0.05, 0.5, 0.05, Math.PI / 2, 0) // tail
-  } else if (kind === 'narwhal') {
-    add(sphere(m.nacre), 0, 0.3, 0, 0.3, 0.3, 0.6) // body
-    add(sphere(m.teal), 0, 0.45, -0.1, 0.26, 0.22, 0.44) // back
-    add(cone(m.brass), 0, 0.5, 0.78, 0.05, 0.62, 0.05, Math.PI / 2, 0) // the horn
-    add(cone(m.nacre), 0.02, 0.3, -0.66, 0.3, 0.18, 0.07, Math.PI / 2, Math.PI / 2) // flukes
-  } else {
-    // Nautilus chariot: a shell seat, no saddle.
-    const cup = new Mesh(
-      new LatheGeometry(
-        [
-          new Vector2(0.02, 0),
-          new Vector2(0.4, 0.04),
-          new Vector2(0.52, 0.28),
-          new Vector2(0.44, 0.52),
-        ],
-        20,
+    // Chest-and-neck: a bent torpedo arcing forward; belly plump, crown slim.
+    const body = new Mesh(
+      bendArc(
+        torpedo([
+          [0.05, 0], [0.2, 0.04], [0.3, 0.22], [0.32, 0.42], [0.26, 0.62],
+          [0.17, 0.78], [0.13, 0.92], [0.11, 1.02], [0.02, 1.08],
+        ]),
+        0.55,
       ),
       m.nacre,
     )
-    add(cup, 0, 0.1, 0, 1.1, 1, 1.3)
-    const swirl = new Mesh(new TorusGeometry(0.3, 0.1, 8, 20, Math.PI * 1.7), m.coral)
-    add(swirl, 0, 0.55, -0.5, 1, 1, 1, 0, 0)
-    add(new Mesh(new CylinderGeometry(0.34, 0.38, 0.08, 14), m.wood), 0, 0.16, 0.05)
+    body.position.set(0, -0.28, -0.12)
+    g.add(body)
+    // Curled tail: two nested arcs continuing the body base, thinning.
+    const tailA = new Mesh(new TorusGeometry(0.24, 0.075, 8, 20, Math.PI * 1.45), m.nacre)
+    tailA.position.set(0, -0.36, 0.02)
+    tailA.rotation.set(0, Math.PI / 2, Math.PI * 0.62)
+    const tailB = new Mesh(new TorusGeometry(0.11, 0.042, 7, 14, Math.PI * 1.5), m.nacre)
+    tailB.position.set(0, -0.44, 0.1)
+    tailB.rotation.set(0, Math.PI / 2, Math.PI * 0.2)
+    g.add(tailA, tailB)
+    // Head, bent snout, coronet, and a dorsal fin with thickness.
+    add(sphere(m.nacre), 0, 0.86, 0.1, 0.16, 0.17, 0.2)
+    const snout = new Mesh(new CylinderGeometry(0.035, 0.06, 0.3, 10), m.nacre)
+    snout.position.set(0, 0.8, 0.31)
+    snout.rotation.x = Math.PI / 2 - 0.35
+    g.add(snout)
+    for (let i = 0; i < 3; i++) {
+      add(cone(m.coral), (i - 1) * 0.05, 1.04, 0.05 - Math.abs(i - 1) * 0.03, 0.035, 0.12, 0.035, -0.15, (i - 1) * 0.3)
+    }
+    add(sphere(m.coral), 0, 0.45, -0.28, 0.03, 0.3, 0.13) // dorsal fin blade
+    add(sphere(m.coral), -0.14, 0.78, 0.12, 0.026, 0.1, 0.07, 0, 0.5) // pectorals
+    add(sphere(m.coral), 0.14, 0.78, 0.12, 0.026, 0.1, 0.07, 0, -0.5)
+    eyes(0.12, 0.9, 0.24)
+  } else if (kind === 'dolphin') {
+    // One arcing body from rostrum to peduncle — a leap frozen mid-flight.
+    const body = new Mesh(
+      bendArc(
+        torpedo([
+          [0.03, 0], [0.1, 0.08], [0.2, 0.32], [0.285, 0.62], [0.3, 0.85],
+          [0.27, 1.08], [0.19, 1.28], [0.1, 1.4], [0.02, 1.46],
+        ]),
+        -0.35,
+      ),
+      m.teal,
+    )
+    body.rotation.x = Math.PI / 2 + 0.18
+    body.position.set(0, 0.34, -0.72)
+    g.add(body)
+    const rostrum = new Mesh(new CylinderGeometry(0.045, 0.1, 0.3, 10), m.teal)
+    rostrum.position.set(0, 0.32, 0.82)
+    rostrum.rotation.x = Math.PI / 2 - 0.12
+    g.add(rostrum)
+    add(sphere(m.nacre), 0, 0.19, 0.18, 0.2, 0.16, 0.48) // pale belly
+    const dorsal = new Mesh(bendArc(new ConeGeometry(0.09, 0.34, 10), 1.6), m.teal)
+    dorsal.position.set(0, 0.6, -0.12)
+    dorsal.rotation.x = -0.25
+    g.add(dorsal)
+    add(sphere(m.teal), -0.24, 0.22, 0.3, 0.05, 0.03, 0.17, 0, 0.75) // pectorals
+    add(sphere(m.teal), 0.24, 0.22, 0.3, 0.05, 0.03, 0.17, 0, -0.75)
+    add(sphere(m.teal), -0.16, 0.36, -0.86, 0.16, 0.025, 0.1, 0, 0.25) // flukes
+    add(sphere(m.teal), 0.16, 0.36, -0.86, 0.16, 0.025, 0.1, 0, -0.25)
+    eyes(0.14, 0.38, 0.6)
+  } else if (kind === 'turtle') {
+    // Domed shell with scute ridges (stepped lathe rings), closed underside.
+    const shell = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(0.05, 0.02), new Vector2(0.46, 0.03), new Vector2(0.5, 0.09),
+          new Vector2(0.47, 0.14), new Vector2(0.42, 0.2), new Vector2(0.43, 0.24),
+          new Vector2(0.33, 0.32), new Vector2(0.34, 0.35), new Vector2(0.2, 0.41),
+          new Vector2(0.05, 0.43), new Vector2(0.05, 0.02),
+        ],
+        22,
+      ),
+      m.teal,
+    )
+    shell.position.set(0, 0.18, 0)
+    shell.scale.set(0.95, 1, 1.25)
+    g.add(shell)
+    const plastron = new Mesh(new SphereGeometry(1, 14, 8), m.coral)
+    plastron.position.set(0, 0.16, 0)
+    plastron.scale.set(0.4, 0.1, 0.5)
+    g.add(plastron)
+    limb(g, m.nacre, [new Vector3(0, 0.3, 0.5), new Vector3(0, 0.36, 0.66)], [0.09]) // neck
+    add(sphere(m.nacre), 0, 0.38, 0.74, 0.15, 0.13, 0.17) // head
+    for (const [fx, fz, big, yaw] of [
+      [-0.42, 0.3, 1, 0.55], [0.42, 0.3, 1, -0.55],
+      [-0.38, -0.36, 0.7, 2.4], [0.38, -0.36, 0.7, -2.4],
+    ] as const) {
+      const flipper = sphere(m.nacre)
+      flipper.position.set(fx, 0.15, fz)
+      flipper.scale.set(0.3 * big, 0.05, 0.14 * big)
+      flipper.rotation.set(0, yaw, fx > 0 ? -0.18 : 0.18)
+      g.add(flipper)
+    }
+    add(cone(m.nacre), 0, 0.18, -0.62, 0.05, 0.16, 0.05, Math.PI / 2 + 0.3, 0) // tail
+    eyes(0.1, 0.44, 0.82)
+  } else if (kind === 'ray') {
+    // Disc body, drooping wings, cephalic lobes, and a chained whip tail.
+    const body = new Mesh(new LatheGeometry(
+      [
+        new Vector2(0.04, 0), new Vector2(0.3, 0.01), new Vector2(0.38, 0.08),
+        new Vector2(0.32, 0.2), new Vector2(0.18, 0.27), new Vector2(0.04, 0.29),
+        new Vector2(0.04, 0),
+      ],
+      20,
+    ), m.teal)
+    body.position.set(0, 0.18, 0)
+    body.scale.set(1, 1, 1.5)
+    g.add(body)
+    for (const side of [-1, 1]) {
+      const wing = sphere(m.teal, 16, 10)
+      wing.position.set(side * 0.5, 0.32, -0.04)
+      wing.scale.set(0.58, 0.05, 0.4)
+      wing.rotation.set(0, side * -0.2, side * -0.3)
+      g.add(wing)
+      const lobe = new Mesh(new CylinderGeometry(0.035, 0.05, 0.16, 8), m.teal)
+      lobe.position.set(side * 0.12, 0.3, 0.56)
+      lobe.rotation.x = Math.PI / 2 - 0.3
+      g.add(lobe)
+    }
+    add(sphere(m.nacre), 0, 0.24, 0.3, 0.22, 0.08, 0.26) // pale underside blush
+    limb(g, m.teal, [
+      new Vector3(0, 0.28, -0.56),
+      new Vector3(0, 0.36, -0.82),
+      new Vector3(0, 0.5, -1.02),
+    ], [0.05, 0.028])
+    add(cone(m.coral), 0, 0.56, -1.08, 0.03, 0.12, 0.015, -0.9, 0) // barb
+    eyes(0.15, 0.36, 0.42)
+  } else if (kind === 'narwhal') {
+    const body = new Mesh(
+      bendArc(
+        torpedo([
+          [0.03, 0], [0.12, 0.06], [0.24, 0.3], [0.3, 0.6], [0.29, 0.86],
+          [0.24, 1.08], [0.16, 1.26], [0.03, 1.38],
+        ]),
+        -0.28,
+      ),
+      m.nacre,
+    )
+    body.rotation.x = Math.PI / 2 + 0.14
+    body.position.set(0, 0.36, -0.68)
+    g.add(body)
+    add(sphere(m.teal), 0, 0.5, -0.15, 0.24, 0.16, 0.42) // mottled back cape
+    add(sphere(m.nacre), 0, 0.42, 0.62, 0.14, 0.13, 0.16) // melon
+    // Spiral tusk: cone + shrinking helix wrap, seated in the melon.
+    const tusk = new Mesh(new ConeGeometry(0.035, 0.62, 10), m.brass)
+    tusk.position.set(0, 0.5, 0.98)
+    tusk.rotation.x = Math.PI / 2 - 0.18
+    g.add(tusk)
+    const helixPoints: Vector3[] = []
+    for (let i = 0; i <= 20; i++) {
+      const t = i / 20
+      const angle = t * Math.PI * 5
+      const radius = 0.036 * (1 - t) + 0.004
+      helixPoints.push(new Vector3(Math.cos(angle) * radius, -0.31 + 0.62 * t, Math.sin(angle) * radius))
+    }
+    const wrap = new Mesh(new TubeGeometry(new CatmullRomCurve3(helixPoints), 40, 0.007, 5), m.brass)
+    wrap.position.copy(tusk.position)
+    wrap.rotation.copy(tusk.rotation)
+    g.add(wrap)
+    add(sphere(m.nacre), -0.15, 0.34, -0.82, 0.14, 0.022, 0.09, 0, 0.3) // flukes
+    add(sphere(m.nacre), 0.15, 0.34, -0.82, 0.14, 0.022, 0.09, 0, -0.3)
+    add(sphere(m.nacre), -0.22, 0.28, 0.24, 0.05, 0.025, 0.13, 0, 0.7) // pectorals
+    add(sphere(m.nacre), 0.22, 0.28, 0.24, 0.05, 0.025, 0.13, 0, -0.7)
+    eyes(0.13, 0.42, 0.5)
+  } else {
+    // Nautilus chariot: a closed shell cup with an interior you sit inside,
+    // a striped double-spiral crest, and a carriage footplate.
+    const cup = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(0.03, 0), new Vector2(0.42, 0.03), new Vector2(0.55, 0.24),
+          new Vector2(0.52, 0.46), new Vector2(0.55, 0.52), new Vector2(0.48, 0.55),
+          new Vector2(0.43, 0.44), new Vector2(0.3, 0.28), new Vector2(0.03, 0.24),
+          new Vector2(0.03, 0),
+        ],
+        24,
+      ),
+      m.nacre,
+    )
+    cup.position.set(0, 0.1, 0.1)
+    cup.scale.set(1.05, 1, 1.3)
+    g.add(cup)
+    const swirlA = new Mesh(new TorusGeometry(0.32, 0.1, 9, 22, Math.PI * 1.6), m.coral)
+    swirlA.position.set(0, 0.62, -0.52)
+    swirlA.rotation.z = -Math.PI * 0.5
+    const swirlB = new Mesh(new TorusGeometry(0.17, 0.06, 8, 16, Math.PI * 1.5), m.coral)
+    swirlB.position.set(0, 0.62, -0.52)
+    swirlB.rotation.z = -Math.PI * 0.2
+    const core = new Mesh(new SphereGeometry(0.08, 10, 8), m.nacre)
+    core.position.set(0, 0.62, -0.52)
+    g.add(swirlA, swirlB, core)
+    add(new Mesh(new CylinderGeometry(0.34, 0.38, 0.07, 16), m.wood), 0, 0.14, 0.12)
+    const footplate = new Mesh(new BoxGeometry(0.5, 0.05, 0.22), m.brass)
+    footplate.position.set(0, 0.06, 0.62)
+    g.add(footplate)
+    const scroll = new Mesh(new TorusGeometry(0.12, 0.035, 8, 14, Math.PI * 1.4), m.brass)
+    scroll.position.set(0, 0.2, 0.74)
+    scroll.rotation.z = Math.PI * 0.5
+    g.add(scroll)
   }
 
-  // Saddle for the animal mounts.
+  // Crafted saddle for the animal mounts: seat, rolled cantle, pommel,
+  // skirt, and stirrups hanging on straps.
   if (kind !== 'nautilus chariot') {
-    const saddle = new Mesh(new CylinderGeometry(0.2, 0.24, 0.08, 12), m.coral)
-    saddle.position.set(0, kind === 'ray' ? 0.42 : 0.52, kind === 'seahorse' ? -0.02 : -0.08)
-    g.add(saddle)
+    const saddleY = kind === 'ray' ? 0.4 : kind === 'turtle' ? 0.56 : 0.52
+    const saddleZ = kind === 'seahorse' ? -0.04 : -0.08
+    const seat = sphere(m.coral)
+    seat.position.set(0, saddleY, saddleZ)
+    seat.scale.set(0.2, 0.07, 0.3)
+    const cantle = new Mesh(new TorusGeometry(0.13, 0.045, 8, 12, Math.PI * 0.9), m.coral)
+    cantle.position.set(0, saddleY + 0.05, saddleZ - 0.2)
+    cantle.rotation.set(0.35, Math.PI, Math.PI * 0.55)
+    const pommel = new Mesh(new SphereGeometry(0.045, 10, 8), m.brass)
+    pommel.position.set(0, saddleY + 0.1, saddleZ + 0.24)
+    const pommelStem = new Mesh(new CylinderGeometry(0.02, 0.026, 0.1, 8), m.brass)
+    pommelStem.position.set(0, saddleY + 0.05, saddleZ + 0.24)
+    const skirt = sphere(m.wood)
+    skirt.position.set(0, saddleY - 0.03, saddleZ)
+    skirt.scale.set(0.24, 0.045, 0.33)
+    g.add(seat, cantle, pommel, pommelStem, skirt)
+    for (const side of [-1, 1]) {
+      const strap = new Mesh(new BoxGeometry(0.03, 0.2, 0.06), m.wood)
+      strap.position.set(side * 0.23, saddleY - 0.12, saddleZ)
+      strap.rotation.z = side * 0.25
+      const stirrup = new Mesh(new TorusGeometry(0.05, 0.014, 6, 12), m.brass)
+      stirrup.position.set(side * 0.26, saddleY - 0.24, saddleZ)
+      g.add(strap, stirrup)
+    }
   }
   return g
 }

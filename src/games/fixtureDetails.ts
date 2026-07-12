@@ -59,13 +59,27 @@ export function emitHighStrikerTrim(
   z: number,
 ): void {
   const foot = new BoxGeometry(2.5, 0.16, 0.72)
-  const crown = new BoxGeometry(2.48, 0.18, 0.68)
-  const side = new CylinderGeometry(0.07, 0.09, 5.8, 8)
+  const side = new CylinderGeometry(0.07, 0.09, 6.2, 8)
   writer.place(materials.marble, foot, x, groundY + 0.08, z)
-  writer.place(materials.brass, crown, x, groundY + 6.18, z)
-  writer.place(materials.verdigris, side, x - 1, groundY + 3.1, z)
-  writer.place(materials.verdigris, side, x + 1, groundY + 3.1, z)
+  writer.place(materials.verdigris, side, x - 1, groundY + 3.2, z)
+  writer.place(materials.verdigris, side, x + 1, groundY + 3.2, z)
+  // Cornice over the tapered tower crown, then the bell yoke: two posts and
+  // a crossbar in the bell plane (z − 0.32) that the bell link hangs from.
+  const cornice = new BoxGeometry(2.3, 0.14, 0.5)
+  writer.place(materials.brass, cornice, x, groundY + 6.38, z)
+  const post = new CylinderGeometry(0.05, 0.06, 0.85, 8)
+  writer.place(materials.brass, post, x - 0.4, groundY + 6.82, z - 0.32)
+  writer.place(materials.brass, post, x + 0.4, groundY + 6.82, z - 0.32)
+  const cross = new CylinderGeometry(0.045, 0.045, 0.95, 8)
+  cross.rotateZ(Math.PI / 2)
+  writer.place(materials.brass, cross, x, groundY + 7.2, z - 0.32)
+  const finial = new SphereGeometry(0.075, 10, 8)
+  writer.place(materials.brass, finial, x - 0.4, groundY + 7.28, z - 0.32)
+  writer.place(materials.brass, finial, x + 0.4, groundY + 7.28, z - 0.32)
   foot.dispose()
-  crown.dispose()
   side.dispose()
+  cornice.dispose()
+  post.dispose()
+  cross.dispose()
+  finial.dispose()
 }

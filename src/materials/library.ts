@@ -35,6 +35,8 @@ export class ParkMaterials {
   readonly mosaic: MeshStandardNodeMaterial
   readonly woodDark: MeshStandardNodeMaterial
   readonly canvasCream: MeshStandardNodeMaterial
+  readonly foliage: MeshStandardNodeMaterial
+  readonly soil: MeshStandardNodeMaterial
 
   constructor(medium: SeaMediumSystem) {
     const lit = (material: MeshStandardNodeMaterial, causticStrength = 1.25) => {
@@ -181,6 +183,32 @@ export class ParkMaterials {
         m.colorNode = vec3(0.88, 0.83, 0.72).add(fbm2(positionWorld.xz.mul(9.0)).mul(0.05))
         return m
       })(),
+    )
+
+    // ── Planter foliage: deep teal sea-fern fronds, warm-tipped ────────────
+    // Solid closed tubes (frond chains), so FrontSide is enough — no
+    // DoubleSide fill-rate tax.
+    this.foliage = lit(
+      (() => {
+        const m = new MeshStandardNodeMaterial()
+        m.roughness = 0.72
+        const tone = fbm2(positionWorld.xz.mul(2.6).add(positionWorld.y.mul(1.9)))
+        m.colorNode = mix(vec3(0.06, 0.19, 0.11), vec3(0.24, 0.46, 0.22), tone)
+        return m
+      })(),
+      1.2,
+    )
+
+    // ── Planter soil: dark loam with faint speckle ─────────────────────────
+    this.soil = lit(
+      (() => {
+        const m = new MeshStandardNodeMaterial()
+        m.roughness = 0.96
+        const speckle = fbm2(positionWorld.xz.mul(14.0))
+        m.colorNode = mix(vec3(0.09, 0.07, 0.055), vec3(0.16, 0.125, 0.09), speckle)
+        return m
+      })(),
+      1.1,
     )
   }
 }

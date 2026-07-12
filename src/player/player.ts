@@ -121,9 +121,9 @@ export class PlayerSystem implements GameSystem {
   fixedUpdate(_ctx: GameContext, dt: number): void {
     const { body, collider, controller } = this
     if (!body || !collider || !controller || !this.physics.world) return
-    // Drop any buffered jump while control is borrowed (rides, seats, pause) or
-    // frozen (teleport). Otherwise the Space that leaves a bench seat would
-    // survive the handoff and launch a jump the instant the guest stands.
+    // Drop any buffered jump while control is borrowed (rides, pause) or
+    // frozen (teleport). Otherwise a Space pressed mid-ride would survive
+    // the handoff and launch a jump the instant the guest steps off.
     if (!this.controlEnabled || this.inputFrozen) {
       this.jumpQueued = false
       return

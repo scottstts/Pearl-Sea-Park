@@ -1,7 +1,6 @@
 import { BufferAttribute, BufferGeometry, Color, Mesh, Object3D } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
-import { Fn, float, mix, normalGeometry, normalize, positionWorld, sin, smoothstep, vec2, vec3 } from 'three/tsl'
-import { fbm2 as fbmCpu } from '../core/noise2'
+import { Fn, mix, normalGeometry, normalize, positionWorld, sin, vec2, vec3 } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 import type { GameContext } from '../runtime/context'
@@ -9,129 +8,15 @@ import type { GameSystem } from '../runtime/system'
 import type { SeaMediumSystem } from '../sea/medium'
 
 /**
- * The seabed (plan §6): a white-sand plateau around −26 m with gentle dunes,
- * a flattened park pad in the middle, the sheer drop-off along the north rim
- * falling to −300 m, and softened edges elsewhere that sink into the haze.
- *
- * `terrainHeight(x, z)` is THE height authority — scatter, colliders (S5),
- * and gameplay all query it. Keep it cheap and deterministic.
+ * The seabed (plan §6). The height field itself lives in the audit-friendly
+ * leaf module world/terrainHeight.ts — this system owns the visual meshes
+ * and the sand material. `terrainHeight(x, z)` remains THE height authority.
  */
 
-const EXTENT = 1200
+import { PLATEAU_Y, RIM_Z, TERRAIN_EXTENT as EXTENT, terrainHeight } from './terrainHeight.ts'
+export { terrainHeight }
+
 const CHUNKS = 10
-const PLATEAU_Y = -26
-/** North rim line (z, negative = north) where the shelf ends. */
-const RIM_Z = -250
-const ABYSS_Y = -300
-
-export function terrainHeight(x: number, z: number): number {
-  // Base dunes.
-  let height =
-    PLATEAU_Y + (fbmCpu(x * 0.012, z * 0.012, 4, 11) - 0.5) * 2.6 +
-    (fbmCpu(x * 0.045, z * 0.045, 3, 23) - 0.5) * 0.7
-
-  // Central park pad — flat enough to build on, still organic.
-  const centerDistance = Math.hypot(x, z * 0.9)
-  const padBlend = 1 - smoothstepJs(180, 300, centerDistance)
-  height = height * (1 - padBlend * 0.75) + (PLATEAU_Y + 1.2) * padBlend * 0.75
-
-  // The Great Wheel basin (wheel anchor 175,40 — literals to avoid a cycle
-  // with parkPlan): a dredged round pit so the 40 m wheel can turn with only
-  // its crest breaching the surface.
-  const wheelDistance = Math.hypot(x - 175, z - 40)
-  const basinBlend = 1 - smoothstepJs(13, 26, wheelDistance)
-  if (basinBlend > 0) {
-    const basinFloor = -40 + (fbmCpu(x * 0.06, z * 0.06, 2, 71) - 0.5) * 1.2
-    height = height * (1 - basinBlend) + basinFloor * basinBlend
-  }
-
-  // The grotto reef massif (grotto anchor 185,125): the caverns run beneath
-  // this rise — "moon-pool boat into caverns beneath the reef".
-  const massifDistance = Math.hypot((x - 208) / 1.25, z - 102)
-  const massifBlend = 1 - smoothstepJs(22, 50, massifDistance)
-  if (massifBlend > 0) {
-    const crown = 9.5 + (fbmCpu(x * 0.05, z * 0.05, 3, 83) - 0.5) * 4
-    height += crown * massifBlend
-    // The boarding gorge: a skylit crack from the anchor into the massif —
-    // guests walk and board here in the open; only boats enter the caverns.
-    const gx = x - 185
-    const gz = z - 125
-    const t = Math.min(1, Math.max(0, (gx * 12 + gz * -14) / (12 * 12 + 14 * 14)))
-    const nearestX = 185 + 12 * t
-    const nearestZ = 125 - 14 * t
-    // Continue the same cut backward along the final Midway path approach;
-    // otherwise the massif rises under the last path plates before the gorge
-    // begins and turns them into a bridge.
-    const approachDx = 17
-    const approachDz = -6
-    const approachT = Math.min(
-      1,
-      Math.max(0, ((x - 168) * approachDx + (z - 131) * approachDz) / (approachDx ** 2 + approachDz ** 2)),
-    )
-    const approachX = 168 + approachDx * approachT
-    const approachZ = 131 + approachDz * approachT
-    const gorgeDistance = Math.min(
-      Math.hypot(x - nearestX, z - nearestZ),
-      Math.hypot(x - approachX, z - approachZ),
-    )
-    const gorgeBlend = 1 - smoothstepJs(3.4, 7.2, gorgeDistance)
-    if (gorgeBlend > 0) height = height * (1 - gorgeBlend) + -26.6 * gorgeBlend
-  }
-
-  // The open reach of the Grotto channel: terrainHeight owns this cut so the
-  // visual mesh, Rapier heightfield, dock access, and water all agree. The
-  // rest of the loop remains beneath the one-sided reef surface.
-  const channelAx = 196.6
-  const channelAz = 110.5
-  const channelBx = 203.4
-  const channelBz = 104.6
-  const channelDx = channelBx - channelAx
-  const channelDz = channelBz - channelAz
-  const channelT = Math.min(
-    1,
-    Math.max(0, ((x - channelAx) * channelDx + (z - channelAz) * channelDz) / (channelDx ** 2 + channelDz ** 2)),
-  )
-  const channelDistance = Math.hypot(
-    x - (channelAx + channelDx * channelT),
-    z - (channelAz + channelDz * channelT),
-  )
-  const channelBlend = 1 - smoothstepJs(2.55, 4.25, channelDistance)
-  if (channelBlend > 0) height = height * (1 - channelBlend) + -29.15 * channelBlend
-
-  // The drop-off: a jagged rim north of RIM_Z plunging to the abyss.
-  const rimJitter =
-    (fbmCpu(x * 0.008, 77.7, 3, 31) - 0.5) * 44 + (fbmCpu(x * 0.05, 12.3, 3, 53) - 0.5) * 10
-  const rimDistance = z - (RIM_Z + rimJitter) // negative = past the rim
-  if (rimDistance < 0) {
-    const plunge = smoothstepJs(0, 85, -rimDistance)
-    const ledges = (fbmCpu(x * 0.02, z * 0.02, 3, 47) - 0.5) * 18 * (1 - plunge)
-    height = height * (1 - plunge) + (ABYSS_Y + ledges) * plunge
-  }
-
-  // Soft outer sink east/west/south so the mid-distance drowns in haze.
-  const edge = Math.max(Math.abs(x), z) // z positive = south
-  const sink = smoothstepJs(430, 590, edge)
-  height -= sink * 34
-
-  // The lagoon saucer (quality walkthrough): far beyond the park the seabed
-  // rises toward the surface — flat at the centre, lifted at the horizon —
-  // so no open-water gap column survives in any direction. The rim crests
-  // at −2.5 m worst case: under every wave trough, never breaching. North it
-  // becomes the trench's far wall, leaving the drop-off's open blue intact.
-  const saucerDistance = Math.hypot(x, z)
-  const saucer = smoothstepJs(680, 1150, saucerDistance)
-  if (saucer > 0) {
-    const rimTop = -3.6 + (fbmCpu(x * 0.006, z * 0.006, 3, 131) - 0.5) * 2.2
-    height = height * (1 - saucer) + rimTop * saucer
-  }
-
-  return height
-}
-
-function smoothstepJs(a: number, b: number, x: number): number {
-  const t = Math.min(1, Math.max(0, (x - a) / (b - a)))
-  return t * t * (3 - 2 * t)
-}
 
 function buildChunk(x0: number, z0: number, size: number, verts: number): BufferGeometry {
   const positions = new Float32Array(verts * verts * 3)
@@ -193,17 +78,7 @@ export function createSandMaterial(medium: SeaMediumSystem): MeshStandardNodeMat
   const tone = fbm2(xz.mul(0.02))
   const patchTone = fbm2(xz.mul(0.0045))
   const base = mix(vec3(0.48, 0.43, 0.33), vec3(0.58, 0.54, 0.43), tone)
-  const seagrassTint = mix(base, vec3(0.33, 0.4, 0.3), patchTone.smoothstep(0.62, 0.85).mul(0.5))
-  const grottoDistance = vec2(xz.x.sub(208).div(1.25), xz.y.sub(102)).length()
-  const grottoMassif = float(1)
-    .sub(smoothstep(22, 50, grottoDistance))
-    .mul(smoothstep(-25.2, -21.5, positionWorld.y))
-  const reefStone = mix(
-    vec3(0.12, 0.18, 0.17),
-    vec3(0.24, 0.29, 0.24),
-    fbm2(xz.mul(0.075)),
-  )
-  material.colorNode = mix(seagrassTint, reefStone, grottoMassif)
+  material.colorNode = mix(base, vec3(0.33, 0.4, 0.3), patchTone.smoothstep(0.62, 0.85).mul(0.5))
 
   // Sand ripples: banded sine distorted by noise, as a normal perturbation.
   material.normalNode = Fn(() => {

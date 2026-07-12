@@ -13,10 +13,7 @@ import type { HeldItemSystem } from '../player/heldItems'
 import { SlotWriter } from '../archkit/writer'
 import type { GameContext } from '../runtime/context'
 import type { DistrictServices } from '../world/districts/atrium'
-import { PARK_PLAN } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
-import type { ArmThrow, DynamicProp } from './types'
-import { syncDynamicProp } from './types'
 import { emitCounterJoinery } from './fixtureDetails'
 
 interface PennyPress {
@@ -29,18 +26,15 @@ interface PennyPress {
   coinDrop: number
 }
 
-interface Pellet extends DynamicProp {
-  fed: boolean
-}
-
 const PRESS_SITES = [
   { motif: 'Descent Bell', x: -8, z: 306 },
   { motif: 'Grand Atrium', x: 16, z: 253 },
   { motif: 'Tidal Court', x: -35, z: 108 },
-  { motif: 'Great Wheel', x: 145, z: 58 },
+  { motif: 'Great Wheel', x: 140.5, z: 60.5 },
   { motif: 'Carrousel', x: 116, z: 194 },
   { motif: 'Menagerie', x: -145, z: 43 },
-  { motif: 'Grotto Pearl', x: 170, z: 132 },
+  // (Relocated from the removed Grotto of Pearls to the Sun Garden's door.)
+  { motif: 'Sun Garden', x: -138, z: 66 },
   { motif: 'Leviathan', x: -110, z: -230 },
 ] as const
 
@@ -50,9 +44,7 @@ export class SmallWonders {
 
   private readonly services: DistrictServices
   private readonly held: HeldItemSystem | null
-  private readonly armThrow: ArmThrow
   private readonly presses: PennyPress[] = []
-  private readonly pellets: Pellet[] = []
   private hatAvailable = false
   private plushAvailable = false
   private hatTaken = false
@@ -62,17 +54,15 @@ export class SmallWonders {
   private modelTaken = false
   private readonly fixtureWriter = new SlotWriter(72)
 
-  constructor(services: DistrictServices, held: HeldItemSystem | null, armThrow: ArmThrow) {
+  constructor(services: DistrictServices, held: HeldItemSystem | null) {
     this.services = services
     this.held = held
-    this.armThrow = armThrow
   }
 
   init(ctx: GameContext): void {
     const lib = this.services.materials.lib
     if (!lib) throw new Error('SmallWonders requires materials')
     this.buildPennyPresses(ctx)
-    this.buildFeedingStation(ctx)
     this.buildSweetsKiosk(ctx)
     this.buildPrizeCounter(ctx)
     this.buildPocketModel(ctx)
@@ -147,53 +137,6 @@ export class SmallWonders {
       })
     }
     void ctx
-  }
-
-  private buildFeedingStation(ctx: GameContext): void {
-    const lib = this.services.materials.lib!
-    const { physics, interaction } = this.services
-    const lagoon = PARK_PLAN.menagerie.turtleLagoon
-    const x = lagoon.x + 1.5
-    const z = lagoon.z + lagoon.radius + 3
-    const y = terrainHeight(x, z)
-    const stand = new Mesh(new CylinderGeometry(0.28, 0.4, 1.15, 20), lib.verdigris)
-    stand.position.set(x, y + 0.58, z)
-    const hopper = new Mesh(new ConeGeometry(0.42, 0.62, 24), lib.brass)
-    hopper.rotation.x = Math.PI
-    hopper.position.set(x, y + 1.35, z)
-    this.group.add(stand, hopper)
-    physics.addStaticCylinder(x, y + 0.58, z, 0.58, 0.4)
-    interaction?.register({
-      position: new Vector3(x, y + 1.1, z),
-      radius: 2.5,
-      prompt: 'Take a cone of turtle food',
-      onInteract: () =>
-        this.armThrow({
-          kind: 'food-cone',
-          remaining: 8,
-          spawn: (origin, direction) => this.throwPellet(origin, direction),
-        }),
-    })
-    void ctx
-  }
-
-  private throwPellet(origin: Vector3, direction: Vector3): void {
-    const { world, rapier } = this.services.physics
-    const lib = this.services.materials.lib
-    if (!world || !rapier || !lib) return
-    const body = world.createRigidBody(
-      rapier.RigidBodyDesc.dynamic()
-        .setTranslation(origin.x, origin.y, origin.z)
-        .setLinvel(direction.x * 6, direction.y * 6, direction.z * 6)
-        .setCcdEnabled(true),
-    )
-    world.createCollider(
-      rapier.ColliderDesc.ball(0.035).setDensity(0.55).setRestitution(0.15).setFriction(0.7),
-      body,
-    )
-    const mesh = new Mesh(new SphereGeometry(0.035, 10, 7), lib.woodDark)
-    this.group.add(mesh)
-    this.pellets.push({ body, mesh, age: 0, scored: false, fed: false })
   }
 
   private buildSweetsKiosk(ctx: GameContext): void {
@@ -315,27 +258,7 @@ export class SmallWonders {
     void ctx
   }
 
-  fixedUpdate(ctx: GameContext, dt: number): void {
-    const lagoon = PARK_PLAN.menagerie.turtleLagoon
-    const waterY = terrainHeight(lagoon.x, lagoon.z) + 0.75
-    for (let i = this.pellets.length - 1; i >= 0; i--) {
-      const pellet = this.pellets[i]
-      pellet.age += dt
-      const p = pellet.body.translation()
-      if (!pellet.fed && Math.hypot(p.x - lagoon.x, p.z - lagoon.z) < lagoon.radius && p.y < waterY + 0.8) {
-        pellet.fed = true
-        ctx.events.emit('wildlife/turtle-attractor', { x: p.x, y: waterY, z: p.z, strength: 1 })
-      }
-      if (pellet.age > 18) {
-        this.services.physics.world?.removeRigidBody(pellet.body)
-        this.group.remove(pellet.mesh)
-        this.pellets.splice(i, 1)
-      }
-    }
-  }
-
   update(ctx: GameContext, dt: number): void {
-    for (const pellet of this.pellets) syncDynamicProp(pellet)
     for (const press of this.presses) {
       if (press.active) {
         press.progress = Math.min(1, press.progress + dt / 1.45)
@@ -359,23 +282,18 @@ export class SmallWonders {
   }
 
   dispose(ctx: GameContext): void {
-    for (const pellet of this.pellets) this.services.physics.world?.removeRigidBody(pellet.body)
     ctx.scene.remove(this.group)
   }
 
   debugSnapshot(): {
     presses: number
     pennies: number
-    pellets: number
-    fedPellets: number
     hatAvailable: boolean
     plushAvailable: boolean
   } {
     return {
       presses: this.presses.length,
       pennies: this.presses.filter((press) => press.collected).length,
-      pellets: this.pellets.length,
-      fedPellets: this.pellets.filter((pellet) => pellet.fed).length,
       hatAvailable: this.hatAvailable,
       plushAvailable: this.plushAvailable,
     }

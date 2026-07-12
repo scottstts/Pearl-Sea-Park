@@ -1,31 +1,42 @@
 import {
   CatmullRomCurve3,
   CircleGeometry,
-  Color,
+  ConeGeometry,
   DoubleSide,
   DynamicDrawUsage,
   InstancedBufferAttribute,
   InstancedMesh,
+  LatheGeometry,
   Matrix4,
   Mesh,
   Object3D,
+  PointLight,
   Quaternion,
+  SphereGeometry,
   TorusGeometry,
+  Vector2,
   Vector3,
 } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import type { Node } from 'three/webgpu'
 import {
   attribute,
+  cameraPosition,
   float,
   mix,
+  normalGeometry,
+  normalize,
   positionGeometry,
   positionLocal,
+  positionWorld,
   sin,
+  smoothstep,
   uniform,
+  vec2,
   vec3,
 } from 'three/tsl'
-import { ArchKit } from '../archkit/modules'
+import { fbm2 } from '../render/tslNoise'
+import { ArchKit, frondGeometry } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { Rng } from '../core/prng'
@@ -40,6 +51,7 @@ import {
   createJellyGeometry,
   createRayGeometry,
   createSeahorseGeometry,
+  createSunButterflyGeometry,
   createTurtleGeometry,
   geometryMetrics,
 } from './speciesGeometry'
@@ -54,9 +66,8 @@ export interface AmbientLifeSnapshot {
   rays: number
   turtles: number
   courtJellies: number
-  grottoJellies: number
   seahorses: number
-  feedingResponse: number
+  sunButterflies: number
   geometry: Record<string, GeometryMetrics>
 }
 
@@ -87,8 +98,6 @@ export class AmbientLife {
   private turtles: InstanceDraw | null = null
   private readonly denseDraws: InstanceDraw[] = []
   private readonly geometries = new Map<string, GeometryMetrics>()
-  private feedingPoint: Vector3 | null = null
-  private feedingResponse = 0
 
   constructor(services: DistrictServices, medium: SeaMediumSystem) {
     this.services = services
@@ -103,12 +112,8 @@ export class AmbientLife {
     this.buildTurtles(rng.fork('turtles'))
     this.buildJellies(rng.fork('jellies'))
     this.buildSeahorses(rng.fork('seahorses'))
+    this.buildSunButterflies(rng.fork('sun-butterflies'))
     ctx.scene.add(this.group)
-
-    ctx.events.on('wildlife/turtle-attractor', ({ x, y, z, strength }) => {
-      this.feedingPoint = new Vector3(x, y, z)
-      this.feedingResponse = Math.max(this.feedingResponse, Math.max(0, Math.min(1, strength)))
-    })
 
     const jelly = PARK_PLAN.menagerie.jellyCourt
     const jellyY = terrainHeight(jelly.x, jelly.z)
@@ -124,7 +129,7 @@ export class AmbientLife {
       name: 'turtle-lagoon',
       position: [turtles.x + 17, turtleY + 2.1, turtles.z + 10],
       look: [turtles.x, turtleY + 1.5, turtles.z],
-      note: 'The Menagerie turtle lagoon and feeding edge',
+      note: 'The Menagerie turtle lagoon',
     })
   }
 
@@ -161,8 +166,18 @@ export class AmbientLife {
         kit.cornice(writer, a.x, a.z, b.x, b.z, jellyY + 6.42)
       }
     }
-    for (const side of [-1, 1]) {
-      kit.urn(writer, jelly.x + side * (jelly.radius - 1.8), jellyY + 0.18, jelly.z, 0.95)
+    // Planters on the court diagonals — the old pair stood dead-center in
+    // the two gate openings. Diagonals decorate without blocking a lane.
+    for (const [sx, sz] of [
+      [-1, -1],
+      [-1, 1],
+      [1, -1],
+      [1, 1],
+    ] as const) {
+      const ux = jelly.x + sx * 7.4
+      const uz = jelly.z + sz * 7.4
+      kit.urn(writer, ux, jellyY + 0.18, uz, 0.95)
+      physics.addStaticCylinder(ux, jellyY + 0.18 + 0.57, uz, 0.57, 0.44)
     }
 
     const lagoon = menagerie.turtleLagoon
@@ -176,16 +191,59 @@ export class AmbientLife {
     rimMesh.receiveShadow = true
     this.group.add(rimMesh)
     physics.addStaticCylinder(lagoon.x, lagoonY + 0.26, lagoon.z, 0.26, lagoon.radius + 0.25)
+
+    // Lagoon water. The old disc sat EXACTLY on the plaza plate top (both
+    // at lagoonY+0.18): coplanar z-fighting through CircleGeometry's
+    // triangle fan — the reported star-shaped flicker radiating from the
+    // center. The pool now has a real section: a dark sandy basin floor
+    // 4 cm above the plaza, and the water surface up at the rim's throat.
+    const basinFloor = new MeshStandardNodeMaterial()
+    basinFloor.roughness = 0.95
+    const floorRadial = positionWorld.xz.sub(vec2(lagoon.x, lagoon.z)).length()
+    basinFloor.colorNode = mix(
+      vec3(0.2, 0.23, 0.19),
+      vec3(0.34, 0.33, 0.24),
+      fbm2(positionWorld.xz.mul(1.4)),
+    ).mul(float(1).sub(floorRadial.div(lagoon.radius).pow(3).mul(0.4)))
+    this.medium.applyCaustics(basinFloor, 1.3)
+    const bed = new Mesh(new CircleGeometry(lagoon.radius - 0.05, 48), basinFloor)
+    bed.rotation.x = -Math.PI / 2
+    bed.position.set(lagoon.x, lagoonY + 0.22, lagoon.z)
+    bed.receiveShadow = true
+    this.group.add(bed)
+
+    // The surface: turquoise over the shallows deepening toward the middle,
+    // slow crossing swell plus concentric turtle-wake rings, a bright foam
+    // thread hugging the marble rim, and grazing-angle sky sheen. One draw.
     const lagoonWater = new MeshStandardNodeMaterial()
-    lagoonWater.color = new Color(0x163d46)
-    lagoonWater.roughness = 0.12
-    lagoonWater.metalness = 0.05
+    lagoonWater.roughness = 0.1
+    lagoonWater.metalness = 0.08
     lagoonWater.transparent = true
-    lagoonWater.opacity = 0.82
+    lagoonWater.envMapIntensity = 0.9
+    const radial = positionWorld.xz.sub(vec2(lagoon.x, lagoon.z)).length()
+    const rings = sin(radial.mul(5.2).sub(this.timeUniform.mul(1.6)))
+      .mul(float(1).sub(radial.div(lagoon.radius)).clamp(0, 1))
+      .mul(0.35)
+    const swellA = sin(positionWorld.x.mul(2.1).add(positionWorld.z.mul(1.3)).add(this.timeUniform.mul(0.8)))
+    const swellB = sin(positionWorld.z.mul(3.1).sub(positionWorld.x.mul(1.7)).add(this.timeUniform.mul(1.15)))
+    lagoonWater.normalNode = normalize(
+      normalGeometry.add(vec3(swellA.mul(0.07).add(rings.mul(0.05)), 0, swellB.mul(0.07))),
+    )
+    const depthBlend = radial.div(lagoon.radius).oneMinus().pow(1.4)
+    const shallow = vec3(0.16, 0.42, 0.42)
+    const deep = vec3(0.035, 0.16, 0.2)
+    const facing = cameraPosition.sub(positionWorld).normalize().y.abs().clamp(0, 1)
+    const sheen = float(1).sub(facing).pow(3)
+    const foamEdge = smoothstep(0.4, 0.05, radial.sub(lagoon.radius - 0.75).abs())
+      .mul(fbm2(positionWorld.xz.mul(3.2).add(this.timeUniform.mul(0.25))).mul(0.5).add(0.5))
+    lagoonWater.colorNode = mix(mix(deep, shallow, depthBlend), vec3(0.32, 0.44, 0.45), sheen)
+      .add(vec3(0.5, 0.55, 0.52).mul(foamEdge.mul(0.35)))
+    lagoonWater.opacityNode = float(0.82).add(sheen.mul(0.12)).add(foamEdge.mul(0.1))
+    lagoonWater.emissiveNode = vec3(0.004, 0.014, 0.016)
     this.medium.applyCaustics(lagoonWater, 0.5)
-    const water = new Mesh(new CircleGeometry(lagoon.radius - 0.35, 64), lagoonWater)
+    const water = new Mesh(new CircleGeometry(lagoon.radius - 0.12, 64), lagoonWater)
     water.rotation.x = -Math.PI / 2
-    water.position.set(lagoon.x, lagoonY + 0.18, lagoon.z)
+    water.position.set(lagoon.x, lagoonY + 0.46, lagoon.z)
     water.receiveShadow = true
     this.group.add(water)
     // Four open balustrade quadrants give the lagoon a finished feeding edge
@@ -228,12 +286,34 @@ export class AmbientLife {
     }
     kit.dome(writer, sun.x, sunY + 5.15, sun.z, 8.5, 14)
     physics.addStaticCylinder(sun.x, sunY + 0.08, sun.z, 0.14, 9.4)
+    this.buildSunGardenInterior(kit, writer, sun.x, sunY, sun.z)
+
+    // ── The gardens junction: a proper court, not five paths colliding ────
+    // The hub road, the overlook road, and all three garden spokes used to
+    // meet at bare crossing plates. A small roundabout plaza owns the node;
+    // every spoke now starts at its rim.
+    const junctionY = terrainHeight(menagerie.x, menagerie.z)
+    kit.mosaicPlaza(writer, menagerie.x, junctionY, menagerie.z, 6.5)
+    physics.addStaticCylinder(menagerie.x, junctionY + 0.09, menagerie.z, 0.16, 6.8)
+    for (const [lx, lz] of [
+      [menagerie.x - 4.6, menagerie.z - 4.2],
+      [menagerie.x + 4.6, menagerie.z + 4.2],
+    ] as const) {
+      this.services.amenities.addLamp(lx, junctionY + 0.18, lz)
+      physics.addStaticBox(lx, junctionY + 1.88, lz, 0.12, 1.7, 0.12)
+    }
 
     // Short grounded links make the three exhibits read as one district.
+    const spokeStart = (endX: number, endZ: number): [number, number] => {
+      const dx = endX - menagerie.x
+      const dz = endZ - menagerie.z
+      const inv = 6.5 / Math.max(0.001, Math.hypot(dx, dz))
+      return [menagerie.x + dx * inv, menagerie.z + dz * inv]
+    }
     const links: readonly [[number, number], [number, number]][] = [
-      [[menagerie.x, menagerie.z], [jelly.x + jelly.radius, jelly.z]],
-      [[menagerie.x, menagerie.z], [lagoon.x, lagoon.z + lagoon.radius]],
-      [[menagerie.x, menagerie.z], [sun.x - 7.5, sun.z - 3]],
+      [spokeStart(jelly.x + jelly.radius, jelly.z), [jelly.x + jelly.radius, jelly.z]],
+      [spokeStart(lagoon.x, lagoon.z + lagoon.radius), [lagoon.x, lagoon.z + lagoon.radius]],
+      [spokeStart(sun.x - 7.5, sun.z - 3), [sun.x - 7.5, sun.z - 3]],
     ]
     for (const [[ax, az], [bx, bz]] of links) {
       const segments = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 7))
@@ -261,6 +341,179 @@ export class AmbientLife {
 
     this.group.add(writer.compile())
     void ctx
+  }
+
+  /**
+   * The Sun Garden's living interior (design §7: "a greenhouse of flowers
+   * and butterflies"; the sign reads LIVING CORAL COURT). A brass sun
+   * lantern is the garden's own sun; a raised parterre ring blooms with
+   * golden anemones and sea-fern fronds; planters, benches, and a warm
+   * light fill the dome. The butterflies themselves are built separately
+   * (GPU-fluttered instances).
+   */
+  private buildSunGardenInterior(
+    kit: ArchKit,
+    writer: SlotWriter,
+    x: number,
+    floorY: number,
+    z: number,
+  ): void {
+    const lib = this.services.materials.lib!
+    const { physics } = this.services
+
+    // The sun lantern: marble pedestal, brass calyx, glowing globe, rays.
+    const pedestal = new LatheGeometry(
+      [
+        new Vector2(0.06, 0),
+        new Vector2(0.85, 0),
+        new Vector2(0.9, 0.1),
+        new Vector2(0.6, 0.24),
+        new Vector2(0.42, 0.42),
+        new Vector2(0.36, 1.0),
+        new Vector2(0.44, 1.2),
+        new Vector2(0.56, 1.28),
+        new Vector2(0.6, 1.36),
+        new Vector2(0.06, 1.38),
+        new Vector2(0.06, 0),
+      ],
+      22,
+    )
+    writer.place(lib.marble, pedestal, x, floorY + 0.18, z)
+    pedestal.dispose()
+    const sunGlobe = new SphereGeometry(0.55, 22, 16)
+    writer.place(lib.lampGlobe, sunGlobe, x, floorY + 2.25, z)
+    sunGlobe.dispose()
+    const ray = new ConeGeometry(0.07, 0.5, 8)
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2
+      const direction = new Vector3(Math.sin(angle), Math.cos(angle) * 0.35 + 0.12, Math.cos(angle))
+      // Rays radiate in a tilted fan around the globe, tips outward.
+      const flat = new Vector3(Math.sin(angle), 0.15, Math.cos(angle)).normalize()
+      const from = new Vector3(x, floorY + 2.25, z).addScaledVector(flat, 0.5)
+      const matrix = new Matrix4().compose(
+        from.clone().addScaledVector(flat, 0.22),
+        new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), flat),
+        new Vector3(1, 1, 1),
+      )
+      writer.emit(lib.brass, ray, matrix)
+      void direction
+    }
+    ray.dispose()
+    physics.addStaticCylinder(x, floorY + 0.85, z, 0.85, 0.92)
+    const glow = new PointLight(0xffd9a0, 8.5, 17, 1.7)
+    glow.position.set(x, floorY + 2.3, z)
+    this.group.add(glow)
+
+    // Parterre: an annular raised bed around the pedestal — closed marble
+    // curb ring, soil fill, golden anemone blooms, and arcing fronds.
+    const curb = new LatheGeometry(
+      [
+        new Vector2(2.1, 0),
+        new Vector2(3.45, 0),
+        new Vector2(3.5, 0.14),
+        new Vector2(3.42, 0.34),
+        new Vector2(3.28, 0.38),
+        new Vector2(3.22, 0.3),
+        new Vector2(2.32, 0.3),
+        new Vector2(2.26, 0.38),
+        new Vector2(2.12, 0.34),
+        new Vector2(2.05, 0.14),
+        new Vector2(2.1, 0),
+      ],
+      48,
+    )
+    writer.place(lib.marble, curb, x, floorY + 0.18, z)
+    curb.dispose()
+    const soilRing = new LatheGeometry(
+      [
+        new Vector2(2.25, 0.24),
+        new Vector2(3.28, 0.24),
+        new Vector2(3.2, 0.32),
+        new Vector2(2.76, 0.36),
+        new Vector2(2.32, 0.32),
+        new Vector2(2.25, 0.24),
+      ],
+      48,
+    )
+    writer.place(lib.soil, soilRing, x, floorY + 0.18, z)
+    soilRing.dispose()
+    physics.addStaticCylinder(x, floorY + 0.36, z, 0.18, 3.5)
+
+    // Golden anemones: fluted stalk, petal crown, nacre heart.
+    const stalk = new LatheGeometry(
+      [
+        new Vector2(0.09, 0),
+        new Vector2(0.05, 0.08),
+        new Vector2(0.04, 0.2),
+        new Vector2(0.07, 0.26),
+        new Vector2(0.1, 0.3),
+        new Vector2(0.02, 0.33),
+      ],
+      10,
+    )
+    const petal = new ConeGeometry(0.035, 0.16, 6)
+    const heart = new SphereGeometry(0.05, 10, 8)
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2 + 0.31
+      const radius = 2.5 + (i % 2) * 0.55
+      const ax = x + Math.sin(angle) * radius
+      const az = z + Math.cos(angle) * radius
+      const ay = floorY + 0.5
+      writer.place(lib.verdigris, stalk, ax, ay, az)
+      for (let p = 0; p < 6; p++) {
+        const petalAngle = (p / 6) * Math.PI * 2
+        const lean = new Vector3(Math.sin(petalAngle), 1.15, Math.cos(petalAngle)).normalize()
+        const matrix = new Matrix4().compose(
+          new Vector3(ax + lean.x * 0.09, ay + 0.36, az + lean.z * 0.09),
+          new Quaternion().setFromUnitVectors(new Vector3(0, 1, 0), lean),
+          new Vector3(1, 1, 1),
+        )
+        writer.emit(lib.brass, petal, matrix)
+      }
+      writer.place(lib.nacre, heart, ax, ay + 0.35, az)
+    }
+    stalk.dispose()
+    petal.dispose()
+    heart.dispose()
+    // Fronds arc outward from the bed between the blooms.
+    const bedFrond = frondGeometry([
+      new Vector3(0.04, 0.4, 0),
+      new Vector3(0.14, 0.72, 0),
+      new Vector3(0.3, 0.94, 0),
+      new Vector3(0.46, 1.02, 0),
+    ])
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2
+      const ax = x + Math.sin(angle) * 2.85
+      const az = z + Math.cos(angle) * 2.85
+      writer.place(lib.foliage, bedFrond, ax, floorY + 0.18, az, angle + 0.35)
+    }
+    bedFrond.dispose()
+
+    // Corner planters and two benches facing the sun.
+    for (const [px, pz] of [
+      [x - 5.6, z - 3.4],
+      [x + 5.6, z + 3.4],
+      [x - 3.4, z + 5.6],
+      [x + 3.4, z - 5.6],
+    ] as const) {
+      kit.urn(writer, px, floorY + 0.18, pz, 0.95)
+      physics.addStaticCylinder(px, floorY + 0.18 + 0.57, pz, 0.57, 0.44)
+    }
+    for (const side of [-1, 1]) {
+      const bx = x + side * 5.4
+      const bz = z - side * 1.6
+      this.services.amenities.addBenchFacing(bx, floorY + 0.26, bz, x, z)
+      const yaw = Math.atan2(bx - x, bz - z) + Math.PI
+      physics.addStaticBox(bx, floorY + 0.58, bz, 0.9, 0.34, 0.3, yaw)
+    }
+
+    registerBookmark({
+      name: 'sun-garden',
+      position: [x + 11, floorY + 2.4, z + 9],
+      look: [x, floorY + 2.2, z],
+      note: 'The Sun Garden — blooms and butterflies under glass',
+    })
   }
 
   private buildRays(rng: Rng): void {
@@ -379,23 +632,6 @@ export class AmbientLife {
         false,
       ),
     )
-    this.denseDraws.push(
-      this.createJellyDraw(
-        base,
-        200,
-        rng.fork('grotto'),
-        () => {
-          const angle = rng.range(0, Math.PI * 2)
-          const radius = Math.sqrt(rng.next()) * rng.range(4, 23)
-          return new Vector3(
-            211 + Math.cos(angle) * radius,
-            rng.range(-27, -21.8),
-            99 + Math.sin(angle) * radius,
-          )
-        },
-        true,
-      ),
-    )
     base.dispose()
   }
 
@@ -436,18 +672,31 @@ export class AmbientLife {
     const pulseWeight = attribute('morphWeight', 'float') as unknown as Node<'float'>
     const pulse = sin(this.timeUniform.mul(2.05).add(phase))
     const relative = positionLocal.sub(origin)
-    const pulseScale = float(1).add(pulse.mul(0.08).mul(pulseWeight))
+    // Livelier medusae: the bell contraction carries a second harmonic
+    // shimmer, each contraction DARTS the animal upward (asymmetric — jets
+    // rise on the squeeze, then sink), and the tentacle strands billow
+    // behind the sway instead of hanging rigid.
+    const shimmer = sin(this.timeUniform.mul(4.35).add(phase.mul(1.3))).mul(0.03)
+    const pulseScale = float(1).add(pulse.mul(0.11).add(shimmer).mul(pulseWeight))
+    const dart = pulse.max(0).pow(1.6).mul(0.42)
+    const billow = sin(this.timeUniform.mul(0.8).add(phase.mul(1.9)))
+      .mul(pulseWeight)
+      .mul(0.28)
     const flow = currentFlow(origin, this.timeUniform)
     material.positionNode = origin
-      .add(vec3(relative.x.mul(pulseScale), relative.y.mul(float(1).sub(pulse.mul(0.055))), relative.z.mul(pulseScale)))
+      .add(vec3(
+        relative.x.mul(pulseScale).add(billow),
+        relative.y.mul(float(1).sub(pulse.mul(0.07))),
+        relative.z.mul(pulseScale).add(billow.mul(-0.6)),
+      ))
       .add(flow.mul(vec3(0.85, 0.22, 0.85)))
-      .add(vec3(0, sin(this.timeUniform.mul(0.55).add(phase)).mul(0.34), 0))
+      .add(vec3(0, sin(this.timeUniform.mul(0.55).add(phase)).mul(0.34).add(dart), 0))
     material.colorNode = bioluminescent
       ? mix(vec3(0.13, 0.4, 0.48), vec3(0.42, 0.82, 0.78), pulse.mul(0.5).add(0.5))
       : mix(vec3(0.33, 0.47, 0.5), vec3(0.76, 0.68, 0.77), pulse.mul(0.5).add(0.5))
     material.emissiveNode = bioluminescent
       ? vec3(0.08, 0.32, 0.38).mul(pulse.mul(0.5).add(0.8))
-      : vec3(0.01, 0.025, 0.03)
+      : vec3(0.012, 0.03, 0.036).mul(pulse.mul(0.35).add(0.85))
     material.opacityNode = float(bioluminescent ? 0.78 : 0.58)
     this.medium.applyCaustics(material, bioluminescent ? 0.2 : 0.65)
     mesh.instanceMatrix.needsUpdate = true
@@ -455,10 +704,84 @@ export class AmbientLife {
     mesh.frustumCulled = true
     mesh.castShadow = false
     mesh.receiveShadow = false
-    mesh.name = bioluminescent ? 'wildlife-jellies:grotto' : 'wildlife-jellies:court'
+    mesh.name = bioluminescent ? 'wildlife-jellies:bioluminescent' : 'wildlife-jellies:court'
     markMainDetail(mesh)
     this.group.add(mesh)
     return { mesh, material }
+  }
+
+  /**
+   * Sun Garden sea butterflies: 44 pteropods drifting under the dome. All
+   * motion is vertex TSL against instanceOrigin/instancePhase (the jelly
+   * pattern) — drift bob, gentle orbit sway, and wingbeats through the
+   * morphWeight flutter channel. Zero per-frame CPU.
+   */
+  private buildSunButterflies(rng: Rng): void {
+    const geometry = createSunButterflyGeometry()
+    this.geometries.set('sun-butterfly', geometryMetrics(geometry))
+    const sun = PARK_PLAN.menagerie.sunGarden
+    const sunY = terrainHeight(sun.x, sun.z) + 0.08
+    const count = 44
+    const origins = new Float32Array(count * 3)
+    const phases = new Float32Array(count)
+    const material = new MeshStandardNodeMaterial()
+    material.roughness = 0.45
+    material.metalness = 0.12
+    const mesh = new InstancedMesh(geometry, material, count)
+    const matrix = new Matrix4()
+    const quaternion = new Quaternion()
+    const scaleVector = new Vector3()
+    for (let i = 0; i < count; i++) {
+      const angle = rng.range(0, Math.PI * 2)
+      const radius = Math.sqrt(rng.next()) * 6.4
+      const x = sun.x + Math.cos(angle) * radius
+      const z = sun.z + Math.sin(angle) * radius
+      const y = sunY + rng.range(1.0, 4.2)
+      origins.set([x, y, z], i * 3)
+      phases[i] = rng.range(0, Math.PI * 2)
+      quaternion.setFromAxisAngle(this.up, rng.range(0, Math.PI * 2))
+      const s = rng.range(0.75, 1.35)
+      scaleVector.set(s, s, s)
+      matrix.compose(new Vector3(x, y, z), quaternion, scaleVector)
+      mesh.setMatrixAt(i, matrix)
+    }
+    geometry.setAttribute('instanceOrigin', new InstancedBufferAttribute(origins, 3))
+    geometry.setAttribute('instancePhase', new InstancedBufferAttribute(phases, 1))
+    const origin = attribute('instanceOrigin', 'vec3') as unknown as Node<'vec3'>
+    const phase = attribute('instancePhase', 'float') as unknown as Node<'float'>
+    const flutter = attribute('morphWeight', 'float') as unknown as Node<'float'>
+    const relative = positionLocal.sub(origin)
+    // Wingbeats: quick sine on the flutter channel; drift: slow lissajous
+    // around the home point, rising and sinking like blossom on a draught.
+    const beat = sin(this.timeUniform.mul(9.5).add(phase.mul(3)))
+    const driftX = sin(this.timeUniform.mul(0.31).add(phase)).mul(1.1)
+    const driftY = sin(this.timeUniform.mul(0.45).add(phase.mul(1.7))).mul(0.55)
+    const driftZ = sin(this.timeUniform.mul(0.26).add(phase.mul(2.3))).mul(1.1)
+    material.positionNode = origin
+      .add(relative)
+      .add(vec3(0, beat.mul(flutter).mul(0.045), 0))
+      .add(vec3(driftX, driftY, driftZ))
+    // Warm garden palette: gold through rose, pearled bellies, a soft glow
+    // so they read against the dome's shade.
+    const hue = sin(phase.mul(2.1)).mul(0.5).add(0.5)
+    const goldWing = vec3(0.92, 0.62, 0.22)
+    const roseWing = vec3(0.85, 0.4, 0.38)
+    material.colorNode = mix(
+      mix(goldWing, roseWing, hue),
+      vec3(0.95, 0.9, 0.82),
+      positionGeometry.y.mul(8).clamp(0, 0.5),
+    )
+    material.emissiveNode = mix(goldWing, roseWing, hue).mul(0.06)
+    this.medium.applyCaustics(material, 0.8)
+    mesh.instanceMatrix.needsUpdate = true
+    mesh.computeBoundingSphere()
+    mesh.frustumCulled = true
+    mesh.castShadow = false
+    mesh.receiveShadow = false
+    mesh.name = 'wildlife-sun-butterflies'
+    markMainDetail(mesh)
+    this.group.add(mesh)
+    this.denseDraws.push({ mesh, material })
   }
 
   private buildSeahorses(rng: Rng): void {
@@ -515,8 +838,7 @@ export class AmbientLife {
 
   update(ctx: GameContext, dt: number, mantaAmount: number, mantaPhase: number): void {
     this.timeUniform.value = ctx.time.elapsed
-    this.feedingResponse = Math.max(0, this.feedingResponse - dt * 0.035)
-    if (this.feedingResponse <= 0) this.feedingPoint = null
+    void dt
     this.updateSmallRays(ctx.time.elapsed)
     this.updateManta(ctx.time.elapsed, mantaAmount, mantaPhase)
     this.updateTurtles(ctx.time.elapsed)
@@ -564,16 +886,10 @@ export class AmbientLife {
   private updateTurtles(elapsed: number): void {
     const draw = this.turtles
     if (!draw) return
-    const attraction = this.feedingPoint
     for (let i = 0; i < 8; i++) {
       const u = (this.turtlePhases[i] + elapsed * (0.005 + i * 0.0002)) % 1
       this.turtleCurve.getPointAt(u, this.position)
       this.turtleCurve.getTangentAt(u, this.tangent).normalize()
-      if (attraction && this.feedingResponse > 0) {
-        const target = attraction.clone().add(new Vector3(Math.sin(i * 2.4), 0, Math.cos(i * 1.7)).multiplyScalar(1.4))
-        this.position.lerp(target, this.feedingResponse * 0.72)
-        this.tangent.lerp(target.sub(this.position).normalize(), this.feedingResponse).normalize()
-      }
       this.composeAlong(this.position, this.tangent, 0.82 + (i % 3) * 0.08)
       draw.mesh.setMatrixAt(i, this.matrices)
     }
@@ -608,9 +924,8 @@ export class AmbientLife {
       rays: 6,
       turtles: 8,
       courtJellies: 400,
-      grottoJellies: 200,
       seahorses: 40,
-      feedingResponse: this.feedingResponse,
+      sunButterflies: 44,
       geometry: Object.fromEntries(this.geometries),
     }
   }

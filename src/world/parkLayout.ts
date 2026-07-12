@@ -18,7 +18,6 @@ export const PARK_PLAN = {
     turtleLagoon: { x: -168, z: 20, radius: 13 },
   },
   midway: { x: 100, z: 150, width: 42, depth: 20 },
-  grotto: { x: 185, z: 125 },
   observatory: { x: -62, z: 228 },
   cafe: { x: 46, z: 112 },
 } as const
@@ -35,13 +34,23 @@ export const PARK_PATHS: readonly {
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.wheel.x - 27, bz: PARK_PLAN.wheel.z, width: 8 },
   { ax: PARK_PLAN.midway.x, az: PARK_PLAN.midway.z + 12, bx: PARK_PLAN.carousel.x, bz: PARK_PLAN.carousel.z - 13, width: 6 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.menagerie.x, bz: PARK_PLAN.menagerie.z, width: 8 },
-  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.midway.x - 10, bz: PARK_PLAN.midway.z - 4, width: 7 },
-  { ax: PARK_PLAN.midway.x + 16, az: PARK_PLAN.midway.z, bx: PARK_PLAN.grotto.x, bz: PARK_PLAN.grotto.z, width: 6 },
+  // Midway approach: the hub road bends at a cafe-clearing waypoint and
+  // terminates at the hall's forecourt apron (MIDWAY_APRON) instead of
+  // driving diagonal plates through the hall floor. The old endpoint inside
+  // the hall footprint was the criss-cross mess at the south entrance.
+  { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: 40, bz: 124, width: 7 },
+  { ax: 40, az: 124, bx: 93, bz: 132, width: 7 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.torrent.station.x, bz: PARK_PLAN.torrent.station.z, width: 7 },
   { ax: PARK_PLAN.atrium.x, az: PARK_PLAN.atrium.z, bx: PARK_PLAN.observatory.x, bz: PARK_PLAN.observatory.z, width: 5 },
   { ax: PARK_PLAN.tidalCourt.x + 18, az: PARK_PLAN.tidalCourt.z + 24, bx: PARK_PLAN.cafe.x, bz: PARK_PLAN.cafe.z, width: 5 },
+  // Cafe → midway-road connector, meeting the road at its waypoint bend.
+  { ax: PARK_PLAN.cafe.x, az: PARK_PLAN.cafe.z, bx: 40, bz: 124, width: 4 },
   { ax: -140, az: -232, bx: PARK_PLAN.menagerie.x, bz: PARK_PLAN.menagerie.z, width: 6 },
 ]
+
+/** Forecourt apron where the hub road meets the Midway hall —
+ *  tangent to the hall's south floor edge (z = 140). */
+export const MIDWAY_APRON = { x: 100, z: 133, radius: 7 } as const
 
 export type FacilityEntranceSign = {
   id: string
@@ -76,8 +85,10 @@ export const FACILITY_ENTRANCE_SIGNS: readonly FacilityEntranceSign[] = [
     approachX: PARK_PLAN.tidalCourt.x, approachZ: PARK_PLAN.tidalCourt.z,
   },
   {
+    // Fully outside the r=8 cafe plaza (both frame legs clear the curb) and
+    // ≥0.35 m clear of the hub road, spur, and connector lanes.
     id: 'cafe-meduse', title: 'CAFÉ MÉDUSE', subtitle: 'REFRESHMENT TERRACE',
-    x: PARK_PLAN.cafe.x - 7.4, z: PARK_PLAN.cafe.z + 3.5,
+    x: PARK_PLAN.cafe.x - 10.2, z: PARK_PLAN.cafe.z + 0.4,
     approachX: PARK_PLAN.tidalCourt.x + 18, approachZ: PARK_PLAN.tidalCourt.z + 24,
   },
   {
@@ -104,11 +115,9 @@ export const FACILITY_ENTRANCE_SIGNS: readonly FacilityEntranceSign[] = [
     x: PARK_PLAN.torrent.station.x + 2.2, z: PARK_PLAN.torrent.station.z + 13.2,
     approachX: PARK_PLAN.tidalCourt.x, approachZ: PARK_PLAN.tidalCourt.z,
   },
-  {
-    id: 'menagerie', title: 'MENAGERIE GARDENS',
-    x: PARK_PLAN.menagerie.x + 17.2, z: PARK_PLAN.menagerie.z - 2.8,
-    approachX: PARK_PLAN.tidalCourt.x, approachZ: PARK_PLAN.tidalCourt.z,
-  },
+  // (No 'menagerie' marker: the junction between the three gardens is not a
+  // destination itself — Sun Garden, Moon-Jelly Court, and Turtle Lagoon
+  // each carry their own sign and teleport node.)
   {
     id: 'sun-garden', title: 'SUN GARDEN', subtitle: 'LIVING CORAL COURT',
     x: PARK_PLAN.menagerie.sunGarden.x + 9.2, z: PARK_PLAN.menagerie.sunGarden.z + 2,
@@ -123,11 +132,6 @@ export const FACILITY_ENTRANCE_SIGNS: readonly FacilityEntranceSign[] = [
     id: 'turtle-lagoon', title: 'TURTLE LAGOON',
     x: PARK_PLAN.menagerie.turtleLagoon.x + 13.8, z: PARK_PLAN.menagerie.turtleLagoon.z + 6.2,
     approachX: PARK_PLAN.menagerie.x, approachZ: PARK_PLAN.menagerie.z,
-  },
-  {
-    id: 'grotto', title: 'GROTTO OF PEARLS', subtitle: 'SCENIC VOYAGE',
-    x: PARK_PLAN.grotto.x - 9.5, z: PARK_PLAN.grotto.z + 9.2,
-    approachX: PARK_PLAN.midway.x, approachZ: PARK_PLAN.midway.z,
   },
   {
     id: 'pearl-line-atrium', title: 'PEARL LINE', subtitle: 'ESPLANADE WEST',

@@ -28,7 +28,7 @@ export class GamesSystem implements GameSystem {
     this.held = held
     const armThrow: ArmThrow = (request) => this.arm(request)
     this.toys = new PhysicsToys(services, armThrow)
-    this.wonders = new SmallWonders(services, held, armThrow)
+    this.wonders = new SmallWonders(services, held)
     this.well = new WishingWell(services, medium, armThrow)
   }
 
@@ -72,12 +72,11 @@ export class GamesSystem implements GameSystem {
 
   fixedUpdate(ctx: GameContext, dt: number): void {
     this.toys.fixedUpdate(ctx, dt)
-    this.wonders.fixedUpdate(ctx, dt)
     this.well.fixedUpdate(ctx, dt)
   }
 
   update(ctx: GameContext, dt: number): void {
-    this.toys.update(ctx)
+    this.toys.update()
     this.wonders.update(ctx, dt)
     this.well.update(ctx, dt)
     if (this.debugCanvas && ctx.time.frame % 60 === 0) {

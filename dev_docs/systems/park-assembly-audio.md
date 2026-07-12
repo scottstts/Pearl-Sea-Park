@@ -131,3 +131,22 @@
 - In `?view` mode DevOrbit owns the camera: set `orbit.controls.target` (+
   `camera.position`, then `controls.update()`) — a bare `camera.lookAt` is
   overwritten the moment the window becomes visible.
+
+## 2026-07-12 standing-issues update
+
+- The Bubble Fountain is fully redesigned (shows/bubbleFountain.ts): a
+  permanent sculpted centerpiece with three FIXED nozzle rings, coherent
+  packet-gated plumes, light threads that hug the plumes, an always-on idle
+  breathing mode, and a Silver-Ceiling dissolve. The urn kit is a real
+  planter (closed vessel, soil, fern rosette); tidal-court pedestals,
+  atrium/esplanade gates, overlook, jelly court, and sun garden all use it
+  with colliders.
+- Roads terminate at junction plazas now: MIDWAY_APRON south of the hall
+  (hub road bends at (40,124) clear of the cafe, with a cafe connector) and
+  the menagerie roundabout. The grotto road is gone.
+- Cafe: the center ring is a closed bar with a counter top and samovar
+  centerpiece; the sign stands fully outside the plaza. Observatory: real
+  armillary (tilted assembly matrix). Overlook: planters off the fence line,
+  telescopes as tube trains on one sight line.
+- Audio: all grotto buses (cave convolver, shell organ, drips) are removed;
+  the fountain/waltz/whale voices are unchanged.

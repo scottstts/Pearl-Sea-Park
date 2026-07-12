@@ -4,10 +4,13 @@ import {
   CylinderGeometry,
   LatheGeometry,
   Matrix4,
+  Quaternion,
   SphereGeometry,
   TorusGeometry,
   Vector2,
+  Vector3,
 } from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { ParkMaterials } from '../materials/library'
 import type { SlotWriter } from './writer'
 
@@ -276,25 +279,113 @@ export class ArchKit {
     }
   }
 
-  /** Sculptural planter/marker, used sparingly at gates and path junctions. */
+  /** Sculptural pedestal planter, used sparingly at gates and path junctions.
+   *  A stepped marble plinth, a watertight verdigris vessel (closed clockwise
+   *  lathe: base, cavetto foot, knopped stem, gadrooned bowl, rolled rim,
+   *  interior wall and floor), a soil fill, and a live rosette of arcing
+   *  sea-fern fronds around a nacre bud. Local origin: plinth bottom center.
+   *  Planted height ≈ 1.45·scale; body radius ≈ 0.54·scale. */
   urn(w: SlotWriter, x: number, y: number, z: number, scale = 1): void {
-    const body = this.proto('urn-body', () => new LatheGeometry([
-      new Vector2(0.22, 0), new Vector2(0.35, 0.08), new Vector2(0.31, 0.22),
-      new Vector2(0.46, 0.5), new Vector2(0.4, 0.78), new Vector2(0.24, 0.92),
-      new Vector2(0.48, 1.02),
-    ], 18))
-    const pearl = this.proto('urn-pearl', () => new SphereGeometry(0.12, 12, 8))
+    const plinthLow = this.proto('urn-plinth-low', () => new BoxGeometry(0.84, 0.09, 0.84))
+    const plinthHigh = this.proto('urn-plinth-high', () => new BoxGeometry(0.72, 0.09, 0.72))
+    const body = this.proto('urn-body', () =>
+      new LatheGeometry(
+        [
+          // Bottom (faces down onto the plinth).
+          new Vector2(0.03, 0.16),
+          new Vector2(0.31, 0.16),
+          // Outer face, base to rim (ascending → faces outward).
+          new Vector2(0.345, 0.2),
+          new Vector2(0.33, 0.26),
+          new Vector2(0.24, 0.31),
+          new Vector2(0.185, 0.38),
+          new Vector2(0.175, 0.46),
+          new Vector2(0.24, 0.52),
+          new Vector2(0.25, 0.565),
+          new Vector2(0.21, 0.61),
+          new Vector2(0.2, 0.66),
+          new Vector2(0.3, 0.72),
+          new Vector2(0.4, 0.8),
+          new Vector2(0.455, 0.88),
+          new Vector2(0.44, 0.925),
+          new Vector2(0.48, 0.97),
+          new Vector2(0.525, 1.02),
+          new Vector2(0.535, 1.065),
+          new Vector2(0.5, 1.095),
+          // Rim top (inward → faces up), then interior wall (descending →
+          // faces the bowl cavity) and floor. Closing the loop is the whole
+          // point: the old open ribbon showed culled backfaces into the bowl.
+          new Vector2(0.435, 1.1),
+          new Vector2(0.415, 1.03),
+          new Vector2(0.375, 0.92),
+          new Vector2(0.3, 0.83),
+          new Vector2(0.1, 0.79),
+          new Vector2(0.03, 0.785),
+          new Vector2(0.03, 0.16),
+        ],
+        28,
+      ),
+    )
+    const soilFill = this.proto('urn-soil', () => new CylinderGeometry(0.3, 0.24, 0.08, 20))
+    const frondLong = this.proto('urn-frond-long', () =>
+      frondGeometry([
+        new Vector3(0.05, 0.84, 0),
+        new Vector3(0.16, 1.1, 0),
+        new Vector3(0.34, 1.27, 0),
+        new Vector3(0.54, 1.33, 0),
+      ]),
+    )
+    const frondShort = this.proto('urn-frond-short', () =>
+      frondGeometry([
+        new Vector3(0.03, 0.84, 0),
+        new Vector3(0.08, 1.08, 0),
+        new Vector3(0.16, 1.28, 0),
+        new Vector3(0.27, 1.42, 0),
+      ]),
+    )
+    const bud = this.proto('urn-bud', () => new SphereGeometry(0.075, 12, 9))
+
+    w.place(this.m.marble, plinthLow, x, y + 0.045 * scale, z, 0, scale)
+    w.place(this.m.marble, plinthHigh, x, y + 0.125 * scale, z, 0, scale)
     w.place(this.m.verdigris, body, x, y, z, 0, scale)
-    w.place(this.m.nacre, pearl, x, y + scale * 1.13, z, 0, scale)
+    w.place(this.m.soil, soilFill, x, y + 0.83 * scale, z, 0, scale)
+    // Deterministic rosette: eight arcing outer fronds, five steeper inner
+    // ones, yaw-staggered with a fixed jitter table (ArchKit has no RNG).
+    const jitter = [0.13, -0.21, 0.33, -0.08, 0.24, -0.29, 0.05, -0.16]
+    for (let i = 0; i < 8; i++) {
+      const yaw = (i / 8) * Math.PI * 2 + jitter[i]
+      w.place(this.m.foliage, frondLong, x, y, z, yaw, scale * (0.92 + 0.02 * (i % 5)))
+    }
+    for (let i = 0; i < 5; i++) {
+      const yaw = (i / 5) * Math.PI * 2 + 0.55 + jitter[i] * 1.4
+      w.place(this.m.foliage, frondShort, x, y, z, yaw, scale * (0.95 + 0.025 * (i % 3)))
+    }
+    w.place(this.m.nacre, bud, x, y + 0.87 * scale, z, 0, scale)
   }
 
-  /** Low steps ring (two treads) around a plaza. */
+  /** Low marble step ring around a plaza: one closed tread with a rounded
+   *  nosing and a buried skirt. Radius-keyed because tread depth must not
+   *  scale with plaza size. The profile is a closed clockwise loop (outer
+   *  riser up, tread top inward, buried inner wall down) — the old open
+   *  cylinder + torus left a see-through hollow between plaza edge and cap. */
   stepsRing(w: SlotWriter, x: number, y: number, z: number, radius: number): void {
-    const stepRadius = radius + 0.55
-    const tread = this.proto('steps-tread', () => new CylinderGeometry(1, 1, 0.14, 56, 1, true))
-    const cap = this.proto(`steps-cap-${stepRadius.toFixed(1)}`, () => new TorusGeometry(stepRadius, 0.07, 8, 72))
-    this.placeScaled(w, this.m.marble, tread, x, y + 0.07, z, stepRadius, 1, stepRadius)
-    this.placeScaled(w, this.m.marble, cap, x, y + 0.14, z, 1, 1, 1, Math.PI / 2)
+    const ring = this.proto(`steps-ring-${radius.toFixed(2)}`, () => {
+      const segments = Math.min(128, Math.max(48, Math.round(radius * 5)))
+      return new LatheGeometry(
+        [
+          new Vector2(radius + 0.56, -0.26),
+          new Vector2(radius + 0.6, 0.02),
+          new Vector2(radius + 0.615, 0.075),
+          new Vector2(radius + 0.585, 0.125),
+          new Vector2(radius + 0.52, 0.14),
+          new Vector2(radius - 0.05, 0.14),
+          new Vector2(radius - 0.05, -0.26),
+          new Vector2(radius + 0.56, -0.26),
+        ],
+        segments,
+      )
+    })
+    this.place(w, this.m.marble, ring, x, y, z)
   }
 
   // ── helpers ─────────────────────────────────────────────────────────────
@@ -329,4 +420,45 @@ export class ArchKit {
     composed.setPosition(x, y, z)
     w.emit(material, geometry, composed)
   }
+}
+
+/**
+ * One arcing sea-fern frond: a chain of tapering closed tubes through the
+ * given spine points, with sphere knuckles hiding the joints and a tip bead.
+ * Real thickness everywhere — flat cards read as cutouts underwater.
+ * Exported for planting beds beyond the urns (Sun Garden parterre).
+ */
+export function frondGeometry(spine: Vector3[]): BufferGeometry {
+  const up = new Vector3(0, 1, 0)
+  const radii = [0.024, 0.017, 0.011]
+  const parts: BufferGeometry[] = []
+  for (let i = 0; i < spine.length - 1; i++) {
+    const a = spine[i]
+    const b = spine[i + 1]
+    const direction = new Vector3().subVectors(b, a)
+    const length = direction.length()
+    const radius = radii[Math.min(i, radii.length - 1)]
+    const segment = new CylinderGeometry(radius * 0.82, radius, length, 6)
+    const rotation = new Quaternion().setFromUnitVectors(up, direction.clone().normalize())
+    const transform = new Matrix4().compose(
+      new Vector3().addVectors(a, b).multiplyScalar(0.5),
+      rotation,
+      new Vector3(1, 1, 1),
+    )
+    segment.applyMatrix4(transform)
+    parts.push(segment)
+    if (i > 0) {
+      const knuckle = new SphereGeometry(radius * 1.15, 8, 6)
+      knuckle.translate(a.x, a.y, a.z)
+      parts.push(knuckle)
+    }
+  }
+  const tip = spine[spine.length - 1]
+  const bead = new SphereGeometry(0.013, 8, 6)
+  bead.translate(tip.x, tip.y, tip.z)
+  parts.push(bead)
+  const merged = mergeGeometries(parts, false)
+  for (const part of parts) part.dispose()
+  if (!merged) throw new Error('Failed to merge frond geometry')
+  return merged
 }

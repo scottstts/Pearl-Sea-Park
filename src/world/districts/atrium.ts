@@ -5,7 +5,6 @@ import { registerBookmark } from '../../core/debug'
 import type { MaterialsSystem } from '../../materials/materialsSystem'
 import type { PhysicsSystem } from '../../physics/physicsWorld'
 import type { InteractionSystem } from '../../player/interact'
-import type { SeatSystem } from '../../player/seats'
 import type { GameContext } from '../../runtime/context'
 import type { GameSystem } from '../../runtime/system'
 import type { ParkAmenitiesSystem } from '../parkAmenities'
@@ -16,7 +15,6 @@ export interface DistrictServices {
   physics: PhysicsSystem
   materials: MaterialsSystem
   amenities: ParkAmenitiesSystem
-  seats?: SeatSystem
   interaction?: InteractionSystem
 }
 
@@ -35,7 +33,7 @@ export class AtriumSystem implements GameSystem {
   }
 
   init(ctx: GameContext): void {
-    const { physics, materials, amenities, seats, interaction } = this.services
+    const { physics, materials, amenities, interaction } = this.services
     const lib = materials.lib
     if (!lib) throw new Error('AtriumSystem requires MaterialsSystem')
 
@@ -84,12 +82,6 @@ export class AtriumSystem implements GameSystem {
       const yaw = Math.atan2(cx - bx, cz - bz) + Math.PI
       amenities.addBenchFacing(bx, floorY + 0.18, bz, cx, cz)
       physics.addStaticBox(bx, floorY + 0.5, bz, 0.9, 0.34, 0.3, yaw)
-      seats?.registerBenchSeat({
-        eye: new Vector3(bx - Math.sin(yaw) * 0.1, floorY + 1.45, bz - Math.cos(yaw) * 0.1),
-        lookAt: new Vector3(cx, floorY + 1.3, cz),
-        exit: new Vector3(bx - Math.sin(yaw) * 1.2, floorY + 0.2, bz - Math.cos(yaw) * 1.2),
-        prompt: 'Sit a while',
-      })
     }
 
     // Lamps (with real warm light — the atrium glows).

@@ -1,61 +1,56 @@
 import {
   BoxGeometry,
-  CatmullRomCurve3,
+  ConeGeometry,
   Curve,
   CylinderGeometry,
-  DoubleSide,
   InstancedMesh,
   LatheGeometry,
   Matrix4,
   Mesh,
   Object3D,
-  PlaneGeometry,
-  Quaternion,
   SphereGeometry,
   TorusGeometry,
   TubeGeometry,
   Vector2,
   Vector3,
 } from 'three'
-import { MeshBasicNodeMaterial } from 'three/webgpu'
-import { positionWorld, uniform, vec2, vec3 } from 'three/tsl'
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { PlayerSystem } from '../player/player'
 import { markDynamicShadowCasters } from '../render/layers'
-import { fbm2 } from '../render/tslNoise'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from '../world/districts/atrium'
 import { PARK_PLAN } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
+import {
+  STATION_SPEED,
+  buildTorrentTrack,
+  frameOnTrack,
+  inTrackZone,
+  trackAccel,
+  type TorrentTrack,
+  type TrackFrame,
+} from './torrentTrack'
 import { VehicleSeatRig } from './vehicleSeat'
 
 const CARS = 5
 const CAR_GAP = 3.3
-const SAMPLES = 2400
-const GRAVITY = 9.81
-const DRAG = 0.0014 // quadratic drag — The Pearl's charmed water runs thin
-const ROLLING = 0.12
-const LAUNCH_ACCEL = 7.2
-const BOOST_ACCEL = 6.0
-const SURGE_ACCEL = 3.4 // water-jet surge that carries the train up the helix
-const STATION_SPEED = 1.1
-
-interface Frame {
-  position: Vector3
-  tangent: Vector3
-  up: Vector3
-  s: number
-}
 
 /**
  * The Torrent (plan §9.3): launch coaster — station on the north reach,
  * plunge off the shelf edge into open blue void, thread the wreck, helix
- * climb, a +3 m surface-breach hump, splash re-entry, brake run. Track is an
- * authored closed spline with solved banking; the train's speed is integrated
- * from gravity/drag/launch forces along arc length, never keyframed.
+ * climb, a +2.6 m surface-breach hump, splash re-entry, brake run. The track
+ * authority lives in torrentTrack.ts (audited offline for seabed clearance
+ * and seam continuity); the train's speed is integrated from gravity/drag/
+ * launch forces along arc length, never keyframed.
+ *
+ * Ride contract: press E at the platform to board — the camera faces the
+ * head of the train and the run starts on its own moments later. The loop
+ * closes perfectly back into the station, the train brakes to the platform
+ * mark and stops. Press E to step off; nothing relaunches while a guest is
+ * still seated.
  */
 export class TorrentSystem implements GameSystem {
   readonly id = 'torrent'
@@ -65,8 +60,7 @@ export class TorrentSystem implements GameSystem {
   private rig: VehicleSeatRig | null = null
 
   private readonly group = new Object3D()
-  private frames: Frame[] = []
-  private trackLength = 0
+  private track: TorrentTrack | null = null
   private readonly cars: Object3D[] = []
 
   // Longitudinal state.
@@ -74,17 +68,6 @@ export class TorrentSystem implements GameSystem {
   private v = 0
   private state: 'docked' | 'armed' | 'running' | 'braking' = 'docked'
   private stateTime = 0
-
-  // Zone arc-positions (computed from the layout).
-  private stationS = 0
-  private launchEndS = 0
-  private boostStartS = 0
-  private boostEndS = 0
-  private brakeStartS = 0
-  private surgeStartS = 0
-  private surgeEndS = 0
-
-  private splashTime: ReturnType<typeof uniform> | null = null
 
   constructor(services: DistrictServices, player: PlayerSystem | null) {
     this.services = services
@@ -99,160 +82,15 @@ export class TorrentSystem implements GameSystem {
     const w = new SlotWriter()
     const st = PARK_PLAN.torrent.station
 
-    // ── The layout ────────────────────────────────────────────────────────
-    const stationY = terrainHeight(st.x, st.z) + 1.1
-    const points: Vector3[] = []
-    const P = (x: number, y: number, z: number) => points.push(new Vector3(x, y, z))
-    // Station straight (southbound approach joins here), launch runway north.
-    P(st.x, stationY, st.z + 24) // 0 loop seam, south of station
-    P(st.x, stationY, st.z) // 1 station platform
-    P(st.x, stationY - 0.4, st.z - 26) // 2 launch begins
-    P(st.x, stationY - 1.2, st.z - 58) // 3 launch ends
-    P(st.x - 2, -27.5, st.z - 83) // 4 over the rim lip
-    // The plunge and the wreck thread-through on the cliff face.
-    P(st.x - 10, -38, st.z - 102)
-    P(st.x - 18, -47, st.z - 112) // 6 wreck bow gap
-    P(st.x - 30, -54, st.z - 122)
-    // Open void sweep.
-    P(st.x - 52, -60, st.z - 132)
-    P(st.x - 78, -62, st.z - 128)
-    P(st.x - 96, -60, st.z - 110)
-    // Helix climb (generated).
-    const helixStartIndex = points.length
-    const helixCenter = new Vector2(st.x - 96, st.z - 78)
-    const helixRadius = 15.5
-    const helixTurns = 1.75
-    const helixPoints = 14
-    for (let i = 0; i <= helixPoints; i++) {
-      const t = i / helixPoints
-      const angle = -Math.PI / 2 + t * helixTurns * Math.PI * 2
-      const y = -56 + t * 36 // climb to -20
-      P(
-        helixCenter.x + Math.cos(angle) * helixRadius,
-        y,
-        helixCenter.y + Math.sin(angle) * helixRadius,
-      )
-    }
-    const helixEndIndex = points.length - 1
-    // Unwind the helix: keep following its exit tangent while leveling off,
-    // else the spline overshoots 16 m down into the void and the train
-    // stalls on honest physics. Two easing points, then the shelf return.
-    P(st.x - 112.5, -19.6, st.z - 96)
-    P(st.x - 104, -18.9, st.z - 112)
-    P(st.x - 86, -17.4, st.z - 116)
-    // Back over the shelf, dip, torrent booster, the breach hump.
-    P(st.x - 62, -14.5, st.z - 52)
-    P(st.x - 44, -18, st.z - 26)
-    P(st.x - 30, -22.5, st.z - 6) // 前 booster dip
-    P(st.x - 16, -22.5, st.z + 8) // booster (jet) straight
-    P(st.x - 2, -14, st.z + 16)
-    P(st.x + 8, 2.6, st.z + 18) // hump apex — two metres of sky
-    P(st.x + 18, -12, st.z + 14)
-    P(st.x + 26, -20.5, st.z + 4) // splash re-entry
-    P(st.x + 26, -22.6, st.z - 14) // brake run
-    P(st.x + 18, -23.2, st.z - 6)
-    P(st.x + 8, stationY - 0.15, st.z + 14) // curve home
-    const curve = new CatmullRomCurve3(points, true, 'centripetal', 0.5)
-
-    // ── Frames: arc-length samples + parallel-transport up + banking ─────
-    const positions: Vector3[] = []
-    const tangents: Vector3[] = []
-    for (let i = 0; i < SAMPLES; i++) {
-      const u = i / SAMPLES
-      positions.push(curve.getPointAt(u, new Vector3()))
-      tangents.push(curve.getTangentAt(u, new Vector3()).normalize())
-    }
-    this.trackLength = curve.getLength()
-    const ds = this.trackLength / SAMPLES
-
-    // Zone anchors from layout landmarks.
-    const nearestS = (target: Vector3) => {
-      let best = 0
-      let bestD = Infinity
-      for (let i = 0; i < SAMPLES; i++) {
-        const d = positions[i].distanceToSquared(target)
-        if (d < bestD) {
-          bestD = d
-          best = i
-        }
-      }
-      return best * ds
-    }
-    this.stationS = nearestS(points[1])
-    this.launchEndS = nearestS(points[3])
-    this.boostStartS = nearestS(points[points.length - 8])
-    this.boostEndS = nearestS(points[points.length - 7])
-    this.surgeStartS = nearestS(points[helixStartIndex])
-    this.surgeEndS = nearestS(points[helixEndIndex])
-    this.brakeStartS = nearestS(points[points.length - 3])
-    this.s = this.stationS
+    const track = buildTorrentTrack()
+    this.track = track
+    const stationY = track.stationY
+    this.s = track.landmarks.stationS
     this.v = 0
 
-    // Design-pass speed profile (same integrator as runtime) for banking.
-    const speeds = new Float32Array(SAMPLES)
-    {
-      let s = this.stationS
-      let v = STATION_SPEED
-      const dt = 1 / 90
-      for (let iter = 0; iter < 90 * 240; iter++) {
-        const i = Math.floor(s / ds) % SAMPLES
-        speeds[i] = Math.max(speeds[i], v)
-        const slope = tangents[i].y
-        let a = -GRAVITY * slope - DRAG * v * Math.abs(v) - ROLLING * Math.sign(v)
-        if (this.inZone(s, this.stationS, this.launchEndS)) a += LAUNCH_ACCEL
-        if (this.inZone(s, this.boostStartS, this.boostEndS)) a += BOOST_ACCEL
-        if (this.inZone(s, this.surgeStartS, this.surgeEndS)) a += SURGE_ACCEL
-        if (iter > 900 && this.inZone(s, this.brakeStartS, this.stationS)) a = Math.min(a, (2.2 - v) * 2)
-        v = Math.max(0.6, v + a * dt)
-        s = (s + v * dt) % this.trackLength
-        if (iter > 90 * 30 && Math.abs(s - this.stationS) < 1) break
-      }
-      // Fill unvisited samples (station shadow) with a crawl speed.
-      for (let i = 0; i < SAMPLES; i++) if (speeds[i] === 0) speeds[i] = 2
-    }
-
-    // Parallel transport + solved banking.
-    const ups: Vector3[] = []
-    let up = new Vector3(0, 1, 0)
-    const scratch = new Vector3()
-    for (let i = 0; i < SAMPLES; i++) {
-      const t = tangents[i]
-      up = up.clone().sub(scratch.copy(t).multiplyScalar(up.dot(t))).normalize()
-      ups.push(up)
-    }
-    // Signed horizontal curvature → bank angle; smooth over a window.
-    const bank = new Float32Array(SAMPLES)
-    for (let i = 0; i < SAMPLES; i++) {
-      const prev = tangents[(i - 1 + SAMPLES) % SAMPLES]
-      const next = tangents[(i + 1) % SAMPLES]
-      const turn = prev.x * next.z - prev.z * next.x // sign of horizontal turn
-      const angleChange = prev.angleTo(next)
-      const kappa = angleChange / (2 * ds)
-      const vDesign = speeds[i]
-      bank[i] = Math.max(-1.05, Math.min(1.05, Math.atan((vDesign * vDesign * kappa) / GRAVITY))) *
-        Math.sign(-turn)
-    }
-    const smoothBank = new Float32Array(SAMPLES)
-    const WINDOW = 26
-    for (let i = 0; i < SAMPLES; i++) {
-      let sum = 0
-      for (let k = -WINDOW; k <= WINDOW; k++) sum += bank[(i + k + SAMPLES) % SAMPLES]
-      smoothBank[i] = sum / (WINDOW * 2 + 1)
-    }
-    const frames: Frame[] = []
-    const q = new Quaternion()
-    for (let i = 0; i < SAMPLES; i++) {
-      const banked = ups[i]
-        .clone()
-        .applyQuaternion(q.setFromAxisAngle(tangents[i], smoothBank[i]))
-        .normalize()
-      frames.push({ position: positions[i], tangent: tangents[i], up: banked, s: i * ds })
-    }
-    this.frames = frames
-
-    // ── Track geometry: rails, spine, ties, supports ─────────────────────
-    const frameAtS = (s: number) => this.frameAt(s)
-    const totalLength = this.trackLength
+    // ── Track geometry: rails, spine, ties, webs, supports ───────────────
+    const frameAtS = (s: number) => frameOnTrack(track, s)
+    const totalLength = track.length
     class RailCurve extends Curve<Vector3> {
       private readonly offsetX: number
       private readonly offsetY: number
@@ -263,10 +101,11 @@ export class TorrentSystem implements GameSystem {
       }
       override getPoint(u: number, target = new Vector3()): Vector3 {
         const frame = frameAtS(u * totalLength)
-        const side = new Vector3().crossVectors(frame.tangent, frame.up).normalize()
+        // Right-handed frame: right = up × tangent.
+        const right = new Vector3().crossVectors(frame.up, frame.tangent).normalize()
         return target
           .copy(frame.position)
-          .addScaledVector(side, this.offsetX)
+          .addScaledVector(right, this.offsetX)
           .addScaledVector(frame.up, this.offsetY)
       }
     }
@@ -279,35 +118,59 @@ export class TorrentSystem implements GameSystem {
     spine.castShadow = true
     this.group.add(spine)
 
-    // Ties.
-    const tieCount = Math.floor(this.trackLength / 1.6)
+    // Ties, and web struts tying each tie down to the spine — without them
+    // the spine reads as a loose pipe shadowing the rails.
+    const tieCount = Math.floor(track.length / 1.6)
     const ties = new InstancedMesh(new BoxGeometry(1.5, 0.07, 0.24), lib.iron, tieCount)
+    const webs = new InstancedMesh(new BoxGeometry(0.12, 0.26, 0.16), lib.iron, tieCount)
     const tieMatrix = new Matrix4()
     const basis = new Matrix4()
+    const right = new Vector3()
     for (let i = 0; i < tieCount; i++) {
-      const frame = this.frameAt((i + 0.5) * 1.6)
-      const side = new Vector3().crossVectors(frame.tangent, frame.up).normalize()
-      basis.makeBasis(side, frame.up, frame.tangent)
+      const frame = frameAtS((i + 0.5) * 1.6)
+      right.crossVectors(frame.up, frame.tangent).normalize()
+      basis.makeBasis(right, frame.up, frame.tangent)
       tieMatrix.copy(basis).setPosition(
         frame.position.clone().addScaledVector(frame.up, -0.14),
       )
       ties.setMatrixAt(i, tieMatrix)
+      tieMatrix.copy(basis).setPosition(
+        frame.position.clone().addScaledVector(frame.up, -0.26),
+      )
+      webs.setMatrixAt(i, tieMatrix)
     }
     ties.instanceMatrix.needsUpdate = true
     ties.castShadow = true
-    this.group.add(ties)
+    webs.instanceMatrix.needsUpdate = true
+    this.group.add(ties, webs)
 
-    // Supports where the seabed is reachable (none over the abyss void).
-    for (let s = 0; s < this.trackLength; s += 13) {
-      const frame = this.frameAt(s)
+    // Supports where the seabed is reachable (none over the abyss void),
+    // with flared verdigris feet and a saddle clamp under the spine.
+    const footGeometry = new LatheGeometry(
+      [
+        new Vector2(0.9, 0),
+        new Vector2(0.78, 0.18),
+        new Vector2(0.45, 0.42),
+        new Vector2(0.34, 0.8),
+        new Vector2(0.3, 1.0),
+      ],
+      14,
+    )
+    const clampGeometry = new BoxGeometry(0.62, 0.3, 0.62)
+    for (let s = 0; s < track.length; s += 13) {
+      const frame = frameAtS(s)
       const ground = terrainHeight(frame.position.x, frame.position.z)
       const height = frame.position.y - 0.6 - ground
       if (height < 2 || height > 34) continue
-      if (this.inZone(s, this.stationS - 30, this.launchEndS)) continue // station has its own
+      if (inTrackZone(track.length, s, track.landmarks.stationS - 30, track.landmarks.launchEndS)) continue
       const column = new Mesh(new CylinderGeometry(0.22, 0.3, height, 10), lib.iron)
       column.position.set(frame.position.x, ground + height / 2, frame.position.z)
       column.castShadow = true
-      this.group.add(column)
+      const foot = new Mesh(footGeometry, lib.verdigris)
+      foot.position.set(frame.position.x, ground, frame.position.z)
+      const clamp = new Mesh(clampGeometry, lib.iron)
+      clamp.position.set(frame.position.x, ground + height - 0.05, frame.position.z)
+      this.group.add(column, foot, clamp)
       // A guest crossing the basin floor should meet these piers, not pass
       // through them. Radius 0.34 hugs the 0.3 m base; the full height is a
       // thin pillar so the airborne remainder is harmless.
@@ -330,89 +193,127 @@ export class TorrentSystem implements GameSystem {
       void globe
       physics.addStaticBox(st.x + 4.4, stationY + 1.2, st.z + dz, 0.12, 1.7, 0.12)
     }
-    kit.gableRoof(w, st.x + 2.2, stationY + 3.6, st.z, 7.5, 17, 2.2)
+    // Canopy over track AND deck. The west column row stands at st.x − 2.2 —
+    // clear across the track envelope (rails ±0.55, car hulls ±0.62); the old
+    // row at st.x + 0.4 planted its plinths straight into the rails.
+    kit.gableRoof(w, st.x + 1.0, stationY + 3.6, st.z, 9.6, 17, 2.2)
     for (const [cx, cz] of [
-      [st.x + 0.4, st.z - 7.6],
+      [st.x - 2.2, st.z - 7.6],
       [st.x + 4.2, st.z - 7.6],
-      [st.x + 0.4, st.z + 7.6],
+      [st.x - 2.2, st.z + 7.6],
       [st.x + 4.2, st.z + 7.6],
     ]) {
       kit.column(w, cx, stationY - 0.5, cz, 4.1, 0.22)
       physics.addStaticBox(cx, stationY + 1.55, cz, 0.28, 2.05, 0.28)
     }
-    for (const x of [st.x + 0.4, st.x + 4.2]) {
+    for (const x of [st.x - 2.2, st.x + 4.2]) {
       kit.cornice(w, x, st.z - 7.6, x, st.z + 7.6, stationY + 3.68)
     }
     for (const z of [st.z - 7.6, st.z + 7.6]) {
-      kit.arch(w, st.x + 0.4, z, st.x + 4.2, z, stationY + 3.62, 0.8)
-      kit.cornice(w, st.x + 0.4, z, st.x + 4.2, z, stationY + 3.7)
+      kit.arch(w, st.x - 2.2, z, st.x + 4.2, z, stationY + 3.62, 0.8)
+      kit.cornice(w, st.x - 2.2, z, st.x + 4.2, z, stationY + 3.7)
     }
 
     // ── The wreck: a hull caught on the cliff face, threaded by the track ─
-    this.buildWreck(lib, new Vector3(st.x - 18, -50, st.z - 112))
+    this.buildWreck(lib, new Vector3(st.x - 19, -62, st.z - 119))
 
-    // ── Splash + breach foam at the hump's two pierce points ─────────────
-    const splashTime = uniform(0)
-    this.splashTime = splashTime
-    const foamMaterial = new MeshBasicNodeMaterial()
-    foamMaterial.transparent = true
-    foamMaterial.depthWrite = false
-    foamMaterial.side = DoubleSide
-    const foamUv = positionWorld.xz.mul(0.5)
-    const churn = fbm2(foamUv.add(vec2(splashTime.mul(0.4), splashTime.mul(-0.3))))
-      .mul(fbm2(foamUv.mul(2.1).add(vec2(0, splashTime.mul(0.33)))))
-      .mul(2.4)
-    foamMaterial.colorNode = vec3(1.3, 1.38, 1.4)
-    foamMaterial.opacityNode = churn.clamp(0, 1).mul(0.8)
-    // Find where the hump crosses y = 0 (two points).
-    const crossings: Vector3[] = []
-    for (let i = 1; i < SAMPLES; i++) {
-      const a = positions[i - 1]
-      const b = positions[i]
-      if ((a.y < 0 && b.y >= 0) || (a.y >= 0 && b.y < 0)) {
-        const t = a.y / (a.y - b.y)
-        crossings.push(a.clone().lerp(b, t))
-      }
-    }
-    for (const crossing of crossings) {
-      const foam = new Mesh(new PlaneGeometry(7, 5.5), foamMaterial)
-      foam.rotation.x = -Math.PI / 2
-      foam.position.set(crossing.x, 0.07, crossing.z)
-      foam.renderOrder = 5
-      this.group.add(foam)
-    }
+    // No bespoke dressing where the hump pierces the surface (Scott's
+    // ruling): the ocean shader already owns that interface for EVERY
+    // opaque structure — depth-tested intersection and shading from above,
+    // framebuffer-refracted Snell window from below — exactly like the
+    // arrival pavilion's piles. Decorative foam quads on top of it read as
+    // floating white patches.
 
-    // ── The train: five articulated brass torpedo cars ────────────────────
-    const bodyGeometry = new LatheGeometry(
+    // ── The train: five sculpted brass torpedo cars ──────────────────────
+    // Closed-lathe hull with a bow ring and tail cone, a recessed cockpit
+    // cavity with coaming (the old open-ended cockpit cylinder showed its
+    // culled interior), seat + headrest, side strakes, tail fins around a
+    // water-jet nozzle ring. Local +z = direction of travel.
+    const hullGeometry = new LatheGeometry(
       [
-        new Vector2(0.02, -1.45),
-        new Vector2(0.42, -1.15),
-        new Vector2(0.6, -0.4),
-        new Vector2(0.6, 0.75),
-        new Vector2(0.42, 1.25),
-        new Vector2(0.05, 1.5),
+        new Vector2(0.02, -1.5),
+        new Vector2(0.24, -1.38),
+        new Vector2(0.44, -1.1),
+        new Vector2(0.56, -0.7),
+        new Vector2(0.62, -0.15),
+        new Vector2(0.6, 0.45),
+        new Vector2(0.52, 0.95),
+        new Vector2(0.36, 1.3),
+        new Vector2(0.14, 1.52),
+        new Vector2(0.02, 1.56),
       ],
-      18,
+      20,
     )
-    bodyGeometry.rotateX(Math.PI / 2) // torpedo along +z
-    const cockpitGeometry = new CylinderGeometry(0.44, 0.5, 0.5, 14, 1, true)
-    const screenGeometry = new SphereGeometry(0.46, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2)
-    const seatGeometry = new BoxGeometry(0.62, 0.16, 0.5)
-    const barGeometry = new TorusGeometry(0.34, 0.045, 8, 14, Math.PI)
+    hullGeometry.rotateX(-Math.PI / 2) // profile +y → +z: nose forward
+    const cockpitCavity = new SphereGeometry(1, 16, 10)
+    const coaming = new TorusGeometry(1, 0.05, 8, 22)
+    const screenGeometry = new SphereGeometry(0.4, 14, 8, 0, Math.PI * 2, 0, Math.PI * 0.4)
+    const screenRim = new TorusGeometry(0.38, 0.025, 8, 28)
+    const screenMount = new CylinderGeometry(0.025, 0.035, 0.24, 10)
+    const seatGeometry = new BoxGeometry(0.56, 0.14, 0.5)
+    const seatBack = new BoxGeometry(0.5, 0.4, 0.12)
+    const headrest = new CylinderGeometry(0.09, 0.09, 0.3, 10)
+    const barGeometry = new TorusGeometry(0.3, 0.04, 8, 14, Math.PI)
+    const strake = new BoxGeometry(0.05, 0.08, 1.7)
+    const finGeometry = new ConeGeometry(0.3, 0.6, 8)
+    const nozzle = new TorusGeometry(0.24, 0.055, 8, 18)
+    const bowRing = new TorusGeometry(0.34, 0.04, 8, 18)
     for (let i = 0; i < CARS; i++) {
       const car = new Object3D()
-      const body = new Mesh(bodyGeometry, lib.brass)
-      const cockpit = new Mesh(cockpitGeometry, lib.woodDark)
-      cockpit.position.set(0, 0.42, 0.1)
+      const body = new Mesh(hullGeometry, lib.brass)
+      const cavity = new Mesh(cockpitCavity, lib.woodDark)
+      cavity.scale.set(0.45, 0.22, 0.6)
+      cavity.position.set(0, 0.5, -0.05)
+      const rim = new Mesh(coaming, lib.brass)
+      rim.scale.set(0.46, 0.62, 1)
+      rim.rotation.x = Math.PI / 2
+      rim.position.set(0, 0.56, -0.05)
       const screen = new Mesh(screenGeometry, lib.glass)
-      screen.position.set(0, 0.5, 0.85)
-      screen.rotation.x = -0.7
+      const screenAssembly = new Object3D()
+      screenAssembly.position.set(0, 0.5, 0.62)
+      screenAssembly.rotation.x = -0.55
+      const screenEdge = new Mesh(screenRim, lib.verdigris)
+      screenEdge.rotation.x = Math.PI / 2
+      screenEdge.position.y = 0.124
+      screenAssembly.add(screen, screenEdge)
+      for (const side of [-1, 1]) {
+        const mount = new Mesh(screenMount, lib.verdigris)
+        mount.position.set(side * 0.31, -0.02, 0)
+        mount.rotation.z = side * 0.18
+        screenAssembly.add(mount)
+      }
       const seat = new Mesh(seatGeometry, lib.woodDark)
-      seat.position.set(0, 0.28, -0.1)
+      seat.position.set(0, 0.34, -0.12)
+      const back = new Mesh(seatBack, lib.woodDark)
+      back.position.set(0, 0.52, -0.44)
+      back.rotation.x = 0.15
+      const rest = new Mesh(headrest, lib.woodDark)
+      rest.rotation.z = Math.PI / 2
+      rest.position.set(0, 0.78, -0.5)
       const bar = new Mesh(barGeometry, lib.iron)
-      bar.position.set(0, 0.62, 0.28)
+      bar.position.set(0, 0.56, 0.26)
       bar.rotation.x = Math.PI / 2 + 0.35
-      car.add(body, cockpit, screen, seat, bar)
+      car.add(body, cavity, rim, screenAssembly, seat, back, rest, bar)
+      for (const side of [-1, 1]) {
+        const sideStrake = new Mesh(strake, lib.iron)
+        sideStrake.position.set(side * 0.6, 0.02, -0.1)
+        car.add(sideStrake)
+        const fin = new Mesh(finGeometry, lib.brass)
+        fin.scale.set(0.16, 1, 1)
+        fin.position.set(side * 0.42, 0.1, -1.32)
+        fin.rotation.z = side * 0.9
+        fin.rotation.x = -0.5
+        car.add(fin)
+      }
+      const dorsalFin = new Mesh(finGeometry, lib.brass)
+      dorsalFin.scale.set(0.16, 1, 1)
+      dorsalFin.position.set(0, 0.42, -1.32)
+      dorsalFin.rotation.x = -0.5
+      const jet = new Mesh(nozzle, lib.verdigris)
+      jet.position.set(0, 0, -1.52)
+      const bow = new Mesh(bowRing, lib.verdigris)
+      bow.position.set(0, 0, 1.28)
+      car.add(dorsalFin, jet, bow)
       car.traverse((node) => {
         const mesh = node as Mesh
         if (mesh.isMesh && mesh.material !== lib.glass) mesh.castShadow = true
@@ -435,11 +336,12 @@ export class TorrentSystem implements GameSystem {
     registerBookmark({
       name: 'dive',
       position: [st.x + 14, -30, st.z - 96],
-      look: [st.x - 18, -50, st.z - 112],
+      look: [st.x - 19, -55, st.z - 119],
       note: 'The plunge past the wreck into the void',
     })
 
-    // ── Boarding & restraint flow ─────────────────────────────────────────
+    // ── Boarding: E to board (faces the head, run starts on its own),
+    //    E to step off when the train docks again ─────────────────────────
     if (this.player && this.services.interaction) {
       const rig = new VehicleSeatRig(this.player)
       this.rig = rig
@@ -453,27 +355,20 @@ export class TorrentSystem implements GameSystem {
         prompt: 'Board the Torrent',
         onInteract: () => {
           if (this.state !== 'docked' || rig.seated) return
-          rig.attach(this.cars[0], new Vector3(0, 0.78, -0.12), Math.PI, ctx.camera)
+          // baseYaw π turns the seat camera onto the car's +z — the HEAD of
+          // the train and the direction of travel.
+          rig.attach(this.cars[0], new Vector3(0, 0.82, -0.12), Math.PI, ctx.camera)
           ctx.events.emit('ticket/punched', { ride: 'torrent' })
+          ctx.events.emit('ride/torrent-riding', { riding: true })
+          this.state = 'armed'
+          this.stateTime = 0
         },
         enabled: () => this.state === 'docked' && !rig.seated,
       })
       interaction.register({
         position: gate,
         radius: 6,
-        prompt: 'Lower the lap bar',
-        onInteract: () => {
-          if (this.state !== 'docked' || !rig.seated) return
-          this.state = 'armed'
-          this.stateTime = 0
-          ctx.events.emit('ride/torrent-riding', { riding: true })
-        },
-        enabled: () => this.state === 'docked' && rig.seated,
-      })
-      interaction.register({
-        position: gate,
-        radius: 6,
-        prompt: 'Raise the bar and step out',
+        prompt: 'Step off the Torrent',
         onInteract: () => {
           if (this.state !== 'docked' || !rig.seated) return
           rig.requestExit(exit)
@@ -484,36 +379,17 @@ export class TorrentSystem implements GameSystem {
     }
   }
 
-  private inZone(s: number, from: number, to: number): boolean {
-    const L = this.trackLength || 1
-    const rel = ((s - from) % L + L) % L
-    const span = ((to - from) % L + L) % L
-    return rel <= span
-  }
-
-  private frameAt(s: number): Frame {
-    const L = this.trackLength
-    const wrapped = ((s % L) + L) % L
-    const f = (wrapped / L) * SAMPLES
-    const i = Math.floor(f) % SAMPLES
-    const j = (i + 1) % SAMPLES
-    const t = f - Math.floor(f)
-    const a = this.frames[i]
-    const b = this.frames[j]
-    return {
-      position: a.position.clone().lerp(b.position, t),
-      tangent: a.tangent.clone().lerp(b.tangent, t).normalize(),
-      up: a.up.clone().lerp(b.up, t).normalize(),
-      s: wrapped,
-    }
-  }
-
   private placeTrain(): void {
+    if (!this.track) return
     const basis = new Matrix4()
+    const right = new Vector3()
     for (let i = 0; i < CARS; i++) {
-      const frame = this.frameAt(this.s - i * CAR_GAP)
-      const side = new Vector3().crossVectors(frame.tangent, frame.up).normalize()
-      basis.makeBasis(side, frame.up, frame.tangent)
+      const frame = frameOnTrack(this.track, this.s - i * CAR_GAP)
+      // Right-handed basis (right, up, tangent): local +z = travel. The old
+      // tangent×up "side" made a LEFT-handed basis whose quaternion carried
+      // a reflection — cars pointed anywhere but forward.
+      right.crossVectors(frame.up, frame.tangent).normalize()
+      basis.makeBasis(right, frame.up, frame.tangent)
       this.cars[i].quaternion.setFromRotationMatrix(basis)
       this.cars[i].position.copy(frame.position).addScaledVector(frame.up, 0.42)
     }
@@ -521,40 +397,63 @@ export class TorrentSystem implements GameSystem {
 
   private buildWreck(lib: NonNullable<DistrictServices['materials']['lib']>, at: Vector3): void {
     const wreck = new Object3D()
-    // Keel + ribs: an open hull the track threads through.
-    const keel = new Mesh(new CylinderGeometry(0.5, 0.5, 30, 10), lib.woodDark)
+    // A single broken hull assembly: keel, shaped ribs, attached plank courses,
+    // and longitudinal stringers all share the same local bow-to-stern axis.
+    const hullLength = 30
+    const keel = new Mesh(new CylinderGeometry(0.42, 0.58, hullLength, 12), lib.woodDark)
     keel.rotation.z = Math.PI / 2
-    keel.rotation.y = 0.5
+    keel.position.y = -4.7
     wreck.add(keel)
-    for (let i = 0; i < 9; i++) {
-      const t = i / 8 - 0.5
-      const radius = 6.2 * (1 - Math.abs(t) * 0.75)
-      const rib = new Mesh(new TorusGeometry(radius, 0.28, 8, 22, Math.PI * 1.15), lib.woodDark)
-      rib.position.set(Math.cos(0.5) * t * 28, radius * 0.15, -Math.sin(0.5) * t * 28)
-      rib.rotation.y = 0.5 + Math.PI / 2
-      rib.rotation.z = Math.PI * 0.92
+    for (let i = 0; i < 10; i++) {
+      const t = i / 9 - 0.5
+      const radius = 5.8 * (1 - Math.abs(t) * 0.68)
+      const rib = new Mesh(new TorusGeometry(radius, 0.25, 8, 26, Math.PI * 1.15), lib.woodDark)
+      rib.position.set(t * 27, 0, 0)
+      rib.rotation.y = Math.PI / 2
+      rib.rotation.x = Math.PI * 0.925
       wreck.add(rib)
     }
-    // A leaning mast with a crow's ring.
+
+    // Longitudinal members bind the ribs into a readable hull silhouette.
+    for (const side of [-1, 1]) {
+      for (const [y, z] of [[-3.7, 2.5], [-1.7, 4.5]] as const) {
+        const stringer = new Mesh(new CylinderGeometry(0.13, 0.17, 27, 8), lib.woodDark)
+        stringer.rotation.z = Math.PI / 2
+        stringer.position.set(0, y, side * z)
+        wreck.add(stringer)
+      }
+    }
+
+    // Hull planking remains broken enough for the train to thread the wreck,
+    // but every surviving board follows a hull course instead of floating.
+    const plankLength = 4.1
+    for (let course = 0; course < 5; course++) {
+      const angle = -1.05 + course * 0.525
+      for (let segment = 0; segment < 7; segment++) {
+        if ((course * 3 + segment * 5) % 11 < 3) continue
+        const x = -12.3 + segment * 4.1
+        const taper = 1 - Math.abs(x / 17) * 0.45
+        const radius = 5.15 * taper
+        const plank = new Mesh(new BoxGeometry(plankLength, 0.16, 0.78), lib.woodDark)
+        plank.position.set(x, -Math.cos(angle) * radius, Math.sin(angle) * radius)
+        plank.rotation.x = angle
+        plank.rotation.z = Math.sin(segment * 2.1 + course) * 0.025
+        wreck.add(plank)
+      }
+    }
+
+    // A snapped, leaning mast with a cross-tree and iron crow's ring.
     const mast = new Mesh(new CylinderGeometry(0.22, 0.32, 17, 10), lib.woodDark)
     mast.position.set(3, 8, -2)
     mast.rotation.z = 0.5
     mast.rotation.x = 0.2
+    const crossTree = new Mesh(new CylinderGeometry(0.11, 0.14, 7.5, 8), lib.woodDark)
+    crossTree.position.set(6.1, 12.3, -3)
+    crossTree.rotation.z = Math.PI / 2 + 0.5
     const ring = new Mesh(new TorusGeometry(0.7, 0.08, 8, 18), lib.iron)
     ring.position.set(7.2, 14.4, -3.4)
     ring.rotation.x = Math.PI / 2
-    wreck.add(mast, ring)
-    // Scattered hull planks.
-    for (let i = 0; i < 12; i++) {
-      const plank = new Mesh(new BoxGeometry(2.6, 0.12, 0.5), lib.woodDark)
-      plank.position.set(
-        (Math.sin(i * 3.7) * 9) | 0,
-        -2.2 + Math.sin(i * 1.3) * 1.2,
-        (Math.cos(i * 2.9) * 8) | 0,
-      )
-      plank.rotation.set(Math.sin(i) * 0.5, i * 0.7, Math.cos(i * 1.7) * 0.4)
-      wreck.add(plank)
-    }
+    wreck.add(mast, crossTree, ring)
     wreck.position.copy(at)
     wreck.rotation.y = -0.25
     wreck.traverse((node) => {
@@ -569,42 +468,52 @@ export class TorrentSystem implements GameSystem {
 
   update(ctx: GameContext, dt: number): void {
     this.stateTime += dt
-    if (this.splashTime) this.splashTime.value = ctx.time.elapsed
+    const track = this.track
+    if (!track) return
+    const { landmarks } = track
 
-    if (this.state === 'armed' && this.stateTime > 2.2) {
+    if (this.state === 'armed' && this.stateTime > 2.4) {
       this.state = 'running'
       this.stateTime = 0
       this.v = STATION_SPEED
     }
 
     if (this.state === 'running' || this.state === 'braking') {
-      const frame = this.frameAt(this.s)
-      let a = -GRAVITY * frame.tangent.y - DRAG * this.v * Math.abs(this.v) - ROLLING
-      if (this.inZone(this.s, this.stationS, this.launchEndS)) a += LAUNCH_ACCEL
-      if (this.inZone(this.s, this.boostStartS, this.boostEndS)) a += BOOST_ACCEL
-      if (this.inZone(this.s, this.surgeStartS, this.surgeEndS)) a += SURGE_ACCEL
+      const frame: TrackFrame = frameOnTrack(track, this.s)
       // The brake zone ends AT the station mark, so a freshly-launched train
       // still sits inside it — only capture after the lap is truly underway.
       if (
         (this.state === 'braking' || this.stateTime > 10) &&
-        this.inZone(this.s, this.brakeStartS, this.stationS)
+        inTrackZone(track.length, this.s, landmarks.brakeStartS, landmarks.stationS)
       ) {
         this.state = 'braking'
-        a = Math.min(a, (2.2 - this.v) * 2.4)
       }
+      const a = trackAccel(
+        track.length,
+        landmarks,
+        this.s,
+        this.v,
+        frame.tangent.y,
+        this.state === 'braking',
+      )
       this.v = Math.max(0.5, this.v + a * dt)
-      this.s = (this.s + this.v * dt) % this.trackLength
-      // Arrive: creep to the platform mark and dock.
+      let step = this.v * dt
+      // Arrive with an exact landing on the platform mark (the wheel's
+      // lesson: never detect-then-ease past a stop). The next run only ever
+      // starts from the boarding interaction — never while a guest sits.
       if (this.state === 'braking') {
-        const remaining = ((this.stationS - this.s) % this.trackLength + this.trackLength) % this.trackLength
-        if (remaining < 0.6 || remaining > this.trackLength - 8) {
-          this.s = this.stationS
+        const remaining =
+          ((landmarks.stationS - this.s) % track.length + track.length) % track.length
+        if ((remaining <= step && remaining < 8) || remaining > track.length - 8) {
+          step = 0
+          this.s = landmarks.stationS
           this.v = 0
           this.state = 'docked'
           this.stateTime = 0
           if (this.rig) this.rig.canExit = true
         }
       }
+      this.s = (this.s + step) % track.length
       this.placeTrain()
     }
 

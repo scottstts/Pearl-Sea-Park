@@ -116,6 +116,9 @@ export class ArrivalSystem implements GameSystem {
     this.group.add(topMesh, underMesh)
 
     // Fascia: an ogee profile around the rim, with two brass half-rounds.
+    // The profile is a CLOSED loop (outer face up, top in, inner face down,
+    // underside out) so the band is watertight — an open ribbon here shows
+    // its culled backface from on deck and from the water below.
     const fascia = new LatheGeometry(
       [
         new Vector2(6.4, 2.24),
@@ -126,6 +129,10 @@ export class ArrivalSystem implements GameSystem {
         new Vector2(6.58, 2.58),
         new Vector2(6.6, 2.66),
         new Vector2(6.42, 2.74),
+        new Vector2(6.36, 2.74),
+        new Vector2(6.34, 2.3),
+        new Vector2(6.34, 2.24),
+        new Vector2(6.4, 2.24),
       ],
       96,
     )
@@ -158,17 +165,33 @@ export class ArrivalSystem implements GameSystem {
     }
 
     // ── The bell mouth: rolled brass collar, stanchions, sagging chains ───
+    // A closed, clockwise-wound solid of revolution: up the outer bulge,
+    // across the crown, down the throat (which flares below the deck
+    // underside so the ring plank sandwich never shows its raw inner cut),
+    // out along the bottom, and back up the buried face. The previous open
+    // counter-clockwise ribbon rendered inside-out — see-through from the
+    // deck and from the bell riding through the mouth.
     const collar = new LatheGeometry(
       [
-        new Vector2(1.52, 2.5),
-        new Vector2(1.5, 2.58),
-        new Vector2(1.54, 2.66),
-        new Vector2(1.66, 2.72),
-        new Vector2(1.82, 2.74),
-        new Vector2(1.96, 2.7),
-        new Vector2(2.02, 2.62),
-        new Vector2(1.96, 2.56),
-        new Vector2(1.86, 2.52),
+        new Vector2(2.02, 2.58),
+        new Vector2(2.045, 2.63),
+        new Vector2(2.03, 2.685),
+        new Vector2(1.97, 2.725),
+        new Vector2(1.88, 2.745),
+        new Vector2(1.76, 2.75),
+        new Vector2(1.63, 2.73),
+        new Vector2(1.545, 2.685),
+        new Vector2(1.515, 2.63),
+        new Vector2(1.51, 2.56),
+        new Vector2(1.525, 2.48),
+        new Vector2(1.56, 2.41),
+        new Vector2(1.615, 2.355),
+        new Vector2(1.68, 2.33),
+        new Vector2(1.76, 2.33),
+        new Vector2(1.78, 2.4),
+        new Vector2(1.8, 2.52),
+        new Vector2(1.9, 2.565),
+        new Vector2(2.02, 2.58),
       ],
       64,
     )
