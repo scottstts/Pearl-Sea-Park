@@ -2,6 +2,7 @@
 
 Design choices beyond what the code shows:
 
+- **Compatibility is resolved before the game module graph loads.** `index.html` loads the dependency-light `bootstrap.ts`; only desktop Chromium imports `main.ts`. Keep the unsupported-browser gate free of game, renderer, and WebGPU dependencies.
 - **WebGPU is enforced twice**: `webgpuAvailable()` pre-checks the adapter, and `createRenderer()` throws if three silently fell back to WebGL (`backend.isWebGPUBackend !== true`). Never remove the second check — three's fallback is silent and would violate the WebGPU-only rule invisibly.
 - **The loop owns no rendering.** `GameLoop.renderFrame` is assigned by whoever owns the image (S0: plain `renderer.render`; S1+: the post pipeline). Systems never call render themselves.
 - **Fixed 60 Hz sim / variable render** with 5-substep panic clamp. Ride physics and the scheduler run in `fixedUpdate`; visuals in `update(dt, alpha)`.

@@ -32,6 +32,144 @@ canvas#scene {
   outline: none;
 }
 
+/* ── Browser compatibility gate ────────────────────────── */
+
+.browser-gate {
+  position: fixed;
+  inset: 0;
+  isolation: isolate;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  padding: clamp(1.5rem, 5vw, 5rem);
+  color: var(--foam);
+  background:
+    radial-gradient(75% 95% at 50% -12%, rgba(86, 168, 175, 0.28), transparent 64%),
+    linear-gradient(180deg, var(--deep), var(--deeper) 56%, var(--ink));
+  user-select: none;
+}
+
+.browser-gate::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  top: -24%;
+  left: 50%;
+  width: min(1050px, 115vw);
+  aspect-ratio: 1.8;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: radial-gradient(ellipse, rgba(126, 210, 208, 0.13), transparent 68%);
+  filter: blur(22px);
+  animation: browser-gate-current 9s ease-in-out infinite alternate;
+}
+
+.browser-gate::after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: -15% 0 0;
+  opacity: 0.38;
+  background:
+    radial-gradient(circle at 16% 82%, rgba(234, 246, 242, 0.8) 0 1px, transparent 2px),
+    radial-gradient(circle at 78% 70%, rgba(234, 246, 242, 0.7) 0 1px, transparent 2px),
+    radial-gradient(circle at 66% 92%, rgba(234, 246, 242, 0.45) 0 2px, transparent 3px),
+    radial-gradient(circle at 32% 62%, rgba(234, 246, 242, 0.45) 0 1px, transparent 2px);
+  animation: browser-gate-bubbles 16s linear infinite;
+}
+
+.browser-gate-content {
+  width: min(640px, 100%);
+  text-align: center;
+  animation: browser-gate-arrive 0.9s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.browser-gate-eyebrow {
+  margin-bottom: 1.2rem;
+  color: var(--gold);
+  font-size: clamp(0.62rem, 1.2vw, 0.72rem);
+  letter-spacing: 0.4em;
+  line-height: 1.8;
+  text-transform: uppercase;
+}
+
+.browser-gate h1 {
+  color: var(--foam);
+  font-size: clamp(3.4rem, 10vw, 6.4rem);
+  font-weight: 400;
+  letter-spacing: 0.09em;
+  line-height: 0.95;
+}
+
+.browser-gate-rule {
+  width: min(160px, 38vw);
+  height: 1px;
+  margin: clamp(1.8rem, 5vh, 2.8rem) auto;
+  background: linear-gradient(90deg, transparent, var(--gold), transparent);
+}
+
+.browser-gate-notice {
+  display: grid;
+  justify-items: center;
+  gap: 0.75rem;
+}
+
+.browser-gate-notice strong {
+  color: var(--gold);
+  font-size: clamp(0.9rem, 2vw, 1.05rem);
+  font-weight: 400;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+}
+
+.browser-gate-notice span {
+  max-width: 38ch;
+  color: color-mix(in srgb, var(--foam) 76%, transparent);
+  font-size: clamp(0.95rem, 2vw, 1.08rem);
+  font-style: italic;
+  letter-spacing: 0.035em;
+  line-height: 1.65;
+}
+
+@keyframes browser-gate-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes browser-gate-current {
+  from {
+    opacity: 0.6;
+    transform: translateX(-53%) scale(0.94);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-47%) scale(1.06);
+  }
+}
+
+@keyframes browser-gate-bubbles {
+  from {
+    transform: translateY(8%);
+  }
+  to {
+    transform: translateY(-14%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-gate::before,
+  .browser-gate::after,
+  .browser-gate-content {
+    animation: none;
+  }
+}
+
 /* ── Ticket screen ─────────────────────────────────────── */
 
 .ticket {

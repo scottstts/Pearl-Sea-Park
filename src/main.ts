@@ -1,4 +1,3 @@
-import './styles.css'
 import { PerspectiveCamera, Scene } from 'three'
 import { AudioEngineSystem } from './audio/engine'
 import { getBookmark, parseFlags } from './core/debug'
