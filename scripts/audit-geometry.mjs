@@ -1,6 +1,7 @@
 import { auditNoticeBoardRoof } from '../src/shows/noticeBoardGeometry.ts'
 import { auditPearlLineCabinGeometry } from '../src/rides/pearlLineCabin.ts'
 import { auditPearlRoute } from '../src/rides/pearlRoute.ts'
+import { auditTorrentCarHull } from '../src/rides/torrentCarHull.ts'
 import { auditTorrentTrack } from '../src/rides/torrentTrack.ts'
 import { auditOceanSkirtGeometry } from '../src/sea/oceanSkirtGeometry.ts'
 import { auditFacilitySigns } from '../src/world/facilitySigns.ts'
@@ -15,6 +16,7 @@ const noticeBoardRoof = auditNoticeBoardRoof()
 const pearlLineCabin = auditPearlLineCabinGeometry()
 const facilitySigns = auditFacilitySigns()
 const torrentTrack = auditTorrentTrack()
+const torrentCarHull = auditTorrentCarHull()
 const pearlRoute = auditPearlRoute()
 const oceanSkirt = auditOceanSkirtGeometry()
 const benchFacing = [
@@ -68,6 +70,7 @@ const report = {
   },
   benchFacing,
   torrentTrack,
+  torrentCarHull,
   pearlRoute,
   oceanSkirt,
 }

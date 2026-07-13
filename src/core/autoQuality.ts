@@ -28,6 +28,13 @@ interface CachedResult {
 
 let severeRuntimeSamples = 0
 let lastPersistedRuntimeSignature: string | null = null
+let lastRuntimePersistMs = -Infinity
+
+/** Minimum spacing between runtime persistence writes. localStorage is
+ * synchronous main-thread I/O; while dynamic resolution breathes, an
+ * unquantized renderScale changed the signature every sample and wrote to
+ * disk once a second for nothing. */
+const RUNTIME_PERSIST_INTERVAL_MS = 20_000
 
 /** Pause-card overrides survive reload; `auto` returns ownership to the benchmark. */
 export function setQualityMode(mode: 'auto' | number): void {
@@ -119,13 +126,21 @@ export function recordAutoRuntimeSample(
   const result: CachedResult = {
     tier: nextTier,
     benchmarkMs: selection.benchmarkMs ?? 0,
-    renderScale: nextTier === tier ? clamp(renderScale, floor, 1) : 1,
+    // Quantized to 0.05: the stored value is only a next-session starting
+    // hint (and re-floored to ≥0.95 on load), so fine steps are noise.
+    renderScale: nextTier === tier
+      ? Math.round(clamp(renderScale, floor, 1) * 20) / 20
+      : 1,
   }
   try {
     const signature = JSON.stringify(result)
     if (signature === lastPersistedRuntimeSignature) return
+    const now = performance.now()
+    // A tier demotion must land immediately; scale hints can wait their turn.
+    if (nextTier === tier && now - lastRuntimePersistMs < RUNTIME_PERSIST_INTERVAL_MS) return
     localStorage.setItem(RESULT_KEY, signature)
     lastPersistedRuntimeSignature = signature
+    lastRuntimePersistMs = now
   } catch {
     // Runtime adaptation remains active when persistence is unavailable.
   }

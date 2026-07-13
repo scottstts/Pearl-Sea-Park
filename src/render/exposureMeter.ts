@@ -18,9 +18,42 @@ import { gradeParams } from './grade'
 
 const WIDTH = 64
 const HEIGHT = 36
-const READ_INTERVAL = 30
+// Target refresh cadence. At 30 frames the target lagged half a second behind
+// a view change on top of the adaptation time constant — the "look back up
+// and it stays dark for a while" complaint. The readback is a 9 KB async map
+// of a 64×36 byte target; 12 frames is still far from any stall.
+const READ_INTERVAL = 12
 const LOG_MIN = -12
 const LOG_RANGE = 16
+
+// ── Adaptation response shaping ─────────────────────────────────────────────
+// The meter must read as gentle eye adaptation, not an auto-iris. Two past
+// defects define the tuning:
+//  · Looking DOWN at caustic-lit sand filled the meter with bright pixels and
+//    keyEV crushed the whole scene ("much darker"), then recovery crawled.
+//  · On the Torrent, void-dominated frames (the precipice, the vertical dive)
+//    pushed keyEV to the old +1.8 clamp — the visible sand wall blew out to
+//    white while ripple shading stayed dark: "extreme contrast" seabed.
+// RESPONSE_GAIN compresses the swing in both directions around the authored
+// EV 0 (bright scenes stay a touch bright, dark scenes stay dark — the fixed
+// golden-afternoon grade owns the look, the meter only breathes around it),
+// and the clamp ceiling drops so an abyss view can never over-brighten what
+// little bright content it contains. The floor stays at −2.5: above-water
+// frames legitimately meter ~4 EV hotter and were fine.
+const RESPONSE_GAIN = 0.6
+const TARGET_EV_MIN = -2.5
+const TARGET_EV_MAX = 0.75
+// Highlight guard: place the weighted 98th-percentile pixel no higher than
+// ~1.9 + 0.35 EV over mid grey. 99.5 % missed small-but-important bright
+// regions (a sand wall beside the void) entirely.
+const HIGHLIGHT_PERCENTILE = 0.98
+const HIGHLIGHT_ANCHOR = 1.9
+const HIGHLIGHT_HEADROOM = 0.35
+// Per-second smoothing rates. Darkening (light adaptation) stays faster than
+// brightening (dark adaptation) — physiology — but recovery doubles so a
+// glance at the seabed no longer dims the park for seconds afterwards.
+const BRIGHTEN_RATE = 1.4
+const DARKEN_RATE = 2.3
 
 export interface ExposureSnapshot {
   resolution: [number, number]
@@ -80,7 +113,7 @@ export class ExposureMeter {
   update(dt: number): void {
     if (dt <= 0) return
     const current = Number(gradeParams.exposureEV.value)
-    const rate = this.targetEV > current ? 0.72 : 1.75
+    const rate = this.targetEV > current ? BRIGHTEN_RATE : DARKEN_RATE
     const frameDt = Math.min(dt, 0.25)
     gradeParams.exposureEV.value =
       current + (this.targetEV - current) * (1 - Math.exp(-rate * frameDt))
@@ -120,7 +153,7 @@ export class ExposureMeter {
     }
     if (totalWeight <= 0) return
     this.weightedLogAverage = weightedLog / totalWeight
-    const percentileWeight = totalWeight * 0.995
+    const percentileWeight = totalWeight * HIGHLIGHT_PERCENTILE
     let cumulative = 0
     let highlightBin = 63
     for (let bin = 0; bin < histogram.length; bin++) {
@@ -132,8 +165,14 @@ export class ExposureMeter {
     }
     this.peakLogLuminance = LOG_MIN + ((highlightBin + 0.5) / 64) * LOG_RANGE
     const keyEV = Math.log2(0.18) - this.weightedLogAverage
-    const highlightEV = 2.25 - this.peakLogLuminance
-    this.targetEV = Math.max(-2.5, Math.min(1.8, Math.min(keyEV, highlightEV + 0.55)))
+    const highlightEV = HIGHLIGHT_ANCHOR - this.peakLogLuminance
+    this.targetEV = Math.max(
+      TARGET_EV_MIN,
+      Math.min(
+        TARGET_EV_MAX,
+        RESPONSE_GAIN * Math.min(keyEV, highlightEV + HIGHLIGHT_HEADROOM),
+      ),
+    )
 
     this.readbacks++
   }

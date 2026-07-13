@@ -17,6 +17,7 @@ import { PlayerSystem } from './player/player'
 import { TeleportSystem } from './player/teleport'
 import { LensDripSystem } from './render/lensDrips'
 import { RenderPipelineSystem } from './render/pipeline'
+import { releaseStaticGeometryArrays } from './render/releaseGeometry'
 import { createRenderer, webgpuAvailable } from './render/renderer'
 import { warmupRenderer } from './render/warmup'
 import { enableMainDetailLayer } from './render/layers'
@@ -215,6 +216,11 @@ async function boot(): Promise<void> {
       (fraction) => ticket.setProgress('prewarm', 0.72 + 0.27 * fraction),
       { invalidateShadows: () => sky?.invalidateShadowLevels() },
     )
+    // Warmup just drew every mesh, so every attribute is on the GPU: drop
+    // the retained CPU copies of the static park (hundreds of MB of external
+    // memory pressure otherwise feeding random full-GC freezes mid-roam).
+    const geometryRelease = releaseStaticGeometryArrays(scene)
+    canvas.dataset.geometryRelease = JSON.stringify(geometryRelease)
     ticket.setProgress('ready', 1)
   }
 

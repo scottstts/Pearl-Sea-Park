@@ -35,6 +35,7 @@ import {
   type TorrentTrack,
   type TrackFrame,
 } from './torrentTrack'
+import { buildTorrentHullGeometry, torrentHullRadiusAt } from './torrentCarHull'
 import { VehicleSeatRig } from './vehicleSeat'
 
 const CARS = 5
@@ -228,49 +229,22 @@ export class TorrentSystem implements GameSystem {
 
     // ── The train: five japanned hydro-sleds ──────────────────────────────
     // A racing sled in deep torrent-teal lacquer over brass running trim:
-    // CatmullRom-smoothed boat-tail hull, riveted panel seams radius-keyed to
-    // the hull, brass deck spine and rub rails, visible axle bogies riding
-    // the rails, a leather cockpit (rolled bolster, bucket squab, headrest
-    // roll) behind a framed glass spray screen, a nacre-tipped wave-cutter
-    // figurehead at the bow, and a verdigris stern cowl with dark nozzle
-    // throat and three swept thickness-bearing fins. The rider's tail car
-    // carries a small lantern. Local +z = direction of travel; every extreme
-    // stays inside the audited envelope (half-width ≤ 0.62, z ∈ [−1.5, 1.62]).
-    const hullControls = [
-      new Vector3(0.03, -1.48, 0),
-      new Vector3(0.30, -1.34, 0),
-      new Vector3(0.46, -1.12, 0),
-      new Vector3(0.55, -0.82, 0),
-      new Vector3(0.60, -0.42, 0),
-      new Vector3(0.62, -0.02, 0),
-      new Vector3(0.60, 0.38, 0),
-      new Vector3(0.55, 0.72, 0),
-      new Vector3(0.46, 1.02, 0),
-      new Vector3(0.34, 1.24, 0),
-      new Vector3(0.20, 1.42, 0),
-      new Vector3(0.08, 1.54, 0),
-      new Vector3(0.02, 1.58, 0),
-    ]
-    const hullCurve = new CatmullRomCurve3(hullControls)
-    const hullProfile = hullCurve
-      .getPoints(26)
-      .map((p) => new Vector2(Math.min(0.62, Math.max(0.02, p.x)), p.y))
+    // CatmullRom-smoothed boat-tail hull with a REAL open cockpit well (the
+    // hull authority lives in torrentCarHull.ts, audited offline for winding,
+    // envelope, openness, and the rider sightline), riveted panel seams
+    // radius-keyed to the hull, brass deck spine and rub rails, visible axle
+    // bogies riding the rails, a leather cockpit (rolled bolster, bucket
+    // squab, headrest roll) behind a framed spray hoop, a nacre-tipped
+    // wave-cutter figurehead at the bow, and a verdigris stern cowl with dark
+    // nozzle throat and three swept thickness-bearing fins. The rider's tail
+    // car carries a small lantern. Local +z = direction of travel; every
+    // extreme stays inside the audited envelope (half-width ≤ 0.62,
+    // z ∈ [−1.5, 1.62]).
+    //
     // The camera rides centimetres from this surface — a coarse lathe would
     // read as flat facets (the descent-bell lesson), so 36 radial segments.
-    const hullGeometry = new LatheGeometry(hullProfile, 36)
-    hullGeometry.rotateX(-Math.PI / 2) // profile +y → +z: nose forward
-    // Profile y ascends tail→nose, so the first bracketing segment wins.
-    const hullRadiusAt = (z: number): number => {
-      const points = hullProfile
-      if (z <= points[0].y) return points[0].x
-      for (let k = 1; k < points.length; k++) {
-        if (z <= points[k].y) {
-          const t = (z - points[k - 1].y) / (points[k].y - points[k - 1].y || 1e-6)
-          return points[k - 1].x + (points[k].x - points[k - 1].x) * t
-        }
-      }
-      return points[points.length - 1].x
-    }
+    const hullGeometry = buildTorrentHullGeometry()
+    const hullRadiusAt = torrentHullRadiusAt
 
     // Point-to-point member: the armillary/telescope rule — parts that must
     // visibly connect derive their pose from real endpoints, never from
@@ -390,8 +364,11 @@ export class TorrentSystem implements GameSystem {
       const keel = new Mesh(keelGeometry, lib.brass)
       keel.position.set(0, -0.575, -0.05)
       car.add(keel)
+      // The spine roots just past the cockpit opening's bow edge (the well
+      // now being genuinely open, a start inside it would read as a bare rod
+      // rising out of the seat).
       const spine = memberBetween(
-        new Vector3(0, 0.565, 0.42),
+        new Vector3(0, 0.585, 0.56),
         new Vector3(0, 0.295, 1.36),
         0.035,
         lib.brass,

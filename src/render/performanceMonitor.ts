@@ -33,6 +33,18 @@ export interface HitchRecord {
   scaleChanged: boolean
   staticShadowRefreshes: number
   dynamicShadowRenders: number
+  /**
+   * Main-thread long tasks (>50 ms) overlapping this frame gap, in ms.
+   * frameMs huge + cpuMs small + longTaskMs small = the stall was OUTSIDE
+   * JavaScript (GPU-process compile/allocation, compositor, driver); a large
+   * longTaskMs with small cpuMs = a main-thread block BETWEEN our ticks
+   * (garbage collection, other tasks).
+   */
+  longTaskMs: number
+  /** V8 heap (MB) after the frame, and its change across the frame gap.
+   * A multi-MB NEGATIVE delta on a hitch frame is a major-GC signature. */
+  heapMB: number | null
+  heapDeltaMB: number | null
 }
 
 const EMA = 0.08
@@ -51,10 +63,25 @@ export class FramePerformanceMonitor {
   private lastRenderScale = 1
   private lastStaticRefreshes = 0
   private lastDynamicRenders = 0
+  private lastHeapBytes: number | null = null
+  private longTaskAccumulatedMs = 0
+  private longTaskObserver: PerformanceObserver | null = null
   private readonly renderer: WebGPURenderer
 
   constructor(renderer: WebGPURenderer) {
     this.renderer = renderer
+    // Long tasks name main-thread blocks the frame loop itself never sees
+    // (they land BETWEEN our ticks — GC pauses, extension work, layout).
+    // Chrome-only entry type; absence just leaves longTaskMs at 0.
+    try {
+      const observer = new PerformanceObserver((list) => {
+        for (const entry of list.getEntries()) this.longTaskAccumulatedMs += entry.duration
+      })
+      observer.observe({ entryTypes: ['longtask'] })
+      this.longTaskObserver = observer
+    } catch {
+      this.longTaskObserver = null
+    }
   }
 
   sample(timing: FrameTiming, _frame: number): void {
@@ -79,6 +106,13 @@ export class FramePerformanceMonitor {
     this.lastStaticRefreshes = staticShadowRefreshes
     const dynamicDelta = dynamicShadowRenders - this.lastDynamicRenders
     this.lastDynamicRenders = dynamicShadowRenders
+    const longTaskMs = this.longTaskAccumulatedMs
+    this.longTaskAccumulatedMs = 0
+    const heapBytes = readHeapBytes()
+    const heapDeltaBytes = heapBytes !== null && this.lastHeapBytes !== null
+      ? heapBytes - this.lastHeapBytes
+      : null
+    this.lastHeapBytes = heapBytes
     if (timing.frameIntervalMs < HITCH_THRESHOLD_MS) return
     this.hitches.push({
       at: Math.round(atSeconds * 10) / 10,
@@ -88,8 +122,16 @@ export class FramePerformanceMonitor {
       scaleChanged,
       staticShadowRefreshes: staticDelta,
       dynamicShadowRenders: dynamicDelta,
+      longTaskMs: Math.round(longTaskMs),
+      heapMB: heapBytes === null ? null : Math.round(heapBytes / 1048576),
+      heapDeltaMB: heapDeltaBytes === null ? null : Math.round(heapDeltaBytes / 1048576),
     })
     if (this.hitches.length > HITCH_RING) this.hitches.shift()
+  }
+
+  dispose(): void {
+    this.longTaskObserver?.disconnect()
+    this.longTaskObserver = null
   }
 
   snapshot(): PerformanceSnapshot {
@@ -128,4 +170,13 @@ export class FramePerformanceMonitor {
       this.resolvePending = false
     })
   }
+}
+
+/** Chrome-only quantized heap probe; a cheap getter, sampled once per frame. */
+function readHeapBytes(): number | null {
+  const memory = (
+    performance as Performance & { memory?: { usedJSHeapSize?: number } }
+  ).memory
+  const used = memory?.usedJSHeapSize
+  return typeof used === 'number' && Number.isFinite(used) ? used : null
 }

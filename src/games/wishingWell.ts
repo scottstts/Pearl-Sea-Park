@@ -53,6 +53,7 @@ export class WishingWell {
   private readonly coins: WellCoin[] = []
   private sim: ChannelSim | null = null
   private waterLevel = 0
+  private coinGeometry: CylinderGeometry | null = null
 
   constructor(services: DistrictServices, medium: SeaMediumSystem, armThrow: ArmThrow) {
     this.services = services
@@ -292,7 +293,10 @@ export class WishingWell {
         .setRestitution(0.22),
       body,
     )
-    const mesh = new Mesh(new CylinderGeometry(0.12, 0.12, 0.036, 28), lib.brass)
+    // One shared penny geometry: per-toss construction churned new GPU
+    // buffers and leaked them (removed coins never disposed theirs).
+    this.coinGeometry ??= new CylinderGeometry(0.12, 0.12, 0.036, 28)
+    const mesh = new Mesh(this.coinGeometry, lib.brass)
     mesh.castShadow = true
     markDynamicShadowCasters(mesh)
     this.group.add(mesh)
@@ -325,6 +329,8 @@ export class WishingWell {
   dispose(ctx: GameContext): void {
     for (const coin of this.coins) this.services.physics.world?.removeRigidBody(coin.body)
     this.sim?.dispose()
+    this.coinGeometry?.dispose()
+    this.coinGeometry = null
     ctx.scene.remove(this.group)
   }
 

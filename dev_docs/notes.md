@@ -1056,3 +1056,71 @@
     menu's back key is Q (hint + handler); Esc still silently closes the
     menu before cascading to the pause card so pause never captures a
     frozen input state.
+- 2026-07-13 standing-defects pass (Torrent cockpit, exposure swing, seabed
+  moiré, roaming freezes):
+  - **A lathe can never carry a cockpit.** A full revolve roofs any deck
+    opening with its own top arc — the Torrent tub/seat sat sealed INSIDE the
+    closed hull (Scott's screenshot: continuous shell inside the coaming) —
+    and a phiStart/phiLength sector slots the hull nose-to-tail instead.
+    Openings in solids of revolution are authored per RING: clip each ring's
+    arc where the opening's plan ellipse crosses it (endpoints exactly on the
+    ellipse → analytic rim, no staircase) and bridge rim→coaming with a
+    collar wall. Hull authority: rides/torrentCarHull.ts (leaf), proven by
+    `auditTorrentCarHull` in audit:geometry (winding, envelope, openness
+    probes, rider sightline, collar tuck).
+  - **`rotateX(−π/2)` maps profile +y to −z, not +z** (verified numerically —
+    the matrix comment in three docs is easy to misread). The Torrent hull
+    was silently z-MIRRORED against every radius-keyed fitting for two
+    passes; the near-symmetric profile masked it (bow collar floated 8 cm,
+    "half-embedded" pearl floated clear of the tip). When a lathe must match
+    z-keyed fittings, build the rings directly in final coordinates (or
+    rotateX(+π/2)) and let one module own both the surface and radiusAt().
+  - Exposure retune (exposureMeter.ts): target =
+    clamp(0.6·min(keyEV, highlight98%+0.35), −2.5, +0.75), readback every 12
+    frames, brighten/darken 1.4/2.3 s⁻¹. Two field defects drove every
+    number: looking DOWN at caustic-lit sand crushed the frame and recovered
+    over seconds (response gain 0.6 halves the swing; faster brighten +
+    tighter cadence fix the recovery), and void-dominated Torrent frames
+    (precipice wall, vertical re-entry dive) rode the old +1.8 ceiling and
+    blew the visible sand white while ripple shading stayed dark — the
+    reported "extremely contrasty dark wave patterns". The −2.5 floor is
+    load-bearing above water; do not raise the +0.75 ceiling without
+    re-checking both Torrent spots.
+  - The OTHER half of the contrasty seabed: the mip-less caustic web aliases
+    into dark moiré waves at grazing incidence — the ocean-cascade barcode
+    class, on a different texture. Surface consumers now use
+    `causticWorldSample(node, { footprintFade: true })` (dissolves the web
+    into its conserved 0.18 mean over 0.06→0.28 m/px measured from screen
+    derivatives of the surface-plane coordinate). The god-ray march must
+    keep the exact sampler — its per-pixel jitter makes derivatives garbage.
+  - Roaming-freeze pass (the "CPU spike, GPU idle, no location" class):
+    · Schedule boards flipped IN SYNC every 15 s — two 1024×512 canvas
+      redraws + CanvasTexture re-uploads on one frame, anywhere in the park.
+      Flips are now staggered 0.55 s apart (`pendingFlip`). Any future
+      CanvasTexture rewriters must stagger the same way.
+    · The WebGPU renderer never calls BufferAttribute.onUpload, so every
+      procedural merge kept its CPU Float32Arrays for the whole session —
+      hundreds of MB of external memory pressure feeding the browser's full
+      GCs. `render/releaseGeometry.ts` swaps static-mesh arrays for
+      ZERO-LENGTH same-type arrays after warmup (never null — the renderer
+      still reads array.constructor/BYTES_PER_ELEMENT for later pipeline
+      layouts, and .count is a constructor-set field that keeps supplying
+      draw counts). Bounding volumes are computed BEFORE the swap (culling
+      computes them lazily from arrays otherwise). Predicates: plain Mesh
+      only, no morphs, all attributes plain StaticDrawUsage BufferAttributes;
+      opt-out via geometry.userData.keepCpuArrays. Runs only after warmup
+      (which uploads everything); validation runs skip it. Stats on
+      `canvas.dataset.geometryRelease`.
+    · HitchRecord now carries `longTaskMs`, `heapMB`, `heapDeltaMB`. Reading
+      a freeze: frameMs huge + cpuMs small + longTaskMs small → the stall is
+      OUTSIDE JS (GPU process, compositor, driver); longTaskMs large →
+      main-thread block between ticks; heapDeltaMB strongly negative →
+      major-GC signature. Attribute BEFORE optimizing further.
+    · recordAutoRuntimeSample wrote localStorage ~1/s while dynamic
+      resolution breathed (unquantized renderScale changed the signature
+      every sample; localStorage is synchronous disk I/O). Persisted scale
+      is now 0.05-quantized and writes are ≥20 s apart (tier demotions still
+      land immediately).
+    · Wishing-well pennies built a NEW CylinderGeometry per toss and never
+      disposed it — runtime prototypes must be created once and reused (the
+      amenity rule applies to spawned props too).

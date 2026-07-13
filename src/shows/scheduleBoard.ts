@@ -26,6 +26,8 @@ interface Board {
   canvas: HTMLCanvasElement
   flip: number
   changed: boolean
+  /** Seconds until this board's queued flip starts (staggers the redraws). */
+  pendingFlip: number
 }
 
 /** Two mechanical timetable boards: event information stays inside the world. */
@@ -51,8 +53,23 @@ export class ScheduleBoardSystem implements GameSystem {
     this.refresh(0)
 
     ctx.events.on('schedule/event', () => {
-      for (const board of this.boards) board.flip = 0.001
+      this.queueFlips()
       this.lastBucket = -1
+    })
+  }
+
+  /**
+   * Boards never flip on the same frame: each 1024×512 canvas redraw +
+   * CanvasTexture re-upload is a few milliseconds, and the old synchronized
+   * flip stacked all of them onto one frame every 15 s — a felt roaming
+   * micro-hitch with no location pattern. The half-second offsets also read
+   * as nicer clockwork than a lock-step flap.
+   */
+  private queueFlips(): void {
+    this.boards.forEach((board, index) => {
+      if (board.flip === 0 && board.pendingFlip <= 0) {
+        board.pendingFlip = 0.001 + index * 0.55
+      }
     })
   }
 
@@ -60,11 +77,13 @@ export class ScheduleBoardSystem implements GameSystem {
     const bucket = Math.floor(ctx.time.sim / 15)
     if (bucket !== this.lastBucket) {
       this.lastBucket = bucket
-      for (const board of this.boards) {
-        if (board.flip === 0) board.flip = 0.001
-      }
+      this.queueFlips()
     }
     for (const board of this.boards) {
+      if (board.pendingFlip > 0) {
+        board.pendingFlip -= dt
+        if (board.pendingFlip <= 0 && board.flip === 0) board.flip = 0.001
+      }
       if (board.flip <= 0) continue
       board.flip = Math.min(1, board.flip + dt * 2.4)
       board.panel.rotation.x = -Math.sin(board.flip * Math.PI) * Math.PI * 0.48
@@ -171,7 +190,7 @@ export class ScheduleBoardSystem implements GameSystem {
     boardGroup.add(ridge)
     this.services.physics.addStaticBox(x, y + 2.75, z, 3.05, 2.75, 0.2, yaw)
     this.group.add(boardGroup)
-    this.boards.push({ panel, texture, canvas, flip: 0, changed: false })
+    this.boards.push({ panel, texture, canvas, flip: 0, changed: false, pendingFlip: 0 })
   }
 
   private refresh(time: number): void {

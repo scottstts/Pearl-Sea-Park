@@ -11,6 +11,17 @@
   output tile, preserving the exact cross-boundary projection and 6.6 cm source
   density used by the reference underwater image.
 - **Caustics apply to surfaces via `material.receivedShadowNode`** (`applyCaustics()`): they modulate received sun light, so they inherit shadows for free and never glow in occluded interiors. Every underwater lit material must opt in (terrain S4, archkit S6 — wire it in the material factory).
+- **Surface caustics carry a pixel-footprint fade (2026-07-13).** The caustic
+  target has no mip chain, so once a pixel spans more than a couple of texels
+  of the high-contrast web (grazing seabed views, steep sand walls, distance)
+  sampling aliases into dark moiré "wave patterns" — the same failure class as
+  the ocean cascades' grazing-incidence barcode. `causticWorldSample(node,
+  { footprintFade: true })` measures metres-per-pixel from screen derivatives
+  of the surface-plane coordinate and dissolves the web into its conserved
+  mean (0.18) across 0.06→0.28 m/px, so distant sand keeps its average
+  brightness and loses only the unresolvable pattern. The god-ray march MUST
+  keep the exact no-fade sampler: its per-pixel jitter makes screen
+  derivatives meaningless there.
 - **God rays**: full-output-resolution per-pixel march over the same bounded
   ≤85 m caustic field, with tiered step counts (8/14/22) and sub-step hash
   jitter. This is intentionally the pre-S14 mechanism: the fine separated

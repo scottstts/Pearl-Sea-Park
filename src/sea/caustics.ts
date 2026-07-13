@@ -20,9 +20,11 @@ import {
   float,
   instanceIndex,
   max,
+  mix,
   normalize,
   positionGeometry,
   refract,
+  smoothstep,
   texture,
   varying,
   vec2,
@@ -133,11 +135,34 @@ export class CausticsPass {
 }
 
 /**
+ * The caustic tile's spatial mean. Differential-area reprojection conserves
+ * flux, so E[oldArea/newArea] ≈ 1 and the mean sampled value ≈ the 0.18
+ * intensity scale (the ×3×3 additive wrap returns edge-crossing light; the
+ * min(6) clamp trims a negligible tail). Grazing-footprint fades converge to
+ * this so distant sand keeps its average brightness while losing the web.
+ */
+const CAUSTIC_FIELD_MEAN = 0.18
+
+/**
  * Sample caustic light at a world position: project along the sun to the
  * surface plane, wrap into the tile, chromatic triple-tap, fade with depth.
  * Returns an rgb concentration factor around 1.
+ *
+ * `footprintFade` — for SURFACE consumers (receivedShadowNode): the caustic
+ * target has no mip chain, so once one output pixel spans more than a couple
+ * of texels of the high-contrast web (grazing seabed views, steep sand walls,
+ * distance), sampling aliases into exactly the "dark wave pattern" moiré the
+ * ocean cascades once produced. Same doctrine as the ocean's pixel-footprint
+ * LOD: measure the projected footprint from screen-space derivatives of the
+ * surface-plane coordinate and dissolve the web into its mean before it can
+ * alias. The god-ray march must NOT use this variant — its per-pixel jitter
+ * makes screen-space derivatives meaningless there — and keeps the exact
+ * pre-S14 sampler.
  */
-export function causticWorldSample(causticsNode: ReturnType<typeof texture>) {
+export function causticWorldSample(
+  causticsNode: ReturnType<typeof texture>,
+  options: { footprintFade?: boolean } = {},
+) {
   return Fn(([worldPos]: [Node<'vec3'>]) => {
     const toSun = sunDirectionUniform
     const up = toSun.y.max(0.2)
@@ -152,6 +177,15 @@ export function causticWorldSample(causticsNode: ReturnType<typeof texture>) {
     const g = causticsNode.sample(uv.add(vec2(spread, spread.negate()))).r
     const b = causticsNode.sample(uv.add(vec2(spread.negate().mul(1.6), spread))).r
     const depthFade = exp(worldPos.y.mul(0.055)).min(1.0)
-    return vec3(r, g, b).mul(depthFade)
+    let field: Node<'vec3'> = vec3(r, g, b)
+    if (options.footprintFade) {
+      // Metres of surface plane crossed by one output pixel. Filaments are
+      // ~0.1–0.2 m wide; keep the web fully below 0.06 m/px and dissolve it
+      // by 0.28 m/px, where even 4× MSAA can no longer resolve it.
+      const footprint = max(dFdx(surfaceXZ).length(), dFdy(surfaceXZ).length())
+      const fade = smoothstep(0.06, 0.28, footprint)
+      field = mix(field, vec3(CAUSTIC_FIELD_MEAN), fade) as unknown as Node<'vec3'>
+    }
+    return field.mul(depthFade)
   })
 }

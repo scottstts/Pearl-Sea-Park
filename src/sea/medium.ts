@@ -83,8 +83,12 @@ export class SeaMediumSystem implements GameSystem {
 
     const caustics = new CausticsPass(sim, ctx.quality.params.causticsSize)
     this.caustics = caustics
-    const sampler = causticWorldSample(caustics.textureNode)
-    this.causticSampler = sampler
+    // Two sampler variants over one texture: the god-ray march keeps the
+    // exact sampler (its per-pixel jitter breaks screen-space derivatives),
+    // while surfaces get the footprint-faded one — the mip-less caustic web
+    // aliases into dark moiré waves at grazing seabed angles otherwise.
+    const raySampler = causticWorldSample(caustics.textureNode)
+    this.causticSampler = causticWorldSample(caustics.textureNode, { footprintFade: true })
     this.pipeline.debugNodes.caustics = vec4(caustics.textureNode.rgb, 1)
 
     const godraySteps = ctx.quality.params.godraySteps
@@ -146,7 +150,7 @@ export class SeaMediumSystem implements GameSystem {
             const i = (loopVars as { i: Node<'int'> }).i
             const t = stepLength.mul(float(i).add(jitter))
             const samplePos = cameraPosition.add(rayDir.mul(t))
-            const light = sampler(samplePos).g
+            const light = raySampler(samplePos).g
             shaft.addAssign(light.mul(exp(t.mul(-0.03))))
           })
         })

@@ -63,6 +63,15 @@ renders at a bounded rate (L2 1.9/s, L3 0.7/s), boxes lead by 8–23 m.
 
 - `render/exposureMeter.ts`: 64×36 encoded luminance, asynchronous readback,
   weighted log average, highlight clamp, asymmetric adaptation.
+  Retuned 2026-07-13 after two field defects: the target is now
+  `clamp(0.6 · min(keyEV, highlight98% + 0.35), −2.5, +0.75)` at a 12-frame
+  readback cadence with brighten/darken rates 1.4/2.3 per second. The 0.6
+  response gain and the +0.75 ceiling exist because full-strength metering
+  (a) crushed the frame for seconds after glancing at caustic-lit sand
+  ("look down and everything goes dark"), and (b) on void-dominated Torrent
+  frames drove exposure to the old +1.8 clamp and blew the visible sand wall
+  to white. The fixed golden-afternoon grade owns the look; the meter only
+  breathes around it. The −2.5 floor is load-bearing for above-water frames.
 - `render/grade.ts`: actual generated 32³ RGBA8 LUT after the single AgX+sRGB
   output transform; vignette remains spatial and therefore outside the LUT.
 - God rays retain their pre-S14 full-output-resolution march. The attempted

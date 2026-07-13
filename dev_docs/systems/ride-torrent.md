@@ -49,20 +49,34 @@
   court→torrent path; boarding flow is board → "Lower the lap bar" →
   2.2 s → launch; exits only while docked.
 - The train (2026-07-12 redesign) is five japanned hydro-sleds: deep
-  torrent-teal lacquer hulls (CatmullRom profile, 36-segment lathe — the
+  torrent-teal lacquer hulls (CatmullRom profile, 36 radial segments — the
   camera rides centimetres away) over brass running trim. Craft rules baked
   in: panel seams are radius-keyed tori BOUNDING hull bays, never crossing
   the cockpit opening, with instanced rivet studs (castShadow off — tiny
-  fittings); the cockpit is an inward-wound open lathe tub (interior visible
-  by winding, no DoubleSide) with leather bolster/squab/backrest genuinely
-  inside; screen mounts, deck spine, and lamp stems are point-to-point
-  members; stern is a verdigris cowl around a tapered venturi throat (a bare
-  cone apex read as a spike) with three thickness-bearing swept fins; bow
-  carries a wave-cutter blade and half-embedded nacre pearl. Head car has a
-  bow lamp, tail car a stern lantern (lampGlobe, inside bloom hierarchy).
-  Every extreme stays inside the audited envelope: half-width ≤ 0.62,
-  z ∈ [−1.5, 1.62]; the rig eye (0, 0.82, −0.12) keeps ≥0.35 m clearance
-  from every member ahead of it.
+  fittings); the cockpit is an inward-wound open lathe tub with leather
+  bolster/squab/backrest genuinely inside; screen mounts, deck spine, and
+  lamp stems are point-to-point members; stern is a verdigris cowl around a
+  tapered venturi throat (a bare cone apex read as a spike) with three
+  thickness-bearing swept fins; bow carries a wave-cutter blade and
+  half-embedded nacre pearl. Head car has a bow lamp, tail car a stern
+  lantern (lampGlobe, inside bloom hierarchy). Every extreme stays inside
+  the audited envelope: half-width ≤ 0.62, z ∈ [−1.5, 1.62]; the rig eye
+  (0, 0.82, −0.12) keeps ≥0.35 m clearance from every member ahead of it.
+- Hull authority (2026-07-13): rides/torrentCarHull.ts, a leaf module the
+  geometry audit builds directly. The hull is NOT a LatheGeometry — a full
+  revolve roofs the cockpit with its own top arc (the tub sat buried inside
+  the closed volume: the "seat covered by the shell" defect), and a
+  phiStart/phiLength sector would slot the hull nose-to-tail. Rings are
+  authored per profile station and their arc SKIPS the cockpit's plan
+  ellipse (0.40 × 0.56 around z −0.05), the arc endpoints landing exactly on
+  the ellipse; a flared collar wall rises from that analytic rim to
+  (0.45 × 0.595, y 0.588), tucked under the coaming torus and outside the
+  tub mouth so neither side ever sees the seam. The same rebuild retired a
+  latent mirror: LatheGeometry + rotateX(−π/2) sent profile +y to −z, so
+  the hull was z-flipped against every hullRadiusAt-keyed fitting (bow
+  collar, seams, louvres, rivets) and the "embedded" bow pearl floated off
+  the tip. `auditTorrentCarHull` (in `npm run audit:geometry`) proves
+  winding, envelope, well openness, rider sightline, and collar tuck.
 - The wreck is one coherent broken hull: tapered keel, ten shaped ribs,
   longitudinal stringers, attached broken plank courses, and a leaning mast
   with cross-tree and iron crow's ring. It remains open at the track thread.
