@@ -1,5 +1,7 @@
 import {
   AdditiveBlending,
+  CircleGeometry,
+  ConeGeometry,
   CylinderGeometry,
   DoubleSide,
   DynamicDrawUsage,
@@ -11,21 +13,27 @@ import {
   PointLight,
   Quaternion,
   SphereGeometry,
+  TorusGeometry,
   Vector2,
   Vector3,
 } from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { MeshBasicNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu'
 import {
   abs,
+  cameraPosition,
   cos,
   float,
   fract,
   hash,
   instanceIndex,
   mix,
+  normalGeometry,
   normalView,
+  normalize,
   positionGeometry,
   positionViewDirection,
+  positionWorld,
   sin,
   smoothstep,
   uniform,
@@ -303,7 +311,9 @@ export class BubbleFountainSystem implements GameSystem {
     )
     w.emit(marbleTwoSided, tierOne, new Matrix4().setPosition(x, floorY, z))
 
-    // Tier 2: verdigris stem and scallop bowl, closed with interior.
+    // Tier 2: verdigris stem and scallop bowl, closed with interior — and
+    // now genuinely scalloped: sixteen gadroon lobes carved into the flare
+    // (y 2.1–2.9, fading at both ends) so the "scallop bowl" earns its name.
     const tierTwo = new LatheGeometry(
       [
         new Vector2(0.16, 0.8),
@@ -314,7 +324,9 @@ export class BubbleFountainSystem implements GameSystem {
         new Vector2(0.58, 1.75),
         new Vector2(0.75, 1.95),
         new Vector2(1.5, 2.2),
+        new Vector2(2.0, 2.36),
         new Vector2(2.4, 2.5),
+        new Vector2(2.72, 2.64),
         new Vector2(2.95, 2.78),
         new Vector2(3.05, 2.9),
         new Vector2(2.98, 3.0),
@@ -325,8 +337,28 @@ export class BubbleFountainSystem implements GameSystem {
         new Vector2(0.16, 2.5),
         new Vector2(0.16, 0.8),
       ],
-      48,
+      64,
     )
+    {
+      const position = tierTwo.getAttribute('position')
+      const vertex = new Vector3()
+      for (let i = 0; i < position.count; i++) {
+        vertex.fromBufferAttribute(position, i)
+        const radial = Math.hypot(vertex.x, vertex.z)
+        if (radial < 0.7) continue
+        const zone =
+          Math.max(0, Math.min(1, (vertex.y - 2.05) / 0.25)) *
+          Math.max(0, Math.min(1, (2.98 - vertex.y) / 0.12))
+        if (zone <= 0) continue
+        const angle = Math.atan2(vertex.x, vertex.z)
+        const lobe = Math.abs(Math.sin(angle * 8))
+        const scale = 1 + 0.05 * lobe * zone
+        position.setX(i, vertex.x * scale)
+        position.setZ(i, vertex.z * scale)
+      }
+      position.needsUpdate = true
+      tierTwo.computeVertexNormals()
+    }
     w.emit(verdigrisTwoSided, tierTwo, new Matrix4().setPosition(x, floorY, z))
 
     // Tier 3: brass calyx cradling the hero pearl.
@@ -431,7 +463,106 @@ export class BubbleFountainSystem implements GameSystem {
       w.emit(lib.verdigris, lily, m)
     }
 
+    // Eight bronze fish leap around the tier-one dish, arcing over its
+    // water — Belle Époque fountain fauna. One merged crescent (torus-arc
+    // body with BOTH open ends finished: head sphere one end, tail cone the
+    // other — the banquette rule), emitted per fish into the verdigris slot.
+    const fishParts: Array<TorusGeometry | SphereGeometry | ConeGeometry> = []
+    const fishBody = new TorusGeometry(0.4, 0.115, 9, 20, Math.PI * 0.8)
+    fishParts.push(fishBody)
+    const headTheta = Math.PI * 0.8
+    const head = new SphereGeometry(0.14, 12, 9)
+    head.scale(1.05, 0.9, 0.72)
+    head.translate(Math.cos(headTheta) * 0.4, Math.sin(headTheta) * 0.4, 0)
+    fishParts.push(head)
+    const tail = new ConeGeometry(0.11, 0.3, 8)
+    tail.rotateZ(-Math.PI / 2)
+    tail.scale(1, 1, 0.42)
+    tail.translate(0.53, -0.03, 0)
+    fishParts.push(tail)
+    const dorsal = new SphereGeometry(1, 8, 6)
+    dorsal.scale(0.1, 0.15, 0.022)
+    const dorsalTheta = Math.PI * 0.42
+    dorsal.translate(Math.cos(dorsalTheta) * 0.5, Math.sin(dorsalTheta) * 0.5, 0)
+    fishParts.push(dorsal)
+    const fishGeometry = mergeGeometries(fishParts, false)!
+    for (const part of fishParts) part.dispose()
+    for (let i = 0; i < 8; i++) {
+      const angle = (i / 8) * Math.PI * 2 + Math.PI / 16
+      const lean = i % 2 === 0 ? 0.18 : -0.14
+      const pose = new Matrix4()
+        .makeRotationZ(lean)
+        .premultiply(new Matrix4().makeRotationY(angle + Math.PI / 2))
+      pose.setPosition(
+        x + Math.sin(angle) * 3.45,
+        floorY + 0.98,
+        z + Math.cos(angle) * 3.45,
+      )
+      w.emit(lib.verdigris, fishGeometry, pose)
+    }
+    fishGeometry.dispose()
+
+    // Pearl swags: strings of nacre beads sag between the crown horns —
+    // the calyx wears its jewellery. Seven beads per span on a catenary.
+    const swagBead = new SphereGeometry(0.032, 8, 6)
+    for (let i = 0; i < 8; i++) {
+      const a0 = (i / 8) * Math.PI * 2
+      const a1 = ((i + 1) / 8) * Math.PI * 2
+      const from = new Vector3(
+        x + Math.sin(a0) * CROWN_RING_RADIUS,
+        floorY + CROWN_MOUTH - 0.16,
+        z + Math.cos(a0) * CROWN_RING_RADIUS,
+      )
+      const to = new Vector3(
+        x + Math.sin(a1) * CROWN_RING_RADIUS,
+        floorY + CROWN_MOUTH - 0.16,
+        z + Math.cos(a1) * CROWN_RING_RADIUS,
+      )
+      for (let bead = 1; bead <= 7; bead++) {
+        const t = bead / 8
+        const at = from.clone().lerp(to, t)
+        at.y -= Math.sin(Math.PI * t) * 0.11
+        const bm = new Matrix4().setPosition(at.x, at.y, at.z)
+        w.emit(lib.nacre, swagBead, bm)
+      }
+    }
+    swagBead.dispose()
+
     this.group.add(w.compile())
+
+    // Standing water fills both raised tiers (the mouths fire out of real
+    // pools, not dry marble): two one-draw glossy discs sharing a ripple
+    // material — the reflecting-pool recipe, never a reflector.
+    const tierWater = new MeshStandardNodeMaterial()
+    tierWater.roughness = 0.12
+    tierWater.metalness = 0.1
+    tierWater.envMapIntensity = 0.8
+    const ripplePhase = this.timeUniform.mul(0.9)
+    tierWater.normalNode = normalize(
+      normalGeometry.add(
+        vec3(
+          sin(positionWorld.x.mul(4.2).add(positionWorld.z.mul(2.6)).add(ripplePhase)).mul(0.07),
+          0,
+          sin(positionWorld.z.mul(3.8).sub(positionWorld.x.mul(2.2)).add(ripplePhase.mul(1.3))).mul(0.07),
+        ),
+      ),
+    )
+    const tierFacing = cameraPosition.sub(positionWorld).normalize().y.abs().clamp(0, 1)
+    const tierGrazing = float(1).sub(tierFacing).pow(3)
+    tierWater.colorNode = mix(vec3(0.02, 0.1, 0.115), vec3(0.17, 0.3, 0.32), tierGrazing)
+    tierWater.emissiveNode = vec3(0.004, 0.016, 0.019)
+    this.medium.applyCaustics(tierWater, 0.5)
+    this.effectMaterials.push(tierWater)
+    for (const [radius, height] of [
+      [4.05, 0.93],
+      [2.1, 2.68],
+    ] as const) {
+      const disc = new Mesh(new CircleGeometry(radius, 48), tierWater)
+      disc.rotation.x = -Math.PI / 2
+      disc.position.set(x, floorY + height, z)
+      disc.receiveShadow = true
+      this.group.add(disc)
+    }
   }
 
   // ── Shared per-jet frame: fixed mouths, ring-keyed heights and phases ───

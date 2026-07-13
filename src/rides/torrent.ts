@@ -1,6 +1,7 @@
 import {
   BoxGeometry,
   CatmullRomCurve3,
+  ConeGeometry,
   Curve,
   CylinderGeometry,
   InstancedMesh,
@@ -14,6 +15,7 @@ import {
   Vector2,
   Vector3,
 } from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
@@ -332,7 +334,6 @@ export class TorrentSystem implements GameSystem {
     const knuckleGeometry = new SphereGeometry(0.05, 10, 8)
     const dialBezelGeometry = new TorusGeometry(0.09, 0.014, 8, 20)
     const dialFaceGeometry = new CylinderGeometry(0.08, 0.08, 0.014, 20)
-    const screenGeometry = new SphereGeometry(0.34, 18, 9, 0, Math.PI * 2, 0, Math.PI * 0.36)
     const screenFrameGeometry = new TorusGeometry(0.31, 0.02, 8, 30)
     const bowCollarGeometry = new TorusGeometry(hullRadiusAt(1.44) + 0.012, 0.028, 8, 24)
     const bladeGeometry = new SphereGeometry(1, 14, 10)
@@ -345,6 +346,39 @@ export class TorrentSystem implements GameSystem {
     const finBladeGeometry = new SphereGeometry(1, 14, 10)
     const lanternGlobeGeometry = new SphereGeometry(0.055, 12, 9)
     const lanternRingGeometry = new TorusGeometry(0.065, 0.008, 6, 16)
+    // Flank trim, shared by all five cars as two merged geometries (+2
+    // draws/car): six brass cooling louvres on the engine bay and a pair of
+    // ringed nacre roundels on the bow — coachwork jewellery, all inside
+    // the audited half-width (max reach 0.45 < 0.62).
+    const trimParts: Array<BoxGeometry | TorusGeometry> = []
+    const louvreRadius = hullRadiusAt(-1.08) + 0.008
+    for (const side of [-1, 1]) {
+      for (const louvreZ of [-1.17, -1.07, -0.97]) {
+        const louvre = new BoxGeometry(0.05, 0.018, 0.11)
+        louvre.rotateZ(side * -0.7)
+        louvre.translate(
+          side * Math.sin(0.7) * louvreRadius,
+          Math.cos(0.7) * louvreRadius,
+          louvreZ,
+        )
+        trimParts.push(louvre)
+      }
+      const roundelRing = new TorusGeometry(0.095, 0.012, 6, 20)
+      roundelRing.rotateY(Math.PI / 2)
+      roundelRing.translate(side * (hullRadiusAt(1.08) + 0.006), 0, 1.08)
+      trimParts.push(roundelRing)
+    }
+    const trimGeometry = mergeGeometries(trimParts, false)!
+    for (const part of trimParts) part.dispose()
+    const roundelParts: CylinderGeometry[] = []
+    for (const side of [-1, 1]) {
+      const disc = new CylinderGeometry(0.082, 0.082, 0.014, 20)
+      disc.rotateZ(Math.PI / 2)
+      disc.translate(side * (hullRadiusAt(1.08) + 0.006), 0, 1.08)
+      roundelParts.push(disc)
+    }
+    const roundelGeometry = mergeGeometries(roundelParts, false)!
+    for (const part of roundelParts) part.dispose()
 
     const tinyParts = new Set<Object3D>()
     for (let i = 0; i < CARS; i++) {
@@ -373,6 +407,12 @@ export class TorrentSystem implements GameSystem {
         seam.position.z = SEAM_Z[s]
         car.add(seam)
       }
+      const trim = new Mesh(trimGeometry, lib.brass)
+      car.add(trim)
+      tinyParts.add(trim)
+      const roundels = new Mesh(roundelGeometry, lib.nacre)
+      car.add(roundels)
+      tinyParts.add(roundels)
       const rivets = new InstancedMesh(rivetGeometry, lib.brass, SEAM_Z.length * 14)
       const rivetPose = new Matrix4()
       let rivetIndex = 0
@@ -464,19 +504,17 @@ export class TorrentSystem implements GameSystem {
       car.add(dial)
       tinyParts.add(dial)
 
-      // Spray screen: framed glass dome slice, raked low over the deck,
-      // rooted by real mounts that land on the hull.
+      // Cowl hoop: the open brass ring raked low over the bow deck on its
+      // two side mounts — a racing wind hoop. (The glass dome slice and its
+      // centre mount strut are gone by ruling: the glass read as nothing
+      // underwater and the strut read as a bare rod stuck in the deck.)
       const screenAssembly = new Object3D()
       screenAssembly.position.set(0, 0.545, 0.58)
       screenAssembly.rotation.x = -0.72
-      const screen = new Mesh(screenGeometry, lib.glass)
       const screenFrame = new Mesh(screenFrameGeometry, lib.brass)
       screenFrame.rotation.x = Math.PI / 2
       screenFrame.position.y = 0.10
-      screenAssembly.add(screen, screenFrame)
-      screenAssembly.add(
-        memberBetween(new Vector3(0, 0.11, -0.31), new Vector3(0, 0.335, -0.02), 0.014, lib.brass),
-      )
+      screenAssembly.add(screenFrame)
       for (const side of [-1, 1]) {
         screenAssembly.add(
           memberBetween(
@@ -698,6 +736,61 @@ export class TorrentSystem implements GameSystem {
     ring.position.set(7.2, 14.4, -3.4)
     ring.rotation.x = Math.PI / 2
     wreck.add(mast, crossTree, ring)
+
+    // Slack rigging still ties the mast to the hull: sagging hemp catenaries
+    // from the cross-tree ends and masthead down to surviving rib tops. Each
+    // line is one tube over a three-point curve whose midpoint droops.
+    const riggingRuns: [Vector3, Vector3][] = [
+      [new Vector3(9.2, 10.9, -3.5), new Vector3(11.5, 1.8, 3.4)],
+      [new Vector3(9.2, 10.9, -3.5), new Vector3(12.8, 1.2, -4.6)],
+      [new Vector3(3.0, 13.4, -3.0), new Vector3(-6.5, 2.2, 4.8)],
+      [new Vector3(3.0, 13.4, -3.0), new Vector3(-9.8, 1.6, -4.2)],
+    ]
+    for (const [from, to] of riggingRuns) {
+      const mid = from.clone().add(to).multiplyScalar(0.5)
+      mid.y -= from.distanceTo(to) * 0.16 // slack sag
+      const line = new Mesh(
+        new TubeGeometry(new CatmullRomCurve3([from, mid, to]), 22, 0.045, 6),
+        lib.rope,
+      )
+      wreck.add(line)
+    }
+
+    // The ship's anchor, thrown clear in the sinking: shank half-buried,
+    // one fluke aloft, stock askew, a rotted hawser trailing to the bow.
+    const anchor = new Object3D()
+    const shank = new Mesh(new CylinderGeometry(0.16, 0.19, 4.6, 10), lib.iron)
+    anchor.add(shank)
+    const stock = new Mesh(new CylinderGeometry(0.12, 0.12, 2.6, 8), lib.woodDark)
+    stock.rotation.x = Math.PI / 2
+    stock.position.y = 1.9
+    anchor.add(stock)
+    const anchorRing = new Mesh(new TorusGeometry(0.34, 0.07, 8, 18), lib.iron)
+    anchorRing.position.y = 2.55
+    anchor.add(anchorRing)
+    const crown = new Mesh(new TorusGeometry(1.05, 0.15, 9, 20, Math.PI), lib.iron)
+    crown.position.y = -2.1
+    crown.rotation.z = Math.PI
+    anchor.add(crown)
+    for (const side of [-1, 1]) {
+      const fluke = new Mesh(new ConeGeometry(0.34, 0.9, 8), lib.iron)
+      fluke.position.set(side * 1.28, -1.35, 0)
+      fluke.rotation.z = side * -0.5
+      anchor.add(fluke)
+    }
+    anchor.position.set(14.5, -6.2, 6.5)
+    anchor.rotation.set(0.35, 0.6, 1.18) // toppled onto the crown, one arm up
+    wreck.add(anchor)
+    const hawserFrom = new Vector3(14.5, -3.9, 6.9)
+    const hawserTo = new Vector3(12.6, -3.2, 1.4)
+    const hawserMid = hawserFrom.clone().add(hawserTo).multiplyScalar(0.5)
+    hawserMid.y -= 1.5
+    const hawser = new Mesh(
+      new TubeGeometry(new CatmullRomCurve3([hawserFrom, hawserMid, hawserTo]), 18, 0.075, 6),
+      lib.rope,
+    )
+    wreck.add(hawser)
+
     wreck.position.copy(at)
     wreck.rotation.y = -0.25
     wreck.traverse((node) => {

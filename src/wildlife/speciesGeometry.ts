@@ -141,8 +141,12 @@ export function createRayGeometry(manta = false): BufferGeometry {
   const writer = new WildlifeMeshWriter()
   const halfWidth = manta ? 3.4 : 1.25
   const halfLength = manta ? 2.25 : 0.9
-  const xSegments = 12
-  const zSegments = 7
+  // The wing disc: denser grid, swept-back tips, and a camber that rolls
+  // slightly downward past three-quarter span so the resting pose already
+  // reads as a glide instead of a flat kite. morphWeight stays ±normalizedX
+  // (the wing-lift channel the material animates).
+  const xSegments = 16
+  const zSegments = 9
   const grid: number[][] = []
   for (let zIndex = 0; zIndex <= zSegments; zIndex++) {
     const v = zIndex / zSegments
@@ -151,10 +155,15 @@ export function createRayGeometry(manta = false): BufferGeometry {
     for (let xIndex = 0; xIndex <= xSegments; xIndex++) {
       const u = xIndex / xSegments
       const normalizedX = u * 2 - 1
+      const span = Math.abs(normalizedX)
       const taper = Math.pow(Math.max(0, 1 - Math.abs(z / halfLength) * 0.72), 0.72)
       const x = normalizedX * halfWidth * taper
-      const y = (1 - normalizedX * normalizedX) * 0.22 - Math.abs(z) * 0.035
-      row.push(writer.vertex(x, y, z, normalizedX))
+      // Sweep: the outer wing trails backward like a real myliobatid fin.
+      const sweep = -Math.pow(span, 1.7) * halfLength * 0.34
+      const camber = (1 - normalizedX * normalizedX) * 0.22
+      const droop = -Math.pow(Math.max(0, span - 0.72) / 0.28, 1.6) * 0.16
+      const y = camber + droop - Math.abs(z) * 0.035
+      row.push(writer.vertex(x, y, z * (1 - span * 0.18) + sweep, normalizedX))
     }
     grid.push(row)
   }
@@ -164,10 +173,66 @@ export function createRayGeometry(manta = false): BufferGeometry {
     }
   }
   writer.ellipsoid([0, 0.16, halfLength * 0.16], [halfWidth * 0.12, 0.22, halfLength * 0.7], 10, 5)
-  const tailRoot = writer.vertex(0, 0, -halfLength * 0.88)
-  const tailTip = writer.vertex(0, -0.04, -halfLength * (manta ? 2.6 : 2.25), 0.35)
-  const tailSide = writer.vertex(0.04, 0.02, -halfLength * 0.96)
-  writer.triangle(tailRoot, tailSide, tailTip)
+  // Eye bumps riding the head swell.
+  for (const side of [-1, 1]) {
+    writer.ellipsoid(
+      [side * halfWidth * 0.1, 0.3, halfLength * 0.42],
+      [halfWidth * 0.022, 0.045, halfLength * 0.05],
+      6,
+      4,
+    )
+  }
+  if (manta) {
+    // Cephalic lobes: the manta's unrolled feeding horns, real thickness.
+    for (const side of [-1, 1]) {
+      const lobe = new CylinderGeometry(0.09, 0.16, 0.85, 7)
+      lobe.rotateX(Math.PI / 2 - 0.34)
+      lobe.rotateY(side * 0.22)
+      lobe.translate(side * halfWidth * 0.115, -0.02, halfLength * 0.92)
+      writer.appendGeometry(lobe, () => 0)
+      lobe.dispose()
+    }
+  }
+  // Whip tail: a genuine tapering tube that carries the swim wave outward
+  // (the old tail was one flat triangle — cardboard from every side view).
+  const tailRings = 7
+  const tailStart = -halfLength * 0.86
+  const tailEnd = -halfLength * (manta ? 2.6 : 2.3)
+  const tailRows: number[][] = []
+  for (let ring = 0; ring <= tailRings; ring++) {
+    const t = ring / tailRings
+    const z = tailStart + (tailEnd - tailStart) * t
+    const radius = 0.055 * (1 - t) + 0.008
+    const row: number[] = []
+    for (let i = 0; i < 6; i++) {
+      const angle = (i / 6) * Math.PI * 2
+      row.push(
+        writer.vertex(
+          Math.cos(angle) * radius,
+          Math.sin(angle) * radius * 0.8 - t * 0.05,
+          z,
+          0.25 + t * 0.6,
+        ),
+      )
+    }
+    tailRows.push(row)
+  }
+  for (let ring = 0; ring < tailRings; ring++) {
+    for (let i = 0; i < 6; i++) {
+      const next = (i + 1) % 6
+      writer.quad(
+        tailRows[ring][i],
+        tailRows[ring][next],
+        tailRows[ring + 1][next],
+        tailRows[ring + 1][i],
+      )
+    }
+  }
+  const tailTip = writer.vertex(0, -0.05 - 0.05, tailEnd - 0.05, 0.9)
+  for (let i = 0; i < 6; i++) {
+    const next = (i + 1) % 6
+    writer.triangle(tailTip, tailRows[tailRings][i], tailRows[tailRings][next])
+  }
   return writer.compile()
 }
 
@@ -235,47 +300,110 @@ export function createTurtleGeometry(): BufferGeometry {
 
 export function createJellyGeometry(): BufferGeometry {
   const writer = new WildlifeMeshWriter()
-  const profiles = [
-    { y: 0.52, radius: 0.04 },
-    { y: 0.45, radius: 0.28 },
-    { y: 0.26, radius: 0.45 },
-    { y: 0.04, radius: 0.5 },
-    { y: -0.05, radius: 0.37 },
+  // Bell: outer dome sweeping over the rim INTO an inner subumbrella
+  // surface, so the medusa has real rim thickness and a visible underside
+  // vault instead of an open-backed shell. A gentle 8-lobe scallop rides
+  // the rim rows (moon jellies flare in lobes, not a clean circle).
+  const segments = 16
+  const outer = [
+    { y: 0.54, radius: 0.03 },
+    { y: 0.5, radius: 0.2 },
+    { y: 0.4, radius: 0.36 },
+    { y: 0.24, radius: 0.46 },
+    { y: 0.06, radius: 0.5 },
+    { y: -0.06, radius: 0.46 },
+  ]
+  const inner = [
+    { y: -0.03, radius: 0.4 },
+    { y: 0.08, radius: 0.28 },
+    { y: 0.13, radius: 0.12 },
   ]
   const rows: number[][] = []
-  const segments = 12
-  for (const profile of profiles) {
+  const ringAt = (profile: { y: number; radius: number }, scallop: number) => {
     const row: number[] = []
     for (let i = 0; i < segments; i++) {
       const angle = (i / segments) * Math.PI * 2
+      const lobe = 1 + scallop * Math.cos(angle * 8)
       row.push(
         writer.vertex(
-          Math.cos(angle) * profile.radius,
-          profile.y,
-          Math.sin(angle) * profile.radius,
+          Math.cos(angle) * profile.radius * lobe,
+          profile.y + scallop * 0.5 * Math.sin(angle * 8) * profile.radius,
+          Math.sin(angle) * profile.radius * lobe,
           0.45 + profile.radius,
         ),
       )
     }
-    rows.push(row)
+    return row
   }
+  for (let p = 0; p < outer.length; p++) {
+    rows.push(ringAt(outer[p], p >= 4 ? 0.045 : 0))
+  }
+  for (const profile of inner) rows.push(ringAt(profile, 0.045))
   for (let r = 0; r < rows.length - 1; r++) {
     for (let i = 0; i < segments; i++) {
       const next = (i + 1) % segments
       writer.quad(rows[r][i], rows[r][next], rows[r + 1][next], rows[r + 1][i])
     }
   }
-  for (let strand = 0; strand < 6; strand++) {
-    const angle = (strand / 6) * Math.PI * 2
-    const x = Math.cos(angle) * 0.25
-    const z = Math.sin(angle) * 0.25
-    const sideX = -Math.sin(angle) * 0.018
-    const sideZ = Math.cos(angle) * 0.018
-    const topA = writer.vertex(x - sideX, -0.02, z - sideZ, 0.4)
-    const topB = writer.vertex(x + sideX, -0.02, z + sideZ, 0.4)
-    const bottomB = writer.vertex(x + sideX * 0.35, -1.12, z + sideZ * 0.35, 1)
-    const bottomA = writer.vertex(x - sideX * 0.35, -1.12, z - sideZ * 0.35, 1)
-    writer.quad(topA, topB, bottomB, bottomA)
+  // Trailing tentacle fringe: twelve fine strands hanging off the rim
+  // underside, kinked mid-way so the billow lag reads as drift, plus four
+  // ruffled oral arms falling from the manubrium at the bell's core.
+  for (let strand = 0; strand < 12; strand++) {
+    const angle = ((strand + 0.5) / 12) * Math.PI * 2
+    const x = Math.cos(angle) * 0.41
+    const z = Math.sin(angle) * 0.41
+    const sideX = -Math.sin(angle) * 0.012
+    const sideZ = Math.cos(angle) * 0.012
+    const kinkX = Math.cos(angle + 0.35) * 0.05
+    const kinkZ = Math.sin(angle + 0.35) * 0.05
+    const top = [
+      writer.vertex(x - sideX, -0.04, z - sideZ, 0.35),
+      writer.vertex(x + sideX, -0.04, z + sideZ, 0.35),
+    ]
+    const mid = [
+      writer.vertex(x - sideX * 0.7 + kinkX, -0.62, z - sideZ * 0.7 + kinkZ, 0.7),
+      writer.vertex(x + sideX * 0.7 + kinkX, -0.62, z + sideZ * 0.7 + kinkZ, 0.7),
+    ]
+    const bottom = [
+      writer.vertex(x - sideX * 0.3 - kinkX * 0.6, -1.18, z - sideZ * 0.3 - kinkZ * 0.6, 1),
+      writer.vertex(x + sideX * 0.3 - kinkX * 0.6, -1.18, z + sideZ * 0.3 - kinkZ * 0.6, 1),
+    ]
+    writer.quad(top[0], top[1], mid[1], mid[0])
+    writer.quad(mid[0], mid[1], bottom[1], bottom[0])
+  }
+  for (let arm = 0; arm < 4; arm++) {
+    const angle = (arm / 4) * Math.PI * 2 + Math.PI / 4
+    const dirX = Math.cos(angle)
+    const dirZ = Math.sin(angle)
+    const sideX = -dirZ
+    const sideZ = dirX
+    // Each arm: a ribbon of 4 rows whose edges ruffle outward as it falls.
+    const armRows: number[][] = []
+    const drops = [0.1, -0.28, -0.62, -0.92]
+    const reach = [0.05, 0.13, 0.17, 0.1]
+    const ruffle = [0.03, 0.075, 0.1, 0.06]
+    for (let row = 0; row < 4; row++) {
+      const cx = dirX * reach[row]
+      const cz = dirZ * reach[row]
+      const wobble = row % 2 === 0 ? 1 : -1
+      armRows.push([
+        writer.vertex(
+          cx - sideX * ruffle[row] + dirX * 0.02 * wobble,
+          drops[row],
+          cz - sideZ * ruffle[row] + dirZ * 0.02 * wobble,
+          0.35 + row * 0.2,
+        ),
+        writer.vertex(
+          cx + sideX * ruffle[row] - dirX * 0.02 * wobble,
+          drops[row] + 0.03,
+          cz + sideZ * ruffle[row] - dirZ * 0.02 * wobble,
+          0.35 + row * 0.2,
+        ),
+      ])
+    }
+    for (let row = 0; row < 3; row++) {
+      writer.quad(armRows[row][0], armRows[row][1], armRows[row + 1][1], armRows[row + 1][0])
+    }
   }
   return writer.compile()
 }
@@ -312,7 +440,11 @@ export function createSeahorseGeometry(): BufferGeometry {
   for (let j = 0; j <= TUBULAR; j++) {
     const t = j / TUBULAR
     path.getPointAt(t, spinePoint)
-    const radius = radiusAt(t)
+    // Bony ring segmentation: a seahorse is plated, not smooth — ~13 ridge
+    // rings ripple the radius profile, fading out where the tail thins to a
+    // needle so the curl stays clean.
+    const plate = 1 + 0.055 * Math.sin(t * Math.PI * 26) * Math.min(1, radiusAt(t) / 0.06)
+    const radius = radiusAt(t) * plate
     for (let i = 0; i < ringVertices; i++) {
       const index = j * ringVertices + i
       vertex.fromBufferAttribute(position, index).sub(spinePoint).multiplyScalar(radius).add(spinePoint)
@@ -381,31 +513,60 @@ export function createSunButterflyGeometry(): BufferGeometry {
 
 export function createWhaleGeometry(): BufferGeometry {
   const writer = new WildlifeMeshWriter()
+  // Body: two extra rings smooth the melon→shoulder swell and the caudal
+  // taper; the ventral rings drop slightly (throat pouch) so the silhouette
+  // reads humpback rather than torpedo.
   writer.ringBody(
     [
       { z: 6.8, rx: 0.18, ry: 0.2, morph: 0 },
-      { z: 5.6, rx: 1.25, ry: 1.12, morph: 0 },
-      { z: 2.8, rx: 1.75, ry: 1.45, morph: 0.06 },
+      { z: 5.9, rx: 0.95, ry: 0.85, morph: 0 },
+      { z: 4.6, rx: 1.5, ry: 1.32, morph: 0.02 },
+      { z: 2.8, rx: 1.75, ry: 1.48, morph: 0.06 },
+      { z: 0.8, rx: 1.72, ry: 1.4, morph: 0.14 },
       { z: -0.8, rx: 1.62, ry: 1.28, morph: 0.24 },
+      { z: -2.8, rx: 1.18, ry: 0.98, morph: 0.46 },
       { z: -4.5, rx: 0.72, ry: 0.62, morph: 0.72 },
       { z: -6.25, rx: 0.24, ry: 0.25, morph: 1 },
     ],
     18,
   )
+  // Throat pouch: a soft ventral swell under the jaw (the pleated chin).
+  writer.ellipsoid([0, -0.95, 3.9], [1.15, 0.75, 2.2], 12, 6, () => 0.03)
+  // Long humpback pectorals: real thickness, swept back and down, with a
+  // knobbed leading edge — one third of the body, the humpback signature.
+  // The flap channel rises toward the tip so the swim wave rolls them.
   for (const side of [-1, 1]) {
-    const rootFront = writer.vertex(side * 1.25, -0.22, 1.8, side * 0.2)
-    const tip = writer.vertex(side * 4.3, -0.65, -0.2, side * 0.55)
-    const rootBack = writer.vertex(side * 1.1, -0.45, -1.55, side * 0.45)
-    if (side < 0) writer.triangle(rootFront, rootBack, tip)
-    else writer.triangle(rootFront, tip, rootBack)
+    const fin = new SphereGeometry(1, 12, 7)
+    fin.scale(2.35, 0.14, 0.6)
+    fin.rotateY(side * 0.55)
+    fin.rotateZ(side * -0.22)
+    fin.translate(side * 3.0, -0.85, 0.9)
+    writer.appendGeometry(fin, (p) => side * Math.min(0.6, Math.max(0, (Math.abs(p.x) - 1.4) / 5)))
+    fin.dispose()
+    const knuckles = new SphereGeometry(1, 8, 5)
+    knuckles.scale(0.9, 0.11, 0.24)
+    knuckles.rotateY(side * 0.55)
+    knuckles.rotateZ(side * -0.22)
+    knuckles.translate(side * 4.35, -1.12, 1.32)
+    writer.appendGeometry(knuckles, (p) => side * Math.min(0.6, Math.max(0, (Math.abs(p.x) - 1.4) / 5)))
+    knuckles.dispose()
   }
-  const peduncle = writer.vertex(0, 0, -6.15, 1)
-  const notch = writer.vertex(0, 0, -6.8, 1)
+  // Stubby dorsal fin on its hump.
+  const dorsal = new SphereGeometry(1, 9, 6)
+  dorsal.scale(0.14, 0.5, 0.85)
+  dorsal.rotateX(-0.35)
+  dorsal.translate(0, 1.12, -2.6)
+  writer.appendGeometry(dorsal, () => 0.4)
+  dorsal.dispose()
+  // Flukes: two broad thick lobes sweeping back from the peduncle; their
+  // overlap at the root forms the trailing notch. Full tail-beat weight.
   for (const side of [-1, 1]) {
-    const tip = writer.vertex(side * 3.2, 0.1, -7.35, 1)
-    const back = writer.vertex(side * 0.65, -0.02, -7.2, 1)
-    if (side < 0) writer.quad(peduncle, notch, tip, back)
-    else writer.quad(peduncle, back, tip, notch)
+    const fluke = new SphereGeometry(1, 12, 6)
+    fluke.scale(1.95, 0.11, 0.78)
+    fluke.rotateY(side * 0.4)
+    fluke.translate(side * 1.7, 0.06, -6.95)
+    writer.appendGeometry(fluke, () => 1)
+    fluke.dispose()
   }
   return writer.compile()
 }

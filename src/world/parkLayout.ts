@@ -75,7 +75,7 @@ export const FACILITY_ENTRANCE_SIGNS: readonly FacilityEntranceSign[] = [
     approachX: PARK_PLAN.arrival.x, approachZ: PARK_PLAN.arrival.z,
   },
   {
-    id: 'tidal-court', title: 'TIDAL COURT',
+    id: 'tidal-court', title: 'TIDAL COURT', subtitle: 'FOUNTAIN LAGOON',
     x: PARK_PLAN.tidalCourt.x - 9.2, z: PARK_PLAN.tidalCourt.z + 42,
     approachX: PARK_PLAN.esplanade.x, approachZ: PARK_PLAN.esplanade.zTo,
   },
@@ -97,7 +97,7 @@ export const FACILITY_ENTRANCE_SIGNS: readonly FacilityEntranceSign[] = [
     approachX: PARK_PLAN.atrium.x, approachZ: PARK_PLAN.atrium.z,
   },
   {
-    id: 'leviathan-overlook', title: 'LEVIATHAN OVERLOOK',
+    id: 'leviathan-overlook', title: 'LEVIATHAN OVERLOOK', subtitle: 'DROP-OFF TERRACE',
     x: -148, z: -228.5, approachX: -160, approachZ: -210,
   },
   {
@@ -124,12 +124,12 @@ export const FACILITY_ENTRANCE_SIGNS: readonly FacilityEntranceSign[] = [
     approachX: PARK_PLAN.menagerie.x, approachZ: PARK_PLAN.menagerie.z,
   },
   {
-    id: 'jelly-court', title: 'MOON-JELLY COURT',
+    id: 'jelly-court', title: 'MOON-JELLY COURT', subtitle: 'DRIFTING CLOISTER',
     x: PARK_PLAN.menagerie.jellyCourt.x + 14.8, z: PARK_PLAN.menagerie.jellyCourt.z + 2,
     approachX: PARK_PLAN.menagerie.x, approachZ: PARK_PLAN.menagerie.z,
   },
   {
-    id: 'turtle-lagoon', title: 'TURTLE LAGOON',
+    id: 'turtle-lagoon', title: 'TURTLE LAGOON', subtitle: 'MENAGERIE SHALLOWS',
     x: PARK_PLAN.menagerie.turtleLagoon.x + 13.8, z: PARK_PLAN.menagerie.turtleLagoon.z + 6.2,
     approachX: PARK_PLAN.menagerie.x, approachZ: PARK_PLAN.menagerie.z,
   },

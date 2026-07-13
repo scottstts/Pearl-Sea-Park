@@ -18,3 +18,23 @@
   the massif reef-stone sand tint were removed with the Grotto.
 - The Great Wheel basin gets a dense local physics heightfield patch — see
   physics/physicsWorld.ts and rides-wheel-carousel.md.
+
+## 2026-07-13 craft pass
+
+- The reef is now six instanced archetypes: brain coral (second wrinkle
+  octave), forked staghorn, rock, tube-sponge clusters (closed clockwise
+  lathes — hollow mouths visible without DoubleSide), barrel sponges, and
+  table corals (trunk + wavy thick plate). All share one material recipe:
+  identity color × a broad worldspace colony-patch field, plus a
+  `positionLocal.y` tip gradient for species with growth direction. Extend
+  the reef by adding to the archetype table, not with one-off meshes.
+- Kelp/seagrass color: per-stalk tone from the baked root hash plus a warm
+  translucent tip term on the sway weight. The blade geometry budget is
+  unchanged (seagrass stays single-triangle at 120k — do not "upgrade" it
+  to quads without a measured budget).
+- New "sea treasures" dressing (buildSeaTreasures): ~8 giant clams (merged
+  fluted two-valve shells hinged open, DoubleSide by design; iridescent
+  mantle whose electric spots pulse on `timeUniform`; nacre pearl) and ~18
+  amphorae (closed lathe + handles; slip bands in `positionLocal` so they
+  survive toppled instances; barnacle crust from a world fbm). Both respect
+  `inParkFootprint` margins and the rim exclusion like every scatter family.

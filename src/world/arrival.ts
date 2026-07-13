@@ -529,9 +529,29 @@ export class ArrivalSystem implements GameSystem {
       ],
       14,
     )
+    const bollardWrap = new TorusGeometry(0.115, 0.032, 6, 18)
     for (const angle of [2.7, 3.6]) {
       const p = radial(5.9, angle, DECK_TOP_Y)
       w.place(lib.brass, bollard, p.x, p.y, p.z)
+      // Mooring line still hitched around each bollard waist.
+      for (const wrapY of [0.16, 0.225]) {
+        const wm = new Matrix4().makeRotationX(Math.PI / 2)
+        wm.setPosition(p.x, p.y + wrapY, p.z)
+        w.emit(lib.rope, bollardWrap, wm)
+      }
+    }
+    // A coiled line laid flat on the planks between the bollards — deck
+    // dressing that says a crew was just here.
+    const coilAt = radial(5.35, 3.15, DECK_TOP_Y)
+    for (const [coilRadius, coilY] of [
+      [0.3, 0.035],
+      [0.21, 0.09],
+      [0.13, 0.14],
+    ] as const) {
+      const coil = new TorusGeometry(coilRadius, 0.038, 6, 24)
+      const cm = new Matrix4().makeRotationX(Math.PI / 2)
+      cm.setPosition(coilAt.x, coilAt.y + coilY, coilAt.z)
+      w.emit(lib.rope, coil, cm)
     }
     // Ladder down to the water on the south face.
     const ladderTangent = new Vector3(Math.cos(0), 0, -Math.sin(0))

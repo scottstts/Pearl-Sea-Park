@@ -104,11 +104,24 @@ export function detailMidway(ctx: FacilityDetailContext, floorY: number): void {
   }
 
   // A row of proper game counters gives the hall an inhabited frontage. The
-  // silhouettes are low-poly, but bevel bands, canopy valances, and finials
-  // keep them from reading as boxes.
+  // silhouettes are low-poly, but bevel bands, scalloped parasol canopies,
+  // and finials keep them from reading as boxes.
   const counter = new BoxGeometry(4.6, 0.9, 1.15)
   const counterTop = new BoxGeometry(4.9, 0.12, 1.42)
-  const canopy = new ConeGeometry(2.75, 0.82, 8, 1, true)
+  const canopy = new ConeGeometry(2.75, 0.82, 40, 2, true)
+  {
+    // Scalloped hem: the fairground parasol edge, cut into the cone rim.
+    const position = canopy.getAttribute('position')
+    const vertex = new Vector3()
+    for (let i = 0; i < position.count; i++) {
+      vertex.fromBufferAttribute(position, i)
+      const hem = Math.max(0, Math.min(1, (0.41 - vertex.y) / 0.82))
+      const angle = Math.atan2(vertex.x, vertex.z)
+      position.setY(i, vertex.y + 0.11 * (0.5 + 0.5 * Math.cos(angle * 10)) * hem * hem)
+    }
+    position.needsUpdate = true
+    canopy.computeVertexNormals()
+  }
   const finial = new SphereGeometry(0.12, 10, 7)
   const canopyPost = new CylinderGeometry(0.045, 0.055, 1.72, 8)
   for (let i = 0; i < 5; i++) {

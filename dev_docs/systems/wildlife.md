@@ -75,3 +75,24 @@
   butterflies (instanceOrigin/instancePhase pattern, zero per-frame CPU).
 - The menagerie junction is a roundabout plaza; garden spokes start at its
   rim. Grotto jellies are gone with the Grotto.
+
+## 2026-07-13 craft pass (jelly / ray / whale geometry)
+
+- Jelly: the bell sweeps over the rim into an inner subumbrella surface
+  (real rim thickness and an underside vault), an 8-lobe scallop rides the
+  rim rows, and the fringe is twelve kinked strand ribbons plus four
+  ruffled oral arms off the manubrium. Morph channels are unchanged, so the
+  established pulse/dart/billow animation drives the richer mesh as-is
+  (~250 verts × 400 instances — fine for a court-local population).
+- Ray: denser swept-wing grid (tips trail back and droop past ¾ span), a
+  genuine tapering 6-ring tube tail carrying the swim wave (morph
+  0.25→0.9 — the old tail was one flat triangle), eye bumps, and thick
+  cephalic lobes on the manta. Wing material is countershaded with an
+  eagle-ray spot constellation over the back only — `positionGeometry`
+  fields, so patterns are body-locked, never world-crawling.
+- Whale: nine body rings, ventral throat pouch, LONG thick knobbed
+  pectorals (appendGeometry-transformed spheres with tipward flap weights —
+  the humpback signature), stubby dorsal, and two broad thick fluke lobes
+  whose root overlap forms the trailing notch. Hide: pleat lines and
+  barnacle crust (chin + fin leading edges) share one field stack; the
+  roughness channel follows both.

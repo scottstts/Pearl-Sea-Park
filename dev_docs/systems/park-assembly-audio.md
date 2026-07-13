@@ -157,3 +157,19 @@
   telescopes as tube trains on one sight line.
 - Audio: all grotto buses (cave convolver, shell organ, drips) are removed;
   the fountain/waltz/whale voices are unchanged.
+
+## 2026-07-13 craft pass additions
+
+- Esplanade banners (design §3 "banners swaying"): swallow-tail silk
+  pennants on brass rods off every other colonnade column, ONE merged mesh
+  + one silk material. The merge bakes world coordinates, so the vertex
+  sway weights by (1 − uv.y) and phases by positionLocal.z; the emblem/
+  borders live in uv space. castShadow = false BY DESIGN — cached static
+  clipmaps would freeze a mid-flap shadow pose.
+- Midway festoons: catenary bulb-string wires between the hall column
+  heads merge into the existing iron slot; all 72 globes are one
+  InstancedMesh of lampGlobe. This is the pattern for future bulb strings.
+- All ArchKit call sites inherit the 2026-07-13 module upgrades (fluted
+  columns, moulded arches with keystones, dome latitude rings + tip pearl,
+  glazing-barred roofs, plaza medallions, instrument-grade ticket machine)
+  with no per-district changes.

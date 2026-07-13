@@ -181,10 +181,15 @@ export class TeleportSystem implements GameSystem {
         event.preventDefault()
         this.confirm()
         break
+      case 'KeyQ':
+        // Q is the menu's own "back" (Esc belongs to the pause card).
+        event.preventDefault()
+        this.cancel()
+        break
       case 'Escape':
-        // Esc also releases the pointer, which raises the pause card — that is
-        // the game's universal "out". Restore input first so the pause captures
-        // a live control state, then let the browser proceed.
+        // Esc still closes the menu silently before it cascades: the browser
+        // releases the pointer and the pause card rises, and it must capture a
+        // live control state — never one this menu froze.
         this.cancel()
         break
     }
@@ -235,7 +240,7 @@ export class TeleportSystem implements GameSystem {
         <h2 class="teleport-heading">Where to?</h2>
         <ul class="teleport-list"></ul>
         <div class="teleport-hint">
-          <span><b>↑ ↓</b> choose</span><span><b>Enter</b> travel</span><span><b>Esc</b> back</span>
+          <span><b>↑ ↓</b> choose</span><span><b>Enter</b> travel</span><span><b>Q</b> back</span>
         </div>
       </div>
     `

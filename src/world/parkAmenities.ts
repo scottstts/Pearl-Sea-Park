@@ -188,6 +188,31 @@ export function createBenchPrototype(): BenchPrototype {
     iron.push(cylinderBetween(new Vector3(x, 0.72, -0.2), new Vector3(x, 0.72, 0.23), 0.035, 8))
     iron.push(spherePart(0.07, new Vector3(x, 0.72, -0.2), 9, 6))
     brass.push(spherePart(0.075, new Vector3(x, 1.14, 0.292), 10, 7))
+    // Armrest: a post rising off the seat rail into a volute curl. The curl
+    // is a YZ-plane torus arc whose θ=0 point is EXACTLY the post top
+    // (rotateY(π/2) maps θ=0 to centre+(0,0,−r)), so nothing floats; the
+    // scroll's free end gets a brass tip bead computed on the same circle.
+    const curlCenter = new Vector3(x, 0.68, -0.02)
+    const curlRadius = 0.08
+    const postTop = new Vector3(x, curlCenter.y, curlCenter.z - curlRadius)
+    iron.push(cylinderBetween(new Vector3(x, 0.45, -0.2), postTop, 0.021, 8))
+    const armrest = new TorusGeometry(curlRadius, 0.019, 6, 18, Math.PI * 1.3)
+    armrest.rotateY(Math.PI / 2)
+    armrest.translate(curlCenter.x, curlCenter.y, curlCenter.z)
+    iron.push(armrest)
+    const endTheta = Math.PI * 1.3
+    brass.push(
+      spherePart(
+        0.028,
+        new Vector3(
+          x,
+          curlCenter.y + Math.sin(endTheta) * curlRadius,
+          curlCenter.z - Math.cos(endTheta) * curlRadius,
+        ),
+        8,
+        6,
+      ),
+    )
   }
   iron.push(cylinderBetween(new Vector3(-0.84, 0.18, 0.2), new Vector3(0.84, 0.18, 0.2), 0.035, 8))
   iron.push(cylinderBetween(new Vector3(-0.84, 0.42, -0.22), new Vector3(0.84, 0.42, -0.22), 0.032, 8))
@@ -203,21 +228,36 @@ export function createLampPrototype(): LampPrototype {
 
   iron.push(cylinderBetween(new Vector3(0, 0.34, 0), new Vector3(0, 3.23, 0), 0.065, 10))
   const junction = new Vector3(0, 3.23, 0)
+  brass.push(spherePart(0.085, new Vector3(0, 3.28, 0), 10, 8))
   for (const side of [-1, 1]) {
     const elbow = new Vector3(side * 0.27, 3.39, 0)
     const globeAnchor = new Vector3(side * (LAMP_GLOBE_X - LAMP_GLOBE_RADIUS * 0.72), 3.42, 0)
     iron.push(cylinderBetween(junction, elbow, 0.035, 8))
     iron.push(cylinderBetween(elbow, globeAnchor, 0.035, 8))
     iron.push(spherePart(0.055, elbow, 9, 6))
+    // Scroll bracket under each arm: a point-to-point stay from the pole
+    // shoulder to the elbow with a knuckle at both ends — the arm now
+    // visibly carries its lantern instead of cantilevering off thin air.
+    const shoulder = new Vector3(0, 3.05, 0)
+    iron.push(cylinderBetween(shoulder, elbow, 0.022, 6))
+    iron.push(spherePart(0.034, shoulder, 8, 6))
     globe.push(spherePart(LAMP_GLOBE_RADIUS, new Vector3(side * LAMP_GLOBE_X, LAMP_GLOBE_Y, 0), 14, 10))
-    brass.push(cylinderBetween(
-      new Vector3(side * LAMP_GLOBE_X, 3.18, 0),
-      new Vector3(side * LAMP_GLOBE_X, 3.25, 0),
-      0.075,
-      10,
-    ))
-    brass.push(coneCapPart(new Vector3(side * LAMP_GLOBE_X, 3.65, 0)))
-    brass.push(spherePart(0.045, new Vector3(side * LAMP_GLOBE_X, 3.79, 0), 9, 6))
+    // Lantern furniture, all seated ON the globe sphere (the old cone cap
+    // and bead hovered above its pole): a calyx cup cradles the glass from
+    // below with its rim rising to the equator, and the crown cap's base
+    // radius is chosen so it sinks onto the sphere at a real contact
+    // latitude, carrying a tip bead that overlaps the cap point.
+    const globeCenter = new Vector3(side * LAMP_GLOBE_X, LAMP_GLOBE_Y, 0)
+    brass.push(lanternCupPart(globeCenter, LAMP_GLOBE_RADIUS))
+    brass.push(lanternCapPart(globeCenter, LAMP_GLOBE_RADIUS))
+    brass.push(
+      spherePart(
+        0.034,
+        new Vector3(globeCenter.x, capBaseY(globeCenter, LAMP_GLOBE_RADIUS) + 0.15, 0),
+        9,
+        6,
+      ),
+    )
   }
 
   const collar = new TorusGeometry(0.095, 0.025, 7, 16)
@@ -323,12 +363,43 @@ function spherePart(radius: number, center: Vector3, widthSegments: number, heig
   return geometry
 }
 
-function coneCapPart(center: Vector3): BufferGeometry {
-  const profile = new LatheGeometry([
-    new Vector2(0.2, 0), new Vector2(0.2, 0.035), new Vector2(0.04, 0.17), new Vector2(0, 0.18),
-  ], 12)
-  profile.translate(center.x, center.y, center.z)
-  return profile
+/** Cap contact height: where a cap of base radius 0.66·R meets the sphere. */
+function capBaseY(globeCenter: Vector3, globeRadius: number): number {
+  const baseRadius = globeRadius * 0.66
+  return globeCenter.y + Math.sqrt(globeRadius * globeRadius - baseRadius * baseRadius) - 0.006
+}
+
+/** Calyx cup cradling a lamp globe from below; rim rises to the equator. */
+function lanternCupPart(globeCenter: Vector3, globeRadius: number): BufferGeometry {
+  const cup = new LatheGeometry(
+    [
+      new Vector2(0.03, 0),
+      new Vector2(globeRadius * 0.6, 0.02),
+      new Vector2(globeRadius * 0.86, 0.07),
+      new Vector2(globeRadius * 0.98, 0.13),
+      new Vector2(globeRadius * 1.0, globeRadius * 0.92),
+    ],
+    14,
+  )
+  cup.translate(globeCenter.x, globeCenter.y - globeRadius * 0.92, globeCenter.z)
+  return cup
+}
+
+/** Crown cap seated on the globe at a real contact latitude. */
+function lanternCapPart(globeCenter: Vector3, globeRadius: number): BufferGeometry {
+  const baseRadius = globeRadius * 0.66
+  const cap = new LatheGeometry(
+    [
+      new Vector2(baseRadius, 0),
+      new Vector2(baseRadius * 1.06, 0.018),
+      new Vector2(baseRadius * 0.42, 0.1),
+      new Vector2(baseRadius * 0.46, 0.125),
+      new Vector2(0, 0.15),
+    ],
+    12,
+  )
+  cap.translate(globeCenter.x, capBaseY(globeCenter, globeRadius), globeCenter.z)
+  return cap
 }
 
 function cylinderBetween(a: Vector3, b: Vector3, radius: number, segments: number): BufferGeometry {

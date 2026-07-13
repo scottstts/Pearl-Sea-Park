@@ -21,7 +21,17 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import type { Node } from 'three/webgpu'
 import { DoubleSide } from 'three'
-import { attribute, float, mix, positionLocal, sin, uniform, vec3 } from 'three/tsl'
+import {
+  attribute,
+  float,
+  mix,
+  positionLocal,
+  positionWorld,
+  sin,
+  smoothstep,
+  uniform,
+  vec3,
+} from 'three/tsl'
 import { registerBookmark } from '../core/debug'
 import { fbm2 as fbmCpu } from '../core/noise2'
 import type { Rng } from '../core/prng'
@@ -55,6 +65,7 @@ export class FloraSystem implements GameSystem {
     this.buildSeagrass(rng.fork('seagrass'), ctx.quality.params.seagrassDensity)
     this.buildReef(rng.fork('reef'))
     this.buildShellsAndStones(rng.fork('shells-and-stones'))
+    this.buildSeaTreasures(rng.fork('sea-treasures'))
     this.group.traverse((node) => {
       if ((node as Mesh).isMesh) {
         node.receiveShadow = true
@@ -164,7 +175,13 @@ export class FloraSystem implements GameSystem {
     material.positionNode = positionLocal
       .add(flow.mul(weight).mul(vec3(2.2, 0.35, 2.2)))
       .add(vec3(flutter.mul(weight).mul(0.35), 0, flutter.mul(weight).mul(-0.22)))
-    material.colorNode = mix(vec3(0.1, 0.16, 0.08), vec3(0.23, 0.32, 0.12), weight)
+    // Per-stalk tonal identity from the baked root, olive deepening to a
+    // translucent amber blade tip — the frond gradient real kelp carries.
+    const stalkTone = fbm2(root.mul(0.04)).mul(0.45).add(0.75)
+    material.colorNode = mix(vec3(0.075, 0.14, 0.06), vec3(0.24, 0.33, 0.11), weight)
+      .mul(stalkTone)
+      .add(weight.pow(3).mul(vec3(0.11, 0.075, 0.0)))
+    material.roughnessNode = float(0.72).sub(weight.mul(0.18))
     this.medium.applyCaustics(material, 1.1)
 
     const mesh = new Mesh(geometry, material)
@@ -229,9 +246,11 @@ export class FloraSystem implements GameSystem {
     material.positionNode = positionLocal
       .add(flow.mul(weight).mul(vec3(0.45, 0.05, 0.45)))
       .add(vec3(flutter.mul(weight), 0, flutter.mul(weight).mul(0.7)))
-    material.colorNode = mix(vec3(0.1, 0.2, 0.12), vec3(0.3, 0.5, 0.28), weight).mul(
-      fbm2(root.mul(0.05)).mul(0.5).add(0.75),
-    )
+    // Meadow-scale patch tone plus a warm sun-kissed tip so raking caustic
+    // light picks individual blades out of the mass.
+    material.colorNode = mix(vec3(0.09, 0.19, 0.11), vec3(0.3, 0.52, 0.27), weight)
+      .mul(fbm2(root.mul(0.05)).mul(0.5).add(0.75))
+      .add(weight.mul(weight).mul(vec3(0.07, 0.055, 0.0)))
     this.medium.applyCaustics(material, 1.2)
 
     for (const list of chunkLists) {
@@ -249,38 +268,81 @@ export class FloraSystem implements GameSystem {
   }
 
   // ── Corals & rocks: static instanced archetypes ────────────────────────
+  // Six families now: brain and staghorn corals, reef rock, tube-sponge
+  // clusters, barrel sponges, and table corals. Every archetype's material
+  // shares one recipe — a base identity color modulated by a worldspace
+  // colony-patch field — so the reef reads as one ecosystem, and species
+  // with growth direction (staghorn tips, sponge rims) grade their color
+  // along the geometry's own local axis.
   private buildReef(rng: Rng): void {
-    const brain = new SphereGeometry(1, 24, 16)
+    const brain = new SphereGeometry(1, 26, 18)
     displace(brain, 0.16, 3.1, rng.fork('brain-noise'))
+    // Second octave: the meander-wrinkle that makes a brain coral a brain.
+    displace(brain, 0.05, 10.0, rng.fork('brain-wrinkle'))
     brain.scale(1, 0.72, 1)
 
     const staghornPieces: BufferGeometry[] = []
     const stagRng = rng.fork('staghorn-shape')
     for (let i = 0; i < 8; i++) {
-      const branch = new CylinderGeometry(0.045, 0.11, 1.15, 7)
       const tilt = stagRng.range(0.3, 0.95)
       const yaw = stagRng.range(0, Math.PI * 2)
+      const branch = new CylinderGeometry(0.045, 0.11, 1.15, 7)
       branch.translate(0, 0.55, 0)
       branch.rotateZ(tilt)
       branch.rotateY(yaw)
       staghornPieces.push(branch)
+      // A forked twig off most branches — antler character over bare spikes.
+      if (i % 3 !== 2) {
+        const twig = new CylinderGeometry(0.028, 0.055, 0.62, 6)
+        twig.translate(0, 0.31, 0)
+        twig.rotateZ(tilt + stagRng.range(0.35, 0.7))
+        twig.rotateY(yaw + stagRng.range(-0.4, 0.4))
+        twig.translate(
+          Math.sin(yaw) * 0.28 * Math.sin(tilt),
+          0.62,
+          Math.cos(yaw) * 0.28 * Math.sin(tilt),
+        )
+        staghornPieces.push(twig)
+      }
     }
     const staghorn = mergeGeometries(staghornPieces)!
 
     const rock = new IcosahedronGeometry(1, 2)
     displace(rock, 0.24, 1.7, rng.fork('rock-noise'))
 
+    const tubeSponge = createTubeSpongeGeometry(rng.fork('tube-sponge'))
+    const barrelSponge = createBarrelSpongeGeometry(rng.fork('barrel-sponge'))
+    const tableCoral = createTableCoralGeometry(rng.fork('table-coral'))
+
     const archetypes: {
       geometry: BufferGeometry
       color: number
+      tip?: number
+      tipStart?: number
+      tipEnd?: number
       roughness: number
       count: number
       scale: [number, number]
       band: [number, number]
     }[] = [
       { geometry: brain, color: 0xa8756c, roughness: 0.85, count: 130, scale: [0.35, 1.1], band: [190, 430] },
-      { geometry: staghorn, color: 0xe08a70, roughness: 0.7, count: 150, scale: [0.7, 1.6], band: [190, 440] },
+      {
+        geometry: staghorn, color: 0xd97e63, tip: 0xf7d9b4, tipStart: 0.55, tipEnd: 1.5,
+        roughness: 0.7, count: 150, scale: [0.7, 1.6], band: [190, 440],
+      },
       { geometry: rock, color: 0x69705f, roughness: 0.95, count: 220, scale: [0.5, 2.6], band: [60, 560] },
+      {
+        geometry: tubeSponge, color: 0x6e5f9e, tip: 0xb3a8d6, tipStart: 0.6, tipEnd: 1.35,
+        roughness: 0.9, count: 90, scale: [0.55, 1.2], band: [140, 430],
+      },
+      {
+        geometry: barrelSponge, color: 0xa06c3c, tip: 0xd6a86a, tipStart: 0.5, tipEnd: 1.0,
+        roughness: 0.92, count: 55, scale: [0.5, 1.4], band: [150, 420],
+      },
+      {
+        geometry: tableCoral, color: 0xb490b8, tip: 0xe8d3e0, tipStart: 0.35, tipEnd: 0.62,
+        roughness: 0.78, count: 70, scale: [0.8, 2.0], band: [170, 430],
+      },
     ]
 
     const matrix = new Matrix4()
@@ -291,8 +353,19 @@ export class FloraSystem implements GameSystem {
 
     for (const type of archetypes) {
       const material = new MeshStandardNodeMaterial()
-      material.color = new Color(type.color)
       material.roughness = type.roughness
+      const base = new Color(type.color)
+      const identity = vec3(base.r, base.g, base.b)
+      // Colony-patch field: broad worldspace tone drift shared by the whole
+      // reef, so neighbouring heads read as one growth, not random paint.
+      const patch = fbm2(positionWorld.xz.mul(0.14)).mul(0.4).add(0.82)
+      if (type.tip !== undefined) {
+        const tip = new Color(type.tip)
+        const rise = smoothstep(float(type.tipStart!), float(type.tipEnd!), positionLocal.y)
+        material.colorNode = mix(identity, vec3(tip.r, tip.g, tip.b), rise).mul(patch)
+      } else {
+        material.colorNode = identity.mul(patch)
+      }
       this.medium.applyCaustics(material, 1.3)
       const mesh = new InstancedMesh(type.geometry, material, type.count)
       mesh.instanceMatrix.setUsage(DynamicDrawUsage)
@@ -412,6 +485,314 @@ export class FloraSystem implements GameSystem {
       this.group.add(mesh)
     }
   }
+
+  // ── Sea treasures: giant clams and sunken amphorae ─────────────────────
+  // New scene dressing (still procedural, still instanced): a handful of
+  // metre-wide fluted clams gaping near the paths — mantle lips studded
+  // with slowly pulsing electric spots, a pearl glowing in each throat —
+  // and clusters of barnacled terracotta amphorae half-sunk in the sand,
+  // as if the founder's supply barges spilled a little history.
+  private buildSeaTreasures(rng: Rng): void {
+    // Giant clams: one merged two-valve shell (DoubleSide — the open bowl
+    // interior is the whole point), an iridescent mantle, a nacre pearl.
+    const CLAMS = 8
+    const shellGeometry = createGiantClamGeometry()
+    const shellMaterial = new MeshStandardNodeMaterial()
+    shellMaterial.side = DoubleSide
+    shellMaterial.roughness = 0.62
+    const shellTone = fbm2(positionWorld.xz.mul(2.2))
+    shellMaterial.colorNode = mix(vec3(0.78, 0.72, 0.6), vec3(0.9, 0.87, 0.78), shellTone)
+    this.medium.applyCaustics(shellMaterial, 1.3)
+
+    const mantleGeometry = new TorusGeometry(0.78, 0.15, 9, 42)
+    mantleGeometry.scale(1, 1, 0.38) // torus lies in XY before rotation
+    mantleGeometry.rotateX(Math.PI / 2 - 0.16)
+    mantleGeometry.translate(0, 0.1, 0)
+    const mantleMaterial = new MeshStandardNodeMaterial()
+    mantleMaterial.roughness = 0.35
+    const mantleField = fbm2(positionWorld.xz.mul(7.0).add(positionWorld.y.mul(5.0)))
+    mantleMaterial.colorNode = mix(vec3(0.05, 0.2, 0.24), vec3(0.16, 0.42, 0.4), mantleField)
+    // Electric mantle spots, breathing on a slow park-time pulse.
+    const spots = smoothstep(float(0.72), float(0.82), mantleField)
+    const pulse = sin(this.timeUniform.mul(0.9).add(positionWorld.x.mul(0.7)).add(positionWorld.z))
+      .mul(0.5)
+      .add(0.5)
+    mantleMaterial.emissiveNode = vec3(0.05, 0.5, 0.55).mul(spots).mul(pulse.mul(0.7).add(0.3))
+    this.medium.applyCaustics(mantleMaterial, 0.8)
+
+    const pearlGeometry = new SphereGeometry(0.24, 18, 14)
+    pearlGeometry.translate(0, 0.2, 0.12)
+    const pearlMaterial = new MeshStandardNodeMaterial()
+    pearlMaterial.roughness = 0.18
+    pearlMaterial.metalness = 0.15
+    pearlMaterial.color = new Color(0xf0e8e4)
+    pearlMaterial.emissiveNode = vec3(0.045, 0.04, 0.035)
+    this.medium.applyCaustics(pearlMaterial, 0.9)
+
+    const shells = new InstancedMesh(shellGeometry, shellMaterial, CLAMS)
+    const mantles = new InstancedMesh(mantleGeometry, mantleMaterial, CLAMS)
+    const pearls = new InstancedMesh(pearlGeometry, pearlMaterial, CLAMS)
+    const matrix = new Matrix4()
+    const quaternion = new Quaternion()
+    const euler = new Euler()
+    const clamRng = rng.fork('clams')
+    let placedClams = 0
+    for (let attempt = 0; attempt < 120 && placedClams < CLAMS; attempt++) {
+      const angle = clamRng.range(0, Math.PI * 2)
+      const radius = clamRng.range(60, 260)
+      const x = Math.cos(angle) * radius
+      const z = Math.sin(angle) * radius * 0.9
+      if (z < RIM_Z + 25 || inParkFootprint(x, z, 1.6)) continue
+      const y = terrainHeight(x, z)
+      const s = clamRng.range(0.55, 1.05)
+      quaternion.setFromEuler(euler.set(
+        clamRng.range(-0.12, 0.12),
+        clamRng.range(0, Math.PI * 2),
+        clamRng.range(-0.12, 0.12),
+      ))
+      matrix.compose(new Vector3(x, y + 0.08 * s, z), quaternion, new Vector3(s, s, s))
+      shells.setMatrixAt(placedClams, matrix)
+      mantles.setMatrixAt(placedClams, matrix)
+      pearls.setMatrixAt(placedClams, matrix)
+      placedClams++
+    }
+    for (const mesh of [shells, mantles, pearls]) {
+      mesh.count = placedClams
+      mesh.instanceMatrix.needsUpdate = true
+      mesh.castShadow = mesh === shells
+      mesh.receiveShadow = true
+      this.group.add(mesh)
+    }
+    shells.name = 'flora-clam-shells'
+    mantles.name = 'flora-clam-mantles'
+    pearls.name = 'flora-clam-pearls'
+
+    // Amphorae: merged jar+handles prototype, slip-banded terracotta with
+    // pale barnacle crusting; scattered in loose spills, several toppled.
+    const amphora = createAmphoraGeometry()
+    const clay = new MeshStandardNodeMaterial()
+    clay.roughness = 0.88
+    const slip = sin(positionLocal.y.mul(26.0)).mul(0.5).add(0.5)
+    const crust = smoothstep(
+      float(0.62),
+      float(0.8),
+      fbm2(positionWorld.xz.mul(3.4).add(positionWorld.y.mul(2.2))),
+    )
+    clay.colorNode = mix(
+      mix(vec3(0.44, 0.24, 0.14), vec3(0.52, 0.31, 0.18), slip),
+      vec3(0.74, 0.72, 0.64),
+      crust.mul(0.75),
+    )
+    clay.roughnessNode = float(0.82).add(crust.mul(0.14))
+    this.medium.applyCaustics(clay, 1.2)
+    const AMPHORAE = 18
+    const jars = new InstancedMesh(amphora, clay, AMPHORAE)
+    const jarRng = rng.fork('amphorae')
+    let placedJars = 0
+    // Two spill clusters plus lone strays.
+    const clusters: [number, number][] = []
+    for (let c = 0; c < 2 && clusters.length < 2; c++) {
+      for (let attempt = 0; attempt < 40; attempt++) {
+        const angle = jarRng.range(0, Math.PI * 2)
+        const radius = jarRng.range(90, 300)
+        const cx = Math.cos(angle) * radius
+        const cz = Math.sin(angle) * radius * 0.88
+        if (cz > RIM_Z + 30 && !inParkFootprint(cx, cz, 6)) {
+          clusters.push([cx, cz])
+          break
+        }
+      }
+    }
+    for (let attempt = 0; attempt < 200 && placedJars < AMPHORAE; attempt++) {
+      let x: number
+      let z: number
+      if (placedJars < 12 && clusters.length > 0) {
+        const [cx, cz] = clusters[placedJars % clusters.length]
+        x = cx + jarRng.range(-4.5, 4.5)
+        z = cz + jarRng.range(-4.5, 4.5)
+      } else {
+        x = jarRng.range(-340, 340)
+        z = jarRng.range(-190, 380)
+      }
+      if (z < RIM_Z + 24 || inParkFootprint(x, z, 1.2)) continue
+      const y = terrainHeight(x, z)
+      const s = jarRng.range(0.7, 1.15)
+      const toppled = jarRng.next() < 0.45
+      if (toppled) {
+        quaternion.setFromEuler(euler.set(
+          jarRng.range(-0.2, 0.2),
+          jarRng.range(0, Math.PI * 2),
+          Math.PI / 2 + jarRng.range(-0.25, 0.25),
+        ))
+        matrix.compose(new Vector3(x, y + 0.3 * s, z), quaternion, new Vector3(s, s, s))
+      } else {
+        quaternion.setFromEuler(euler.set(
+          jarRng.range(-0.14, 0.14),
+          jarRng.range(0, Math.PI * 2),
+          jarRng.range(-0.14, 0.14),
+        ))
+        matrix.compose(new Vector3(x, y - 0.06 * s, z), quaternion, new Vector3(s, s, s))
+      }
+      jars.setMatrixAt(placedJars, matrix)
+      placedJars++
+    }
+    jars.count = placedJars
+    jars.instanceMatrix.needsUpdate = true
+    jars.castShadow = false
+    jars.receiveShadow = true
+    jars.name = 'flora-amphorae'
+    this.group.add(jars)
+  }
+}
+
+/**
+ * A giant clam: two fluted valves hinged at the back, the upper one gaping
+ * open ~35°. Flutes ripple both the radius and the rim line, strongest at
+ * the lip — the signature scalloped silhouette. DoubleSide material shows
+ * the bowl interior; both valves merge into one instanced geometry.
+ */
+function createGiantClamGeometry(): BufferGeometry {
+  const flute = (geometry: BufferGeometry, lower: boolean) => {
+    const position = geometry.getAttribute('position')
+    const vertex = new Vector3()
+    for (let i = 0; i < position.count; i++) {
+      vertex.fromBufferAttribute(position, i)
+      const radial = Math.hypot(vertex.x, vertex.z)
+      if (radial < 1e-5) continue
+      const angle = Math.atan2(vertex.x, vertex.z)
+      // Rim weight: 1 at the open lip (y≈0), 0 at the pole.
+      const rim = 1 - Math.min(1, Math.abs(vertex.y))
+      const wave = Math.cos(angle * 9)
+      const scale = 1 + 0.11 * wave * rim
+      position.setX(i, vertex.x * scale)
+      position.setZ(i, vertex.z * scale)
+      position.setY(i, vertex.y + (lower ? -1 : 1) * 0.07 * wave * rim)
+    }
+    position.needsUpdate = true
+    geometry.computeVertexNormals()
+  }
+  // Lower valve: bowl opening upward (equator → south pole).
+  const lower = new SphereGeometry(1, 44, 9, 0, Math.PI * 2, Math.PI / 2, Math.PI / 2)
+  flute(lower, true)
+  lower.scale(1, 0.48, 1)
+  // Upper valve: dome opening downward, hinged open at the back (−z).
+  const upper = new SphereGeometry(1, 44, 9, 0, Math.PI * 2, 0, Math.PI / 2)
+  flute(upper, false)
+  upper.scale(1, 0.48, 1)
+  upper.translate(0, 0, 0.92) // hinge line to origin
+  upper.rotateX(-0.62) // gape
+  upper.translate(0, 0.04, -0.92)
+  const merged = mergeGeometries([lower, upper])!
+  lower.dispose()
+  upper.dispose()
+  return merged
+}
+
+/**
+ * A shipping amphora: closed lathe from foot to rolled rim (with interior
+ * lip so the mouth reads hollow), two shoulder handles. One merged geometry.
+ */
+function createAmphoraGeometry(): BufferGeometry {
+  const body = new LatheGeometry(
+    [
+      new Vector2(0.09, 0),
+      new Vector2(0.16, 0.02),
+      new Vector2(0.13, 0.1),
+      new Vector2(0.3, 0.32),
+      new Vector2(0.4, 0.62),
+      new Vector2(0.38, 0.88),
+      new Vector2(0.28, 1.08),
+      new Vector2(0.16, 1.22),
+      new Vector2(0.14, 1.34),
+      new Vector2(0.2, 1.4),
+      new Vector2(0.21, 1.45),
+      new Vector2(0.15, 1.46),
+      new Vector2(0.11, 1.42),
+      new Vector2(0.1, 1.3),
+    ],
+    18,
+  )
+  const parts: BufferGeometry[] = [body]
+  for (const side of [-1, 1]) {
+    const handle = new TorusGeometry(0.14, 0.035, 7, 14, Math.PI * 1.05)
+    handle.rotateZ(Math.PI * 0.45 * side + (side < 0 ? Math.PI : 0))
+    handle.translate(side * 0.3, 1.16, 0)
+    parts.push(handle)
+  }
+  const merged = mergeGeometries(parts)!
+  for (const part of parts) part.dispose()
+  return merged
+}
+
+/** A cluster of 3–4 open-mouthed tube sponges leaning apart. Each tube is a
+ *  closed clockwise lathe (outer wall up, rim inward, inner throat down) so
+ *  the hollow interior is genuinely visible without DoubleSide. */
+function createTubeSpongeGeometry(rng: Rng): BufferGeometry {
+  const tubes: BufferGeometry[] = []
+  const count = 4
+  for (let i = 0; i < count; i++) {
+    const h = rng.range(0.85, 1.5)
+    const r = rng.range(0.14, 0.22)
+    const tube = new LatheGeometry(
+      [
+        new Vector2(r * 1.3, 0),
+        new Vector2(r * 1.15, h * 0.12),
+        new Vector2(r * 0.92, h * 0.4),
+        new Vector2(r * 1.0, h * 0.78),
+        new Vector2(r * 1.14, h * 0.95),
+        new Vector2(r * 1.18, h),
+        new Vector2(r * 0.8, h),
+        new Vector2(r * 0.66, h * 0.55),
+        new Vector2(r * 0.52, h * 0.16),
+      ],
+      12,
+    )
+    displace(tube, 0.07, 4.5, rng.fork(`warts-${i}`))
+    const lean = rng.range(0.06, 0.24)
+    const yaw = (i / count) * Math.PI * 2 + rng.range(-0.4, 0.4)
+    tube.rotateZ(lean)
+    tube.rotateY(yaw)
+    tube.translate(Math.sin(yaw) * rng.range(0.08, 0.22), 0, Math.cos(yaw) * rng.range(0.08, 0.22))
+    tubes.push(tube)
+  }
+  const merged = mergeGeometries(tubes)!
+  for (const tube of tubes) tube.dispose()
+  return merged
+}
+
+/** One great barrel sponge: ridged flank, rolled rim, visible dark throat. */
+function createBarrelSpongeGeometry(rng: Rng): BufferGeometry {
+  const barrel = new LatheGeometry(
+    [
+      new Vector2(0.52, 0),
+      new Vector2(0.66, 0.14),
+      new Vector2(0.72, 0.45),
+      new Vector2(0.66, 0.78),
+      new Vector2(0.58, 0.96),
+      new Vector2(0.6, 1.0),
+      new Vector2(0.46, 0.98),
+      new Vector2(0.38, 0.6),
+      new Vector2(0.34, 0.24),
+    ],
+    18,
+  )
+  displace(barrel, 0.09, 2.6, rng)
+  return barrel
+}
+
+/** Table coral: a stout trunk under a broad wavy-edged plate with real
+ *  thickness — the reef's parasol silhouette. */
+function createTableCoralGeometry(rng: Rng): BufferGeometry {
+  const trunk = new CylinderGeometry(0.09, 0.16, 0.42, 9)
+  trunk.translate(0, 0.21, 0)
+  const plate = new CylinderGeometry(1, 0.9, 0.1, 26, 1)
+  displace(plate, 0.14, 2.1, rng)
+  plate.scale(1, 0.85, 1)
+  plate.translate(0, 0.5, 0)
+  const merged = mergeGeometries([trunk, plate])!
+  trunk.dispose()
+  plate.dispose()
+  return merged
 }
 
 function createClamShellGeometry(): BufferGeometry {

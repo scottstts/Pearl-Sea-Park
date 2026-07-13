@@ -23,6 +23,7 @@ import {
   attribute,
   cameraPosition,
   float,
+  fract,
   mix,
   normalGeometry,
   normalize,
@@ -575,7 +576,16 @@ export class AmbientLife {
       this.timeUniform.mul(1.7).add(wing.abs().mul(2.6)),
     ).mul(wing.abs().pow(1.35)).mul(amplitude)
     material.positionNode = positionLocal.add(vec3(0, undulation, 0))
-    material.colorNode = mix(color.mul(0.55), color, positionGeometry.y.add(0.2).clamp(0, 1))
+    // Countershaded hide: pale warm belly under the dark dorsal tone, with
+    // the eagle-ray constellation — pale spots scattered over the back only,
+    // from the same field that mottles the dorsal shading.
+    const back = positionGeometry.y.add(0.2).clamp(0, 1)
+    const hideField = fbm2(positionGeometry.xz.mul(2.8))
+    const dorsal = color.mul(hideField.mul(0.3).add(0.85))
+    const spots = smoothstep(0.72, 0.78, fbm2(positionGeometry.xz.mul(5.6).add(31)))
+    material.colorNode = mix(vec3(0.52, 0.56, 0.54), dorsal, back).add(
+      vec3(0.32, 0.36, 0.35).mul(spots).mul(back),
+    )
     this.medium.applyCaustics(material, 0.9)
     return material
   }
@@ -592,11 +602,23 @@ export class AmbientLife {
       .mul(flipper.abs())
       .mul(0.11)
     material.positionNode = positionLocal.add(vec3(0, flap, 0))
-    material.colorNode = mix(
+    // Scute plating: contour lines of one plate field become the seams
+    // between shell plates (dark grooves over the carapace top only), and
+    // the same field mottles each plate's tone — cause-coupled, body-locked.
+    const plateField = fbm2(positionGeometry.xz.mul(1.9))
+    const bands = fract(plateField.mul(3.5))
+    const seamDistance = bands.min(float(1).sub(bands))
+    const seam = smoothstep(0.09, 0.02, seamDistance)
+    const carapaceTop = smoothstep(0.04, 0.2, positionGeometry.y)
+    const hide = mix(
       vec3(0.17, 0.3, 0.18),
       vec3(0.48, 0.43, 0.22),
       positionGeometry.y.add(0.3).clamp(0, 1),
     )
+    material.colorNode = hide
+      .mul(plateField.mul(0.22).add(0.89))
+      .mul(float(1).sub(seam.mul(carapaceTop).mul(0.4)))
+    material.roughnessNode = float(0.62).add(seam.mul(carapaceTop).mul(0.2))
     this.medium.applyCaustics(material, 1)
     const turtles = new InstancedMesh(geometry, material, 8)
     turtles.instanceMatrix.setUsage(DynamicDrawUsage)
@@ -762,16 +784,27 @@ export class AmbientLife {
       .add(vec3(0, beat.mul(flutter).mul(0.045), 0))
       .add(vec3(driftX, driftY, driftZ))
     // Warm garden palette: gold through rose, pearled bellies, a soft glow
-    // so they read against the dome's shade.
+    // so they read against the dome's shade — now with authored wing
+    // markings: a dark scalloped outer border and one pale eyespot per
+    // forewing, gated by the flutter channel so the body stays plain.
     const hue = sin(phase.mul(2.1)).mul(0.5).add(0.5)
     const goldWing = vec3(0.92, 0.62, 0.22)
     const roseWing = vec3(0.85, 0.4, 0.38)
+    const wingBase = mix(goldWing, roseWing, hue)
+    const wingSpan = positionGeometry.x.abs()
+    const border = smoothstep(0.13, 0.185, wingSpan).mul(flutter.clamp(0, 1))
+    const spotDistance = vec2(wingSpan.sub(0.115), positionGeometry.z.sub(0.03)).length()
+    const eyespot = smoothstep(0.034, 0.018, spotDistance).mul(flutter.clamp(0, 1))
     material.colorNode = mix(
-      mix(goldWing, roseWing, hue),
+      mix(
+        mix(wingBase, wingBase.mul(0.42), border),
+        vec3(0.96, 0.92, 0.85),
+        eyespot,
+      ),
       vec3(0.95, 0.9, 0.82),
       positionGeometry.y.mul(8).clamp(0, 0.5),
     )
-    material.emissiveNode = mix(goldWing, roseWing, hue).mul(0.06)
+    material.emissiveNode = wingBase.mul(0.06).add(vec3(0.05, 0.04, 0.03).mul(eyespot))
     this.medium.applyCaustics(material, 0.8)
     mesh.instanceMatrix.needsUpdate = true
     mesh.computeBoundingSphere()

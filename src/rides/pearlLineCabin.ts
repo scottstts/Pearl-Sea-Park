@@ -146,6 +146,37 @@ export function createPearlLineCabinPrototype(): CabinPrototype {
     body.push(boxPart(1.5, 0.34, 0.035, new Vector3(0, 0.945, end * 0.95)).toNonIndexed())
   }
 
+  // Corner gussets: a diagonal stay from each corner post up to the side
+  // eave rail (real endpoints on both members), a knee of visible carpentry
+  // holding the open canopy square. Plus turned bead finials embedded at
+  // the arched roof's ridge ends.
+  for (const sideX of [-1, 1]) {
+    for (const sideZ of [-1, 1]) {
+      frame.push(
+        cylinderBetween(
+          new Vector3(sideX * 0.79, 1.42, sideZ * 0.91),
+          new Vector3(sideX * 0.79, 1.65, sideZ * (0.91 - 0.27)),
+          0.018,
+          6,
+        ),
+      )
+    }
+  }
+  // The arched roof's quadratic CONTROL point is y 2.2 but the curve itself
+  // peaks at ≈2.02 (control points are not on Bézier curves) — beads placed
+  // at the control height hovered in open water. Seat them half-sunk into
+  // the crown of each roof end instead.
+  for (const end of [-1, 1]) {
+    frame.push(spherePart(0.06, new Vector3(0, 2.0, end * 1.01), 10, 8))
+  }
+
+  // Bench legs ground the seats to the floor pan (they floated on air).
+  for (const end of [-1, 1]) {
+    for (const legX of [-0.5, 0.5]) {
+      interior.push(boxPart(0.055, 0.4, 0.055, new Vector3(legX, 0.27, end * 0.62)))
+    }
+  }
+
   // Door furniture on the platform-facing side remains visible at distance.
   frame.push(spherePart(0.055, new Vector3(0.83, 1.16, 0.12), 10, 7))
   frame.push(boxPart(0.055, 0.28, 0.035, new Vector3(0.835, 1.16, 0)))

@@ -1,4 +1,5 @@
 import {
+  BoxGeometry,
   CircleGeometry,
   Color,
   CylinderGeometry,
@@ -7,6 +8,8 @@ import {
   Mesh,
   Object3D,
   PlaneGeometry,
+  SphereGeometry,
+  TorusGeometry,
   Vector2,
   Vector3,
 } from 'three'
@@ -98,6 +101,87 @@ export class WishingWell {
     well.castShadow = true
     well.receiveShadow = true
     this.group.add(well)
+
+    // The wellhead: two turned posts planted in the coping carry a little
+    // verdigris gable, a working-looking brass windlass (drum, rope wraps,
+    // crank), and a hemp line dropping to a wooden pail frozen just above
+    // its own reflection — the storybook silhouette a wishing well owes
+    // every guest who walks up with a coin.
+    const postX = 1.6
+    const postTop = ground + 2.45
+    for (const side of [-1, 1]) {
+      const post = new Mesh(new CylinderGeometry(0.065, 0.085, postTop - (ground + 0.95), 10), lib.woodDark)
+      post.position.set(CENTER.x + side * postX, (postTop + ground + 0.95) / 2, CENTER.z)
+      const cap = new Mesh(new SphereGeometry(0.075, 10, 8), lib.brass)
+      cap.position.set(CENTER.x + side * postX, postTop + 0.03, CENTER.z)
+      this.group.add(post, cap)
+    }
+    // Windlass: axle spanning the posts, drum at centre, rope wraps, crank.
+    const axle = new Mesh(new CylinderGeometry(0.035, 0.035, postX * 2 + 0.3, 10), lib.brass)
+    axle.rotation.z = Math.PI / 2
+    axle.position.set(CENTER.x, ground + 2.08, CENTER.z)
+    const drum = new Mesh(new CylinderGeometry(0.13, 0.13, 0.85, 14), lib.woodDark)
+    drum.rotation.z = Math.PI / 2
+    drum.position.set(CENTER.x, ground + 2.08, CENTER.z)
+    this.group.add(axle, drum)
+    const wrap = new TorusGeometry(0.14, 0.03, 6, 18)
+    for (const offset of [-0.22, -0.08, 0.06]) {
+      const loop = new Mesh(wrap, lib.rope)
+      loop.rotation.y = Math.PI / 2
+      loop.position.set(CENTER.x + offset, ground + 2.08, CENTER.z)
+      this.group.add(loop)
+    }
+    const crankArm = new Mesh(new BoxGeometry(0.04, 0.3, 0.04), lib.brass)
+    crankArm.position.set(CENTER.x + postX + 0.19, ground + 1.95, CENTER.z)
+    const crankKnob = new Mesh(new SphereGeometry(0.05, 10, 8), lib.woodDark)
+    crankKnob.position.set(CENTER.x + postX + 0.19, ground + 1.78, CENTER.z)
+    this.group.add(crankArm, crankKnob)
+    // Rope down to the pail, hanging just over the water.
+    const drop = new Mesh(new CylinderGeometry(0.022, 0.022, 0.52, 8), lib.rope)
+    drop.position.set(CENTER.x + 0.2, ground + 1.8, CENTER.z)
+    this.group.add(drop)
+    const pail = new Mesh(
+      new LatheGeometry(
+        [
+          new Vector2(0.02, 0),
+          new Vector2(0.145, 0.01),
+          new Vector2(0.185, 0.26),
+          new Vector2(0.16, 0.26),
+          new Vector2(0.125, 0.045),
+          new Vector2(0.02, 0.035),
+        ],
+        16,
+      ),
+      lib.woodDark,
+    )
+    pail.position.set(CENTER.x + 0.2, ground + 1.28, CENTER.z)
+    const pailBand = new Mesh(new TorusGeometry(0.175, 0.012, 6, 18), lib.brass)
+    pailBand.rotation.x = Math.PI / 2
+    pailBand.position.set(CENTER.x + 0.2, ground + 1.49, CENTER.z)
+    const pailHandle = new Mesh(new TorusGeometry(0.14, 0.014, 6, 16, Math.PI), lib.brass)
+    pailHandle.position.set(CENTER.x + 0.2, ground + 1.54, CENTER.z)
+    this.group.add(pail, pailBand, pailHandle)
+    // Roof: two verdigris panels meeting at a ridge along X over the posts
+    // (the notice-board convention: ridge follows the panel width axis,
+    // panels pitch about X), with a brass ridge pole and a nacre pearl.
+    const roofRise = 0.62
+    const roofHalfDepth = 0.85
+    const pitch = Math.atan2(roofRise, roofHalfDepth)
+    const slopeLength = Math.hypot(roofRise, roofHalfDepth)
+    const eaveY = postTop + 0.1
+    for (const side of [-1, 1]) {
+      const panel = new Mesh(new BoxGeometry(4.3, 0.06, slopeLength), lib.verdigris)
+      panel.rotation.x = side * pitch
+      panel.position.set(CENTER.x, eaveY + roofRise / 2, CENTER.z + (side * roofHalfDepth) / 2)
+      panel.castShadow = true
+      this.group.add(panel)
+    }
+    const ridge = new Mesh(new CylinderGeometry(0.05, 0.05, 4.34, 8), lib.brass)
+    ridge.rotation.z = Math.PI / 2
+    ridge.position.set(CENTER.x, eaveY + roofRise + 0.02, CENTER.z)
+    const ridgePearl = new Mesh(new SphereGeometry(0.09, 12, 9), lib.nacre)
+    ridgePearl.position.set(CENTER.x, eaveY + roofRise + 0.14, CENTER.z)
+    this.group.add(ridge, ridgePearl)
     for (let i = 0; i < 14; i++) {
       const angle = (i / 14) * Math.PI * 2
       const x = CENTER.x + Math.cos(angle) * 1.78

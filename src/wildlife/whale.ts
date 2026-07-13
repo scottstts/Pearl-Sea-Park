@@ -10,6 +10,7 @@ import { MeshStandardNodeMaterial } from 'three/webgpu'
 import type { Node } from 'three/webgpu'
 import {
   attribute,
+  float,
   mix,
   positionGeometry,
   positionLocal,
@@ -18,6 +19,7 @@ import {
   uniform,
   vec3,
 } from 'three/tsl'
+import { fbm2 } from '../render/tslNoise'
 import { registerBookmark } from '../core/debug'
 import { markDynamicShadowCasters } from '../render/layers'
 import type { GameContext } from '../runtime/context'
@@ -87,7 +89,25 @@ export class WhalePass {
       .mul(0.52)
     material.positionNode = positionLocal.add(vec3(flex, flex.abs().mul(-0.08), 0))
     const belly = smoothstep(-1.1, 0.3, positionGeometry.y)
-    material.colorNode = mix(vec3(0.3, 0.35, 0.36), vec3(0.075, 0.105, 0.12), belly)
+    const hide = mix(vec3(0.3, 0.35, 0.36), vec3(0.075, 0.105, 0.12), belly)
+    // Ventral pleats: the humpback's throat grooves, carved as tone lines
+    // over the forward belly only — geometry and color share the pouch.
+    const pleats = sin(positionGeometry.x.mul(5.2))
+      .mul(0.5)
+      .add(0.5)
+      .mul(smoothstep(-0.2, -0.9, positionGeometry.y))
+      .mul(smoothstep(0.4, 2.2, positionGeometry.z))
+    // Barnacle crust gathers on the chin and the pectoral leading edges.
+    const crustField = fbm2(positionGeometry.xz.mul(2.4).add(positionGeometry.y.mul(1.7)))
+    const crust = smoothstep(0.72, 0.84, crustField).mul(
+      smoothstep(3.2, 5.2, positionGeometry.z).max(smoothstep(2.4, 4.2, positionGeometry.x.abs())),
+    )
+    material.colorNode = mix(
+      mix(hide, hide.mul(0.72), pleats.mul(0.55)),
+      vec3(0.7, 0.72, 0.68),
+      crust.mul(0.85),
+    )
+    material.roughnessNode = mix(mix(float(0.68), float(0.56), belly), float(0.92), crust)
     this.medium.applyCaustics(material, 0.72)
     const bodyMesh = new Mesh(geometry, material)
     bodyMesh.castShadow = true

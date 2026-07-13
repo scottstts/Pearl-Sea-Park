@@ -102,3 +102,23 @@
   timetable is ambience only. Mounts are sculpted (bendArc/torpedo/limb
   helpers in carousel.ts); the body gained a rounding board, canopy ribs,
   pennant valance, and a spire finial.
+
+## 2026-07-13 craft pass
+
+- Wheel structure: raked legs carry flange couplings along their axes
+  (collars quaternion-aligned to the leg direction, shrinking toward the
+  hub), the axle rides visible journal bearings/housings/rosettes at both
+  leg pairs, rim bulbs are strung on thin brass carrier wires, and every
+  spoke wears a mid-span turnbuckle sleeve (ONE InstancedMesh for all 32).
+- Gondolas: the nacre hull is scallop-fluted by displacement (14
+  belly-weighted flutes, ±1.8 cm, same audited envelope — zero extra
+  draws), the rim carries a brass gunwale band, and the keel is a turned
+  drop-finial. Per-car dressing must stay draw-frugal: cars swing
+  independently on their pendulums, so their parts can never batch.
+- Carousel: deck (painted show rings over planking), skirt/canopy stripes,
+  and rounding-board panels+gilt rails are all patterned in
+  positionGeometry — worldspace fields CRAWL on a spinning rotor. The 28
+  pennant cones became one continuous scalloped valance (displaced open
+  cylinder hem, striped warm), and twelve brass whiplash crest scrolls
+  stand on the fascia. Local striped/deck materials skip caustics like the
+  mount tints (CarouselSystem has no medium access — accepted precedent).

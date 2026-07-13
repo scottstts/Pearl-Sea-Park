@@ -13,6 +13,7 @@ import {
   Vector2,
   Vector3,
 } from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { registerBookmark } from '../core/debug'
 import { markDynamicShadowCasters } from '../render/layers'
 import { SlotWriter } from '../archkit/writer'
@@ -164,6 +165,41 @@ export class PhysicsToys {
       const eye = new Mesh(new SphereGeometry(0.05, 12, 8), lib.iron)
       eye.position.set(x + side * 0.265, baseY + 1.275, z - 0.4)
       this.group.add(fin, eye)
+    }
+
+    // Sculpted splash: two carved marble ripple rings breaking around the
+    // breaching body, and a pair of little bronze companions leaping the
+    // wake (crescent fish — torus-arc bodies with head/tail closing both
+    // open ends). Set dressing only; the collider frame is untouched.
+    for (const [rippleRadius, rippleY, tube] of [
+      [0.78, 0.42, 0.055],
+      [1.08, 0.32, 0.042],
+    ] as const) {
+      const ripple = new Mesh(new TorusGeometry(rippleRadius, tube, 8, 40), lib.marble)
+      ripple.rotation.x = Math.PI / 2
+      ripple.position.set(x, baseY + rippleY, z + 0.1)
+      this.group.add(ripple)
+    }
+    const companionParts: Array<TorusGeometry | SphereGeometry | ConeGeometry> = []
+    const companionBody = new TorusGeometry(0.2, 0.06, 8, 16, Math.PI * 0.85)
+    companionParts.push(companionBody)
+    const companionHead = new SphereGeometry(0.072, 10, 8)
+    companionHead.scale(1, 0.85, 0.7)
+    companionHead.translate(Math.cos(Math.PI * 0.85) * 0.2, Math.sin(Math.PI * 0.85) * 0.2, 0)
+    companionParts.push(companionHead)
+    const companionTail = new ConeGeometry(0.055, 0.16, 7)
+    companionTail.rotateZ(-Math.PI / 2)
+    companionTail.scale(1, 1, 0.4)
+    companionTail.translate(0.27, -0.015, 0)
+    companionParts.push(companionTail)
+    const companionGeometry = mergeGeometries(companionParts, false)!
+    for (const part of companionParts) part.dispose()
+    for (const side of [-1, 1]) {
+      const companion = new Mesh(companionGeometry, lib.verdigris)
+      companion.position.set(x + side * 1.12, baseY + 0.52, z + side * 0.3)
+      companion.rotation.y = side * 0.9 + Math.PI / 2
+      companion.rotation.z = side * 0.15
+      this.group.add(companion)
     }
 
     emitCounterJoinery(this.fixtureWriter, lib, x, ground, z + 1.2, 8, 2.2)
@@ -318,6 +354,19 @@ export class PhysicsToys {
     lipLeft.rotation.x = incline
     lipRight.rotation.x = incline
     this.group.add(lipLeft, lipRight)
+    // Lane rails divide the ramp into three visible rolling lanes aimed at
+    // the three pockets — flush on the inclined surface (offset along the
+    // ramp's rotated up-axis), purely visual: pearls hop them freely.
+    for (const railX of [-0.9, 0.9]) {
+      const laneRail = new Mesh(new BoxGeometry(0.05, 0.045, 9.3), lib.brass)
+      laneRail.rotation.x = incline
+      laneRail.position.set(
+        x + railX,
+        ground + 0.95 + Math.cos(incline) * 0.165,
+        z + Math.sin(incline) * 0.165,
+      )
+      this.group.add(laneRail)
+    }
 
     interaction?.register({
       position: new Vector3(x, ground + 1.05, 157.2),
@@ -422,6 +471,19 @@ export class PhysicsToys {
 
     emitHighStrikerTrim(this.fixtureWriter, lib, x, ground, z)
     physics.addStaticBox(x, ground + 3.2, z + 0.15, 1.1, 3.15, 0.23)
+
+    // The kraken's eye watches from the tower face above the graduation
+    // rungs: nacre sclera in the flattened board, iron pupil, and a brass
+    // lid arc — the carnival wink that names the game.
+    const sclera = new Mesh(new CylinderGeometry(0.16, 0.16, 0.035, 20), lib.nacre)
+    sclera.rotation.x = Math.PI / 2
+    sclera.position.set(x, ground + 5.38, z - 0.21)
+    const pupil = new Mesh(new SphereGeometry(0.058, 12, 9), lib.iron)
+    pupil.scale.set(1, 1, 0.5)
+    pupil.position.set(x, ground + 5.38, z - 0.225)
+    const lid = new Mesh(new TorusGeometry(0.175, 0.02, 7, 20, Math.PI), lib.brass)
+    lid.position.set(x, ground + 5.38, z - 0.215)
+    this.group.add(sclera, pupil, lid)
 
     // Two verdigris kraken tentacles coil up the tower flanks, rooted in the
     // marble foot — chains of tapering members with knuckles, tips curling.

@@ -5,6 +5,7 @@ import {
   Color,
   ConeGeometry,
   CylinderGeometry,
+  DoubleSide,
   InstancedMesh,
   LatheGeometry,
   Matrix4,
@@ -17,7 +18,20 @@ import {
   Vector2,
   Vector3,
 } from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
+import {
+  atan,
+  float,
+  mix,
+  positionGeometry,
+  sin,
+  smoothstep,
+  step,
+  vec2,
+  vec3,
+} from 'three/tsl'
+import { fbm2 } from '../render/tslNoise'
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
@@ -119,9 +133,46 @@ export class CarouselSystem implements GameSystem {
     const rotor = this.rotor
     rotor.position.set(cx, baseTop, cz)
 
-    const floor = new Mesh(new CylinderGeometry(7.6, 7.6, 0.14, 48), lib.woodDark)
+    // Rotor-borne surfaces pattern in GEOMETRY space: worldspace fields
+    // crawl across a spinning platform. The deck gets painted show rings
+    // over its planking; the skirt and canopy get the teal-and-cream
+    // circus stripe that makes the ride read from across the lagoon.
+    const deckMaterial = new MeshStandardNodeMaterial()
+    {
+      const radial = positionGeometry.xz.length()
+      const grain = fbm2(positionGeometry.xz.mul(vec2(1.1, 5.0)))
+      const plank = mix(vec3(0.31, 0.2, 0.115), vec3(0.45, 0.31, 0.18), grain)
+      const band = smoothstep(0.14, 0.04, radial.sub(7.05).abs())
+      const goldLine = smoothstep(0.05, 0.015, radial.sub(6.62).abs()).max(
+        smoothstep(0.05, 0.015, radial.sub(2.05).abs()),
+      )
+      deckMaterial.colorNode = mix(
+        mix(plank, vec3(0.13, 0.35, 0.34), band.mul(0.85)),
+        vec3(0.85, 0.68, 0.34),
+        goldLine,
+      )
+      deckMaterial.roughnessNode = mix(float(0.6), float(0.34), goldLine)
+      deckMaterial.metalnessNode = goldLine.mul(0.85)
+    }
+    const stripedMaterial = (stripes: number, warm = false) => {
+      const m = new MeshStandardNodeMaterial()
+      m.side = DoubleSide
+      m.roughness = 0.82
+      const angle = atan(positionGeometry.x, positionGeometry.z)
+      const stripe = step(0, sin(angle.mul(stripes)))
+      const cream = vec3(0.9, 0.86, 0.76)
+      const tint = warm ? vec3(0.75, 0.4, 0.3) : vec3(0.16, 0.42, 0.41)
+      m.colorNode = mix(cream, tint, stripe.mul(0.88)).add(
+        fbm2(positionGeometry.xz.mul(6.0)).mul(0.05),
+      )
+      return m
+    }
+    const floor = new Mesh(new CylinderGeometry(7.6, 7.6, 0.14, 48), deckMaterial)
     floor.position.y = 0.07
-    const skirt = new Mesh(new CylinderGeometry(7.66, 7.66, 0.55, 48, 1, true), lib.canvasCream)
+    const skirt = new Mesh(
+      new CylinderGeometry(7.66, 7.66, 0.55, 96, 1, true),
+      stripedMaterial(40),
+    )
     skirt.position.y = 0.2
     rotor.add(floor, skirt)
 
@@ -185,15 +236,34 @@ export class CarouselSystem implements GameSystem {
       rotor.add(strut)
     }
 
-    // Canopy: ribbed tent cone over a rounding-board fascia, scalloped
-    // valance, and a spire finial — the parts that make a carousel read as
-    // a carousel instead of a cone on a drum.
-    const canopy = new Mesh(new ConeGeometry(8.7, 2.6, 48, 1, true), lib.canvasCream)
+    // Canopy: striped ribbed tent cone over a painted rounding-board fascia,
+    // a genuinely scalloped hanging valance, and a spire finial — the parts
+    // that make a carousel read as a carousel instead of a cone on a drum.
+    const canopy = new Mesh(new ConeGeometry(8.7, 2.6, 96, 1, true), stripedMaterial(14))
     canopy.position.y = 7.55
     const canopyRing = new Mesh(new TorusGeometry(8.62, 0.1, 10, 64), lib.brass)
     canopyRing.rotation.x = Math.PI / 2
     canopyRing.position.y = 6.3
     rotor.add(canopy, canopyRing)
+    // Rounding board: cream fascia divided into painted panels with gilt
+    // rails top and bottom — patterned in geometry space (it spins).
+    const boardMaterial = new MeshStandardNodeMaterial()
+    {
+      const angle = atan(positionGeometry.x, positionGeometry.z)
+      const panel = step(0.22, sin(angle.mul(18)).abs())
+      const rails = smoothstep(0.035, 0.012, positionGeometry.y.sub(6.31).abs()).max(
+        smoothstep(0.035, 0.012, positionGeometry.y.sub(5.8).abs()),
+      )
+      const cream = vec3(0.9, 0.86, 0.76)
+      const panelTeal = vec3(0.14, 0.37, 0.36)
+      boardMaterial.colorNode = mix(
+        mix(panelTeal, cream, panel),
+        vec3(0.85, 0.68, 0.34),
+        rails,
+      )
+      boardMaterial.roughnessNode = mix(float(0.78), float(0.32), rails)
+      boardMaterial.metalnessNode = rails.mul(0.9)
+    }
     const roundingBoard = new Mesh(
       new LatheGeometry(
         [
@@ -208,9 +278,19 @@ export class CarouselSystem implements GameSystem {
         ],
         64,
       ),
-      lib.canvasCream,
+      boardMaterial,
     )
     rotor.add(roundingBoard)
+    // Crest scrolls: twelve brass whiplash curls standing on the fascia rim.
+    const scrollGeometry = new TorusGeometry(0.15, 0.026, 7, 18, Math.PI * 1.55)
+    for (let i = 0; i < 12; i++) {
+      const angle = (i / 12) * Math.PI * 2
+      const scroll = new Mesh(scrollGeometry, lib.brass)
+      scroll.position.set(Math.sin(angle) * 8.48, 6.44, Math.cos(angle) * 8.48)
+      scroll.rotation.y = angle
+      scroll.rotation.z = Math.PI * 0.08
+      rotor.add(scroll)
+    }
     const ribUp = new Vector3(0, 1, 0)
     const apex = new Vector3(0, 8.78, 0)
     for (let i = 0; i < 12; i++) {
@@ -222,13 +302,29 @@ export class CarouselSystem implements GameSystem {
       rib.quaternion.setFromUnitVectors(ribUp, direction.clone().normalize())
       rotor.add(rib)
     }
-    for (let i = 0; i < 28; i++) {
-      const angle = ((i + 0.5) / 28) * Math.PI * 2
-      const pennant = new Mesh(new ConeGeometry(0.22, 0.34, 6), lib.canvasCream)
-      pennant.position.set(Math.sin(angle) * 8.6, 5.62, Math.cos(angle) * 8.6)
-      pennant.rotation.x = Math.PI
-      pennant.scale.z = 0.3
-      rotor.add(pennant)
+    // Hanging valance: one continuous striped skirt whose hem is displaced
+    // into 28 true scallops with a slight outward flare — cloth, not a ring
+    // of separate cones. (The old 28 squashed pennants read as teeth.)
+    {
+      const valanceGeometry = new CylinderGeometry(8.6, 8.6, 0.52, 112, 5, true)
+      const position = valanceGeometry.getAttribute('position')
+      const vertex = new Vector3()
+      for (let i = 0; i < position.count; i++) {
+        vertex.fromBufferAttribute(position, i)
+        const hem = Math.max(0, Math.min(1, (0.26 - vertex.y) / 0.52))
+        const angle = Math.atan2(vertex.x, vertex.z)
+        const scallop = 0.5 + 0.5 * Math.cos(angle * 28)
+        const radial = Math.hypot(vertex.x, vertex.z)
+        const flare = 1 + (0.05 * hem * hem) / Math.max(radial, 1)
+        position.setX(i, vertex.x * flare)
+        position.setZ(i, vertex.z * flare)
+        position.setY(i, vertex.y + 0.14 * scallop * hem)
+      }
+      position.needsUpdate = true
+      valanceGeometry.computeVertexNormals()
+      const valance = new Mesh(valanceGeometry, stripedMaterial(28, true))
+      valance.position.y = 5.52
+      rotor.add(valance)
     }
     const finial = new Mesh(
       new LatheGeometry(
@@ -501,6 +597,40 @@ function torpedo(profile: [number, number][], segments = 20): LatheGeometry {
   return new LatheGeometry(profile.map(([r, y]) => new Vector2(r, y)), segments)
 }
 
+/**
+ * Brass tack for the animal mounts: two rein lines sagging from the saddle
+ * pommel to the creature's bit point, and a brow boss between them. Built
+ * ONCE per species and cached — every mount adds a single extra draw, and
+ * the reins visually tie saddle to animal (they used to be two unrelated
+ * sculpts sharing a pole).
+ */
+const tackCache = new Map<MountKind, BufferGeometry>()
+function tackGeometry(
+  kind: MountKind,
+  bit: Vector3,
+  pommel: Vector3,
+): BufferGeometry {
+  let cached = tackCache.get(kind)
+  if (cached) return cached
+  const parts: BufferGeometry[] = []
+  for (const side of [-1, 1]) {
+    const from = new Vector3(side * 0.05, pommel.y, pommel.z)
+    const to = new Vector3(side * 0.055, bit.y, bit.z)
+    const mid = from.clone().add(to).multiplyScalar(0.5)
+    mid.y -= 0.07
+    mid.x += side * 0.05
+    const rein = new TubeGeometry(new CatmullRomCurve3([from, mid, to]), 14, 0.011, 5)
+    parts.push(rein)
+  }
+  const boss = new SphereGeometry(0.028, 8, 6)
+  boss.translate(0, bit.y + 0.045, bit.z - 0.015)
+  parts.push(boss)
+  cached = mergeGeometries(parts, false)!
+  for (const part of parts) part.dispose()
+  tackCache.set(kind, cached)
+  return cached
+}
+
 /** Tapering limb through spine points — real thickness, never a flat card. */
 function limb(
   g: Object3D,
@@ -723,7 +853,7 @@ function buildMount(kind: MountKind, m: MountMaterials): Object3D {
     add(sphere(m.nacre), -0.22, 0.28, 0.24, 0.05, 0.025, 0.13, 0, 0.7) // pectorals
     add(sphere(m.nacre), 0.22, 0.28, 0.24, 0.05, 0.025, 0.13, 0, -0.7)
     eyes(0.13, 0.42, 0.5)
-  } else {
+  } else if (kind === 'nautilus chariot') {
     // Nautilus chariot: a closed shell cup with an interior you sit inside,
     // a striped double-spiral crest, and a carriage footplate.
     const cup = new Mesh(
@@ -758,13 +888,42 @@ function buildMount(kind: MountKind, m: MountMaterials): Object3D {
     scroll.position.set(0, 0.2, 0.74)
     scroll.rotation.z = Math.PI * 0.5
     g.add(scroll)
+    // Shell fan rising behind the seat (a closed squashed sphere — never a
+    // half-primitive with an open cut plane) and two brass grab rails whose
+    // arc ends dip into the cup wall.
+    const fan = new Mesh(new SphereGeometry(1, 18, 10), m.nacre)
+    fan.position.set(0, 0.66, -0.28)
+    fan.scale.set(0.5, 0.42, 0.07)
+    fan.rotation.x = -0.22
+    g.add(fan)
+    for (const side of [-1, 1]) {
+      const rail = new Mesh(new TorusGeometry(0.2, 0.022, 6, 16, Math.PI * 0.9), m.brass)
+      rail.position.set(side * 0.52, 0.42, 0.16)
+      rail.rotation.y = Math.PI / 2
+      rail.rotation.z = side * 0.15
+      g.add(rail)
+    }
   }
 
   // Crafted saddle for the animal mounts: seat, rolled cantle, pommel,
-  // skirt, and stirrups hanging on straps.
+  // skirt, stirrups hanging on straps — and brass reins running from the
+  // pommel to each creature's bit point (cached tack, one draw per mount).
   if (kind !== 'nautilus chariot') {
     const saddleY = kind === 'ray' ? 0.4 : kind === 'turtle' ? 0.56 : 0.52
     const saddleZ = kind === 'seahorse' ? -0.04 : -0.08
+    const bitPoints: Record<Exclude<MountKind, 'nautilus chariot'>, Vector3> = {
+      seahorse: new Vector3(0, 0.79, 0.33),
+      dolphin: new Vector3(0, 0.31, 0.76),
+      turtle: new Vector3(0, 0.36, 0.7),
+      ray: new Vector3(0, 0.3, 0.52),
+      narwhal: new Vector3(0, 0.4, 0.58),
+    }
+    const tack = tackGeometry(
+      kind,
+      bitPoints[kind],
+      new Vector3(0, saddleY + 0.12, saddleZ + 0.25),
+    )
+    g.add(new Mesh(tack, m.brass))
     const seat = sphere(m.coral)
     seat.position.set(0, saddleY, saddleZ)
     seat.scale.set(0.2, 0.07, 0.3)

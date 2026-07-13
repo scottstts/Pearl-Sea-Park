@@ -945,3 +945,114 @@
     Envelope discipline: half-width ≤ 0.62 (station column audit), length
     within CAR_GAP minus coupling clearance, eye-clearance check at the rig
     anchor before committing any cockpit member.
+- 2026-07-13 all-assets craft pass (geometry/materials/self-animation only —
+  no mechanics, render, or environment changes):
+  - Materials library doctrine is now explicit IN the file: every channel of
+    a material derives from the same few named causal fields (brass
+    hammer+tarnish, marble warp→veins+bed, verdigris single patina field
+    driving color+metalness+roughness, mosaic tile-id → palette+glaze+bevel
+    normal), and fine microstructure multiplies a camera-distance
+    `detailKeep(far)` so it dissolves before it aliases. New shared material:
+    `rope` (fenders, rigging, coils, windlass). Nacre is a cosine-palette
+    interference sweep — the phase also drives growth-ripple roughness.
+  - PATTERNS ON ROTATING RIGS MUST BE GEOMETRY-SPACE. Worldspace fbm/stripes
+    crawl visibly across a spinning carousel deck/canopy (ω·r ≈ 2 m/s at the
+    rim). The carousel's deck rings, skirt/canopy stripes, and rounding-board
+    panels all pattern in positionGeometry; the shared worldspace library
+    materials stay fine on small rotor parts where the crawl is unreadable.
+    (Body-locked wildlife patterning uses positionGeometry for the same
+    reason.)
+  - Fluting is cheap and transformative: a displaced CylinderGeometry
+    (radial cos(angle·flutes), ≥4 segments per flute, entasis swell) turned
+    every park column from a pipe into an order; the same trick scalloped
+    the wheel gondola hulls (belly-weighted flutes, same envelope) and clam
+    valves (rim-weighted flutes + wavy lip). Always recompute normals after.
+  - Half-primitives are the open-lathe bug in disguise: a half CylinderGeometry
+    pediment shows its open cut plane from below (caught in self-review —
+    replaced with a full squashed cylinder half-sunk into the cabinet). Any
+    "arched cap" should be a closed solid intersecting its base.
+  - Cloth/banner sway without attributes: merge banners into ONE mesh
+    (SlotWriter-style bake = positionLocal IS world position), weight sway by
+    (1 − uv.y), phase by positionLocal.z. Banners must NOT cast shadows —
+    the cached static clipmaps would freeze the flap mid-pose.
+  - New decorative assets, all instanced/merged and footprint-aware:
+    esplanade silk banners (swaying, gold-bordered, pearl emblem), midway
+    bulb festoons (catenary wires in the iron slot + one instanced globe
+    draw), ~8 giant clams (pulsing electric mantle spots, nacre pearls),
+    ~18 barnacled amphorae in spill clusters, wishing-well roof + windlass +
+    pail, wreck rigging catenaries + a toppled anchor, arrival bollard
+    wraps + a coiled line, bell rope fender + floor compass rose.
+  - Reef grew to six archetypes (added tube sponges/barrel sponges/table
+    corals — closed clockwise lathes with visible hollow interiors, no
+    DoubleSide) sharing one colony-patch material recipe with positionLocal
+    tip gradients. Jelly/ray/whale meshes rebuilt (see wildlife.md) with the
+    SAME morph channels so existing vertex animation drives them unchanged.
+  - Wheel gondola added-draw budget: hull flutes cost zero draws (displaced
+    lathe), the brass gunwale lip is +1 mesh/car; the spiral crest idea was
+    dropped as +48 draws. When dressing per-car parts, prefer displacing the
+    existing lathe over adding members — cars swing independently so they
+    can never share an InstancedMesh.
+- 2026-07-13 craft pass round 2 (Scott lifted the "fresh by ruling" guard —
+  the 07-12 redesigns got their own improvement pass):
+  - Urns: the "gadrooned bowl" is now genuinely gadrooned (16 lobes carved
+    into the swell by displacement inside the cached proto), a brass girdle
+    rings the knop, and three trailing fronds spill over the rim — their
+    spine clears the rolled rim TOP (y 1.13 over rim 1.1) before drooping;
+    the first draft clipped straight through the rim wall. Check any
+    over-the-edge spine against the profile it crosses.
+  - Fountain: tier-two flare is scallop-gadrooned; BOTH raised tiers hold
+    standing water (two one-draw ripple discs on the reflecting-pool
+    recipe — jets now fire out of pools, not dry marble); eight bronze fish
+    leap around the tier-one dish (one merged crescent: torus-arc body with
+    head sphere + tail cone closing BOTH open arc ends — the banquette
+    rule); nacre bead swags sag between the crown horns.
+  - Carousel tack: reins from pommel to each species' bit point + brow
+    boss, built ONCE per kind and cached (tackGeometry Map) — 20 mounts
+    cost 20 draws, not 60. Chariot gained a closed shell fan (squashed full
+    sphere, never a half-primitive) and side grab rails.
+  - Torrent cars: +2 draws/car — merged brass trim (six engine-bay louvres
+    + bow roundel rings) and merged nacre roundel discs, max reach 0.45
+    inside the 0.62 audited half-width.
+  - Pearl cabins: all inside the existing four slots — corner gussets to
+    the side eave rails, ridge-end bead finials (kept at z ±1.0 so the
+    audited z-size stays under 2.2), and bench legs (the seats floated).
+  - Midway: narwhal got carved marble splash ripples + two leaping bronze
+    companions; pearl diver got flush lane rails on the incline (offset
+    along the ramp's rotated up-axis, visual only); the kraken tower got
+    its eye (nacre sclera, iron pupil, brass lid) above the rungs.
+  - Small wildlife: seahorse body is ring-plated (radius ripple fading
+    where the tail thins); turtle shells wear scute seams as CONTOUR LINES
+    of one plate field (fract-band distance → seam grooves + per-plate
+    mottle, top-masked); butterflies carry authored wing markings (dark
+    scalloped border + one eyespot per forewing) gated by the flutter
+    channel so bodies stay plain. Contour-lines-of-a-field is a good
+    generic trick for organic plating.
+- 2026-07-13 inspection fixes (Scott's screenshots):
+  - **Wheel lattice pierced the gondolas** — the clearance had been computed
+    for the PIVOT, not the swung-down hull: a car hangs 2.02 m below its
+    pivot and the hang direction sweeps every in-plane direction over a
+    revolution, so car-fixed matter fills an in-plane disc of radius ≈2.8 m
+    around each pivot for all |z| ≤ 1.14. NO member may cross the inter-rim
+    space near the rim circle. The rims are now triangulated IN THEIR OWN
+    PLANES (48-node zigzag between outer/inner hoops at z ±1.35, one
+    96-instance draw); the rim pair is tied across z only by the pivot
+    axles. Rule: rotating-frame clearance must be checked against the full
+    SWEPT VOLUME of suspended parts, not their anchor points.
+  - **Lamp cap/bead floated above the globe** — the cone cap's base radius
+    (0.2) exceeded the globe radius (0.19), so it could never touch the
+    sphere. Lantern heads now compute a real contact latitude: cap base
+    r = 0.66·R seats at y = √(R²−r²) on the sphere; a calyx cup cradles the
+    glass from below to the equator. Rule: anything "capping" a sphere must
+    derive its seat height from the sphere equation, never eyeballed.
+  - **Pearl-cabin ridge beads hovered** — placed at the roof Bézier's
+    CONTROL height (2.2) but a quadratic curve peaks at ≈2.02; control
+    points are not on the curve. Beads now half-sink into the actual crown.
+  - **Torrent screen** removed by ruling: the glass dome read as nothing
+    underwater and its centre mount strut read as a bare rod stuck in the
+    deck. The brass hoop + side mounts stay as a racing wind hoop.
+  - **Teleport menu**: every FACILITY_ENTRANCE_SIGNS entry now carries a
+    subtitle (tidal-court, leviathan-overlook, jelly-court, turtle-lagoon
+    added — the menu AND the physical sign atlas both render it), and the
+    menu's back key is Q (hint + handler); Esc still silently closes the
+    menu before cascading to the pause card so pause never captures a
+    frozen input state.

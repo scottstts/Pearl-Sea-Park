@@ -1,15 +1,40 @@
 import {
+  CatmullRomCurve3,
   CircleGeometry,
   Color,
+  CylinderGeometry,
+  DoubleSide,
+  InstancedMesh,
   LatheGeometry,
+  Matrix4,
   Mesh,
   Object3D,
+  PlaneGeometry,
   PointLight,
+  SphereGeometry,
   TorusGeometry,
+  TubeGeometry,
   Vector2,
+  Vector3,
 } from 'three'
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
-import { cameraPosition, float, mix, normalGeometry, normalize, positionWorld, sin, uniform, vec3 } from 'three/tsl'
+import {
+  cameraPosition,
+  float,
+  mix,
+  normalGeometry,
+  normalize,
+  positionLocal,
+  positionWorld,
+  sin,
+  smoothstep,
+  uniform,
+  uv,
+  vec2,
+  vec3,
+} from 'three/tsl'
+import { fbm2 } from '../render/tslNoise'
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
@@ -117,6 +142,85 @@ export class ParkAssemblySystem implements GameSystem {
       }
     }
     detailEsplanade({ kit, writer: w, materials: lib, physics }, espY)
+
+    // ── Esplanade banners: the boulevard's swaying silk (design §3) ───────
+    // Swallow-tail pennants on brass rods off every other column, all one
+    // merged mesh + one silk material. The cloth sways in the vertex stage:
+    // the merge bakes world coordinates into positionLocal, so each banner
+    // phases by its own z and the hem (uv.y→0) swings while the rod edge
+    // holds still. No shadow casting — a cached static shadow of moving
+    // cloth would freeze mid-flap.
+    {
+      const bannerProto = new PlaneGeometry(0.85, 2.3, 5, 12)
+      {
+        const position = bannerProto.getAttribute('position')
+        const vertex = new Vector3()
+        for (let i = 0; i < position.count; i++) {
+          vertex.fromBufferAttribute(position, i)
+          const t = Math.max(0, Math.min(1, (-vertex.y - 0.45) / 0.7))
+          const notch = 0.45 * (1 - Math.abs(vertex.x) / 0.425) * t
+          position.setY(i, vertex.y + notch)
+        }
+        position.needsUpdate = true
+        bannerProto.computeVertexNormals()
+      }
+      const silk = new MeshStandardNodeMaterial()
+      silk.side = DoubleSide
+      const bannerUv = uv()
+      const border = smoothstep(0.4, 0.44, bannerUv.x.sub(0.5).abs()).max(
+        smoothstep(0.925, 0.955, bannerUv.y),
+      )
+      const emblemDistance = vec2(
+        bannerUv.x.sub(0.5),
+        bannerUv.y.sub(0.66).mul(2.7),
+      ).length()
+      const emblemDisc = smoothstep(0.1, 0.085, emblemDistance)
+      const emblemRing = smoothstep(0.016, 0.002, emblemDistance.sub(0.115).abs())
+      const silkSheen = fbm2(positionLocal.xz.mul(3.0).add(positionLocal.y)).mul(0.08)
+      const teal = vec3(0.09, 0.3, 0.3).add(silkSheen)
+      const gold = vec3(0.85, 0.68, 0.34)
+      silk.colorNode = mix(mix(teal, gold, border.max(emblemRing)), vec3(0.93, 0.9, 0.85), emblemDisc)
+      silk.roughnessNode = mix(float(0.62), float(0.34), border.max(emblemRing).max(emblemDisc))
+      silk.metalnessNode = border.max(emblemRing).mul(0.8)
+      const hemWeight = float(1).sub(uv().y)
+      const swayPhase = positionLocal.z.mul(0.35)
+      silk.positionNode = positionLocal.add(
+        vec3(
+          sin(this.timeUniform.mul(1.1).add(swayPhase)).mul(hemWeight.mul(hemWeight)).mul(0.17),
+          0,
+          sin(this.timeUniform.mul(2.4).add(positionLocal.y.mul(1.8)).add(swayPhase))
+            .mul(hemWeight)
+            .mul(0.05),
+        ),
+      )
+      const bannerParts: PlaneGeometry[] = []
+      const rodProto = new CylinderGeometry(0.025, 0.025, 0.95, 8)
+      rodProto.rotateZ(Math.PI / 2)
+      const rodBall = new SphereGeometry(0.05, 10, 8)
+      const rodY = espY + 5.65
+      for (let z = esp.zTo + 6; z <= esp.zFrom - 6; z += columnGap * 2) {
+        for (const side of [-1, 1]) {
+          const columnX = esp.x + side * (esp.width / 2 + 0.8)
+          const rodMatrix = new Matrix4().setPosition(columnX - side * 0.5, rodY, z)
+          w.emit(lib.brass, rodProto, rodMatrix)
+          w.place(lib.brass, rodBall, columnX - side * 0.98, rodY, z)
+          const banner = bannerProto.clone()
+          banner.rotateY(side > 0 ? -Math.PI / 2 : Math.PI / 2)
+          banner.translate(columnX - side * 0.62, rodY - 1.18, z)
+          bannerParts.push(banner)
+        }
+      }
+      const bannerGeometry = mergeGeometries(bannerParts, false)
+      for (const part of bannerParts) part.dispose()
+      bannerProto.dispose()
+      if (bannerGeometry) {
+        const banners = new Mesh(bannerGeometry, silk)
+        banners.castShadow = false
+        banners.receiveShadow = true
+        banners.name = 'esplanade-banners'
+        group.add(banners)
+      }
+    }
 
     // ── Tidal Court: hub colonnade ring + reflecting pool ─────────────────
     const hub = PARK_PLAN.tidalCourt
@@ -242,6 +346,47 @@ export class ParkAssemblySystem implements GameSystem {
       lamp(mid.x - mid.width / 2 + 4 + i * ((mid.width - 8) / 3), midY, mid.z - mid.depth / 2 - 2, i % 2 === 0)
     }
     detailMidway({ kit, writer: w, materials: lib, physics }, midY)
+
+    // ── Midway festoons: warm bulb strings swagged along both eaves ───────
+    // The design doc's "warm bulbs" hall signature: sagging catenary wires
+    // between the column heads (merged into the iron slot) with one
+    // instanced draw of lamp globes riding them.
+    {
+      const festoonBulbs: Vector3[] = []
+      for (const side of [-1, 1]) {
+        const z = mid.z + (side * mid.depth) / 2
+        for (let i = 0; i < hallColumns; i++) {
+          const fromX = mid.x - mid.width / 2 + (i / hallColumns) * mid.width
+          const toX = mid.x - mid.width / 2 + ((i + 1) / hallColumns) * mid.width
+          const hangY = midY + 5.45
+          const from = new Vector3(fromX, hangY, z)
+          const to = new Vector3(toX, hangY, z)
+          const middle = from.clone().add(to).multiplyScalar(0.5)
+          middle.y -= 0.55
+          const curve = new CatmullRomCurve3([from, middle, to])
+          const wire = new TubeGeometry(curve, 16, 0.018, 6)
+          w.emit(lib.iron, wire)
+          wire.dispose()
+          for (let bulb = 1; bulb <= 6; bulb++) {
+            festoonBulbs.push(curve.getPoint(bulb / 7).add(new Vector3(0, -0.06, 0)))
+          }
+        }
+      }
+      const festoon = new InstancedMesh(
+        new SphereGeometry(0.065, 8, 6),
+        lib.lampGlobe,
+        festoonBulbs.length,
+      )
+      const bulbMatrix = new Matrix4()
+      festoonBulbs.forEach((at, i) => {
+        bulbMatrix.setPosition(at.x, at.y, at.z)
+        festoon.setMatrixAt(i, bulbMatrix)
+      })
+      festoon.instanceMatrix.needsUpdate = true
+      festoon.castShadow = false
+      festoon.name = 'midway-festoons'
+      group.add(festoon)
+    }
 
     // ── Café Méduse ───────────────────────────────────────────────────────
     const cafe = PARK_PLAN.cafe

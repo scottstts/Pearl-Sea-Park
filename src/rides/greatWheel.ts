@@ -1,12 +1,12 @@
 import {
   BoxGeometry,
-  ConeGeometry,
   CylinderGeometry,
   InstancedMesh,
   LatheGeometry,
   Matrix4,
   Mesh,
   Object3D,
+  Quaternion,
   SphereGeometry,
   TorusGeometry,
   Vector2,
@@ -88,6 +88,7 @@ export class GreatWheelSystem implements GameSystem {
     const hy = PARK_PLAN.wheel.hubY
 
     // ── Static structure: legs, axle, pier ────────────────────────────────
+    const legCollarGeometry = new TorusGeometry(0.62, 0.075, 8, 20)
     for (const sideZ of [-1, 1]) {
       for (const sideX of [-1, 1]) {
         const footX = hx + sideX * 11
@@ -103,6 +104,17 @@ export class GreatWheelSystem implements GameSystem {
         leg.lookAt(top)
         leg.rotateX(Math.PI / 2)
         this.group.add(leg)
+        // Riveted flange couplings along the raked shaft — the segmented
+        // engineering read every other pile in the park already carries.
+        const legAxis = new Vector3().subVectors(top, foot).normalize()
+        for (const t of [0.3, 0.55, 0.8]) {
+          const collar = new Mesh(legCollarGeometry, lib.verdigris)
+          collar.position.copy(foot).addScaledVector(legAxis, length * t)
+          collar.quaternion.setFromUnitVectors(new Vector3(0, 0, 1), legAxis)
+          const shrink = 1 - t * 0.35 // legs taper toward the hub
+          collar.scale.set(shrink, shrink, 1)
+          this.group.add(collar)
+        }
         // Footing collar so the leg reads planted, not stabbed into sand.
         const collar = new Mesh(new CylinderGeometry(1.05, 1.35, 0.6, 14), lib.verdigris)
         collar.position.set(footX, footY + 0.25, footZ)
@@ -122,6 +134,20 @@ export class GreatWheelSystem implements GameSystem {
     axle.rotation.x = Math.PI / 2
     axle.position.set(hx, hy, hz)
     this.group.add(axle)
+    // Journal bearings where the leg pairs meet the axle: a housed brass
+    // ring and end rosette on each side, so the axle visibly rides in
+    // something instead of floating through the frame.
+    for (const side of [-1, 1]) {
+      const bearing = new Mesh(new TorusGeometry(0.68, 0.16, 10, 24), lib.brass)
+      bearing.position.set(hx, hy, hz + side * 2.55)
+      const housing = new Mesh(new CylinderGeometry(0.85, 0.95, 0.4, 16), lib.iron)
+      housing.rotation.x = Math.PI / 2
+      housing.position.set(hx, hy, hz + side * 2.85)
+      const rosette = new Mesh(new CylinderGeometry(0.62, 0.55, 0.12, 16), lib.brass)
+      rosette.rotation.x = Math.PI / 2
+      rosette.position.set(hx, hy, hz + side * 3.55)
+      this.group.add(bearing, housing, rosette)
+    }
 
     // The pier: boardwalk from the basin rim toward the wheel. It ends at
     // hx − 21.4 — outside the rotor's sweep envelope (rim reaches hx − 20.32,
@@ -154,6 +180,11 @@ export class GreatWheelSystem implements GameSystem {
     // ── Rotor: rims, spokes, lattice, hub, gondola pivots ─────────────────
     const rotor = this.rotor
     rotor.position.copy(this.hub)
+    const turnbuckleGeometry = new CylinderGeometry(0.17, 0.17, 0.64, 10)
+    const turnbuckles = new InstancedMesh(turnbuckleGeometry, lib.brass, 32)
+    const turnbucklePose = new Matrix4()
+    const turnbuckleSpin = new Matrix4()
+    let turnbuckleIndex = 0
     for (const sideZ of [-1.35, 1.35]) {
       const rimOuter = new Mesh(new TorusGeometry(RADIUS, 0.32, 10, 96), lib.iron)
       rimOuter.position.z = sideZ
@@ -170,36 +201,61 @@ export class GreatWheelSystem implements GameSystem {
         )
         spoke.rotation.z = -angle
         rotor.add(spoke)
+        // Turnbuckle sleeve mid-spoke: the tensioning hardware that makes a
+        // wire wheel read as rigging rather than sticks (one instanced draw).
+        turnbuckleSpin.makeRotationZ(-angle)
+        turnbucklePose
+          .copy(turnbuckleSpin)
+          .setPosition(Math.sin(angle) * (RADIUS * 0.62), Math.cos(angle) * (RADIUS * 0.62), sideZ)
+        turnbuckles.setMatrixAt(turnbuckleIndex++, turnbucklePose)
       }
     }
-    // Cross-lattice between the rim pair: a zigzag of thin struts so the two
-    // wheels read as one braced machine instead of parallel hoops. Nodes sit
-    // every 15° so they land exactly on the gondola pivot angles at the rims
-    // (bracing visibly into the pivot bosses) and the struts cross the
-    // gondola plane (z = 0) a full 7.5° ≈ 2.6 m from every pivot. The
-    // previous 11.25° lattice crossed that plane 0.65 m from half the
-    // pivots — centimetres from a rider's camera hanging under the axle —
-    // and no phase shift could widen it.
-    const latticeProto = new CylinderGeometry(0.065, 0.065, 1, 8)
+    turnbuckles.instanceMatrix.needsUpdate = true
+    rotor.add(turnbuckles)
+    // Rim truss: each wheel face is triangulated IN ITS OWN PLANE — a zigzag
+    // of struts between the outer (R) and inner (R−1.1) hoops at z ±1.35,
+    // one instanced draw for all 96. The rim pair is tied across z only by
+    // the twelve pivot axles, exactly like a riveted Ferris wheel.
+    //
+    // NO member may cross the space between the rims: a gondola hangs 2.02 m
+    // below its pivot and the hang direction sweeps every in-plane direction
+    // over a revolution, so car-fixed matter fills an in-plane disc of
+    // radius ≈ 2.8 m around each pivot for all |z| ≤ 1.14 (the hull radius).
+    // The old inter-rim zigzag crossed z = 0 only 2.63 m from the pivots and
+    // pierced the hull rims at the 3/9 o'clock positions — the clearance had
+    // been computed for the pivot point, not the swung-down hull. In-plane
+    // bracing at |z| = 1.35 stays 0.15 m clear of the cars by construction.
     const upAxis = new Vector3(0, 1, 0)
-    const latticeNode = (j: number) => {
-      const angle = (j / 24) * Math.PI * 2
-      return new Vector3(
-        Math.sin(angle) * RADIUS,
-        Math.cos(angle) * RADIUS,
-        j % 2 === 0 ? 1.35 : -1.35,
-      )
+    const TRUSS_NODES = 48
+    const innerRadius = RADIUS - 1.1
+    const trussNode = (j: number, sideZ: number) => {
+      const angle = (j / TRUSS_NODES) * Math.PI * 2
+      const radius = j % 2 === 0 ? RADIUS : innerRadius
+      return new Vector3(Math.sin(angle) * radius, Math.cos(angle) * radius, sideZ)
     }
-    for (let j = 0; j < 24; j++) {
-      const from = latticeNode(j)
-      const to = latticeNode((j + 1) % 24)
-      const direction = new Vector3().subVectors(to, from)
-      const strut = new Mesh(latticeProto, lib.iron)
-      strut.position.copy(from).add(to).multiplyScalar(0.5)
-      strut.quaternion.setFromUnitVectors(upAxis, direction.clone().normalize())
-      strut.scale.set(1, direction.length(), 1)
-      rotor.add(strut)
+    const trussLength = trussNode(0, 1.35).distanceTo(trussNode(1, 1.35))
+    const trussProto = new CylinderGeometry(0.06, 0.06, trussLength, 8)
+    const truss = new InstancedMesh(trussProto, lib.iron, TRUSS_NODES * 2)
+    const trussPose = new Matrix4()
+    const trussQuaternion = new Quaternion()
+    let trussIndex = 0
+    for (const sideZ of [-1.35, 1.35]) {
+      for (let j = 0; j < TRUSS_NODES; j++) {
+        const from = trussNode(j, sideZ)
+        const to = trussNode((j + 1) % TRUSS_NODES, sideZ)
+        const direction = new Vector3().subVectors(to, from).normalize()
+        trussQuaternion.setFromUnitVectors(upAxis, direction)
+        trussPose.makeRotationFromQuaternion(trussQuaternion)
+        trussPose.setPosition(
+          (from.x + to.x) / 2,
+          (from.y + to.y) / 2,
+          sideZ,
+        )
+        truss.setMatrixAt(trussIndex++, trussPose)
+      }
     }
+    truss.instanceMatrix.needsUpdate = true
+    rotor.add(truss)
     const drum = new Mesh(new CylinderGeometry(2.1, 2.1, 3.4, 24), lib.verdigris)
     drum.rotation.x = Math.PI / 2
     rotor.add(drum)
@@ -223,12 +279,17 @@ export class GreatWheelSystem implements GameSystem {
       rotor.add(cap)
     }
 
-    // Bulbs along both rims (instanced, warm emissive).
+    // Bulbs along both rims (instanced, warm emissive) strung on their own
+    // thin brass carrier wires — lights on wiring, not floating beads.
     const bulbCount = 48 * 2
     const bulbs = new InstancedMesh(new SphereGeometry(0.11, 8, 6), lib.lampGlobe, bulbCount)
     const matrix = new Matrix4()
     let b = 0
     for (const sideZ of [-1.75, 1.75]) {
+      const wire = new Mesh(new TorusGeometry(RADIUS, 0.022, 6, 128), lib.brass)
+      wire.position.z = sideZ
+      wire.castShadow = false
+      rotor.add(wire)
       for (let i = 0; i < 48; i++) {
         const angle = (i / 48) * Math.PI * 2
         matrix.setPosition(Math.sin(angle) * RADIUS, Math.cos(angle) * RADIUS, sideZ)
@@ -261,8 +322,30 @@ export class GreatWheelSystem implements GameSystem {
         new Vector2(0.03, 0.4),
         new Vector2(0.03, 0),
       ],
-      30,
+      48,
     )
+    // Nautilus scallop: fourteen shell flutes carved into the belly of the
+    // lathe (fading to nothing at the floor and the rolled rim), so the
+    // gondolas read as grown shells rather than turned cups. Same envelope
+    // — the flutes ripple ±1.8 cm on a 1.14 m hull.
+    {
+      const position = hullGeometry.getAttribute('position')
+      const vertex = new Vector3()
+      for (let i = 0; i < position.count; i++) {
+        vertex.fromBufferAttribute(position, i)
+        const radial = Math.hypot(vertex.x, vertex.z)
+        if (radial < 0.05) continue
+        const angle = Math.atan2(vertex.x, vertex.z)
+        const belly = Math.max(0, Math.min(1, (vertex.y - 0.08) / 0.4))
+          * Math.max(0, Math.min(1, (1.18 - vertex.y) / 0.25))
+        const flute = Math.cos(angle * 14) * 0.018 * belly
+        const scale = 1 + flute / Math.max(radial, 0.2)
+        position.setX(i, vertex.x * scale)
+        position.setZ(i, vertex.z * scale)
+      }
+      position.needsUpdate = true
+      hullGeometry.computeVertexNormals()
+    }
     // Ring bench with its opening toward local −x; finished ends.
     const benchGeometry = new LatheGeometry(
       [
@@ -282,7 +365,21 @@ export class GreatWheelSystem implements GameSystem {
       Math.PI * 1.5,
     )
     const benchPanel = new BoxGeometry(0.05, 0.44, 0.3)
-    const keelGeometry = new ConeGeometry(0.26, 0.5, 12)
+    // Keel: a turned drop-finial (bead, cove, tip) instead of a bare cone —
+    // the underside detail every gondola shows the guests below it.
+    const keelGeometry = new LatheGeometry(
+      [
+        new Vector2(0.0, -0.52),
+        new Vector2(0.07, -0.46),
+        new Vector2(0.1, -0.34),
+        new Vector2(0.06, -0.26),
+        new Vector2(0.17, -0.18),
+        new Vector2(0.24, -0.08),
+        new Vector2(0.26, 0.0),
+      ],
+      14,
+    )
+    const lipGeometry = new TorusGeometry(1.015, 0.035, 8, 48)
     const armProto = new CylinderGeometry(0.05, 0.065, 1, 10)
     const gatePost = new CylinderGeometry(0.028, 0.034, 0.36, 8)
     const gateBall = new SphereGeometry(0.045, 8, 6)
@@ -302,9 +399,12 @@ export class GreatWheelSystem implements GameSystem {
       const bench = new Mesh(benchGeometry, lib.woodDark)
       bench.position.y = -1.62
       const keel = new Mesh(keelGeometry, lib.verdigris)
-      keel.rotation.x = Math.PI
-      keel.position.y = -2.2
-      car.add(hull, bench, keel)
+      keel.position.y = -2.02
+      // Brass gunwale band dressing the rolled rim.
+      const lip = new Mesh(lipGeometry, lib.brass)
+      lip.rotation.x = Math.PI / 2
+      lip.position.y = -0.78
+      car.add(hull, bench, keel, lip)
       // Bench end panels close the partial lathe's open cross-sections.
       for (const phi of [Math.PI * 1.25, Math.PI * 2.75]) {
         const panel = new Mesh(benchPanel, lib.woodDark)

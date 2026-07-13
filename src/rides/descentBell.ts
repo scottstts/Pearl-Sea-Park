@@ -123,6 +123,11 @@ export class DescentBellSystem implements GameSystem {
     const bottomRing = new Mesh(new TorusGeometry(1.26, 0.07, 10, 40), lib.brass)
     bottomRing.rotation.x = Math.PI / 2
     bottomRing.position.y = 0.18
+    // Hemp fender skirting the landing ring — the bell touches down on rope,
+    // not on bare brass, and the warm fibre band grounds the whole silhouette.
+    const fender = new Mesh(new TorusGeometry(1.35, 0.065, 9, 44), lib.rope)
+    fender.rotation.x = Math.PI / 2
+    fender.position.y = 0.1
     const midRing = new Mesh(new TorusGeometry(1.29, 0.05, 8, 40), lib.brass)
     midRing.rotation.x = Math.PI / 2
     midRing.position.y = 1.1
@@ -138,7 +143,26 @@ export class DescentBellSystem implements GameSystem {
     crown.position.y = crownCenterY
     const hook = new Mesh(new TorusGeometry(0.12, 0.035, 8, 18), lib.brass)
     hook.position.y = 3.02
-    this.car.add(shell, floor, bottomRing, midRing, crown, hook)
+    this.car.add(shell, floor, fender, bottomRing, midRing, crown, hook)
+    // Compass rose inlaid in the cabin floor: a nacre ring, four brass
+    // cardinal needles, and a pearl boss — the detail a seated guest looks
+    // straight down at through the whole descent.
+    const roseRing = new Mesh(new TorusGeometry(0.78, 0.022, 6, 40), lib.nacre)
+    roseRing.rotation.x = Math.PI / 2
+    roseRing.position.y = 0.155
+    this.car.add(roseRing)
+    const needleGeometry = new BoxGeometry(0.05, 0.012, 0.72)
+    for (let i = 0; i < 4; i++) {
+      const needle = new Mesh(needleGeometry, lib.brass)
+      needle.position.y = 0.155
+      needle.rotation.y = (i / 4) * Math.PI * 2 + Math.PI / 4
+      needle.position.x = Math.sin(needle.rotation.y) * 0.38
+      needle.position.z = Math.cos(needle.rotation.y) * 0.38
+      this.car.add(needle)
+    }
+    const roseBoss = new Mesh(new SphereGeometry(0.055, 12, 9), lib.nacre)
+    roseBoss.position.y = 0.16
+    this.car.add(roseBoss)
     // Four external cage ribs hugging the glass from the bottom ring to the
     // crown: three struts each, knuckled with sphere joints, seated on the
     // ring and reaching the crown base. (The old single tilted staves had

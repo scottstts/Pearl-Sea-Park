@@ -96,3 +96,20 @@
   now 'Sun Garden' at the garden door (the eight-pocket book stays full).
 - The wishing well's water sim moved to src/sea/channelSim.ts (the Grotto,
   its former home, no longer exists).
+
+## 2026-07-13 craft pass
+
+- Wishing well is now the storybook silhouette: coping posts, verdigris
+  gable (notice-board roof convention — ridge along X, panels pitch about
+  X), brass windlass with rope wraps and crank, and a hemp line down to a
+  banded wooden pail over the water. Physics unchanged (posts rise from the
+  already-collidered coping).
+- Penny presses gained a barrel pediment (a FULL squashed cylinder half-sunk
+  into the cabinet — a half-cylinder cap shows its open cut plane from
+  below), nacre motif plaque, and brass corner pilasters. Sweets kiosk:
+  scalloped parasol (displaced cone hem), pearl finial, and two glass
+  cloches with real stock (wafer-cone scoops, nacre bonbons). Prize counter:
+  backwall shelves with a pearl bowl and ribboned boxes so it reads stocked
+  before any prize is won. Midway counters share the scalloped-parasol hem.
+- The Kraken Bell, Ring-the-Narwhal, and Pearl Diver fixtures kept their
+  2026-07-12 redesigns untouched (fresh by ruling).
