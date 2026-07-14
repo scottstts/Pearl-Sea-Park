@@ -230,11 +230,16 @@ export class BubbleFountainSystem implements GameSystem {
     }
 
     const showGlow = this.active || this.validation ? 1 : 1 - blend
+    // Keep the four lights in Three's scene-light topology. Toggling a
+    // Light's visibility changes the LightsNode cache key and synchronously
+    // rebuilds every lit RenderObject/WGSL program in the park. Exact-zero
+    // intensity below the old visibility cutoff is visually identical while
+    // leaving the shader topology stable.
+    const lightingGlow = showGlow > 0.02 ? showGlow : 0
     for (let index = 0; index < this.lights.length; index++) {
       const pulse = 0.72 + 0.28 * Math.sin(this.localTime * 2.1 + index * 1.7)
       this.lights[index].intensity =
-        this.envelopeUniform.value * pulse * (this.warmthUniform.value > 0.5 ? 19 : 13) * showGlow
-      this.lights[index].visible = showGlow > 0.02
+        this.envelopeUniform.value * pulse * (this.warmthUniform.value > 0.5 ? 19 : 13) * lightingGlow
     }
 
     if (this.debugCanvas && ctx.time.frame % 30 === 0) {
@@ -785,7 +790,6 @@ export class BubbleFountainSystem implements GameSystem {
       const angle = (index / 4) * Math.PI * 2 + Math.PI / 4
       const light = new PointLight(index % 2 === 0 ? 0x4ad9ff : 0xffb347, 0, 42, 1.45)
       light.position.set(x + Math.sin(angle) * 17, y + 1.1, z + Math.cos(angle) * 17)
-      light.visible = false
       this.group.add(light)
       this.lights.push(light)
     }

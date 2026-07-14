@@ -1,6 +1,16 @@
 import { BufferAttribute, BufferGeometry, Color, Mesh, Object3D } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
-import { Fn, mix, normalGeometry, normalize, positionWorld, sin, vec2, vec3 } from 'three/tsl'
+import {
+  Fn,
+  mix,
+  normalGeometry,
+  normalize,
+  positionWorld,
+  sin,
+  transformNormalToView,
+  vec2,
+  vec3,
+} from 'three/tsl'
 import { registerBookmark } from '../core/debug'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 import type { GameContext } from '../runtime/context'
@@ -87,7 +97,12 @@ export function createSandMaterial(medium: SeaMediumSystem): MeshStandardNodeMat
     const band2 = sin(xz.x.mul(-1.0).add(xz.y.mul(2.3)).add(warp.mul(1.4)))
     const micro = valueNoise2(xz.mul(7.0)).sub(0.5).mul(0.24)
     const slope = vec2(band.mul(0.08), band2.mul(0.06)).add(micro)
-    return normalize(normalGeometry.add(vec3(slope.x, 0, slope.y)))
+    // NodeMaterial.normalNode is a view-space hook. Keep the authored ripple
+    // field in terrain-local space, then transform the resolved normal exactly
+    // once; passing the local vector through directly made the sun rotate
+    // around a camera-fixed normal as the player looked around.
+    const localNormal = normalize(normalGeometry.add(vec3(slope.x, 0, slope.y)))
+    return transformNormalToView(localNormal)
   })()
 
   medium.applyCaustics(material, 1.15)

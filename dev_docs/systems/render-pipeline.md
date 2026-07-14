@@ -104,3 +104,11 @@ Choices beyond the code:
   lifted, so every render/compute/shadow pipeline is created *and used* once
   behind the ticket. Validation modes (`?view`/`?pass`/`?fixedTime`) skip it
   for fast reloads and accept first-sight stutter instead.
+- **Runtime light membership is shader topology in Three r185.** Adding,
+  removing, hiding, or layer-excluding a `Light` changes `LightsNode`'s cache
+  key and synchronously rebuilds every lit RenderObject/WGSL program in the
+  scene; async pipeline warmup cannot prevent that main-thread graph rebuild.
+  Scheduled lights must remain members and animate a uniform value instead.
+  The Bubble Fountain keeps all four point lights visible and drives intensity
+  to exact zero at its former 0.02 visibility cutoff, preserving the image
+  without topology churn.

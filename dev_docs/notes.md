@@ -1124,3 +1124,32 @@
     · Wishing-well pennies built a NEW CylinderGeometry per toss and never
       disposed it — runtime prototypes must be created once and reused (the
       amenity rule applies to spawned props too).
+- 2026-07-14 sand-normal + residual roaming-freeze pass (both reproduced and
+  isolated before editing):
+  - **Sand failure was a coordinate-space bug, not exposure/fog/caustics.**
+    `?pass=no-post` preserved the dark fill and `?pass=normal` showed the
+    terrain normal staying camera-fixed as the view pitched down. Three r185's
+    `MeshStandardNodeMaterial.normalNode` hook is view-space, but terrain.ts
+    returned the locally authored ripple normal directly. The material now
+    resolves the same local field and transforms it once with
+    `transformNormalToView`; no color, wave, caustic, fog, light, or grading
+    value changed.
+  - **The residual freeze was a scheduled whole-scene shader rebuild.** The
+    fountain faded its four PointLights by intensity and then toggled
+    `.visible` at six seconds. That removed four light IDs from Three's
+    `LightsNode` key: instrumentation measured 84 synchronous live pipeline
+    requests at t=5.89 s followed by 1.88 s + 0.37 s blocked frames. The
+    inverse transition recurred when the scheduled show began at t=90 s.
+  - Driver warmup was not the remaining answer. Even with both pipeline
+    variants retained, the pause remained because light-key invalidation
+    rebuilds every RenderObject/NodeBuilder state on the main thread. Small
+    InstancedMeshes made the miss especially pathological: semantically
+    identical WGSL differed only by a regenerated `NodeBuffer_<id>` name.
+    All warmup/pinning/padding experiments were reverted.
+  - Final fix: the four fountain lights remain scene members, and their
+    intensity becomes exact zero at the same `showGlow <= 0.02` cutoff where
+    visibility previously became false. Output and scheduling are unchanged;
+    only shader topology stays stable. A tier-2 scripted full park circuit
+    crossing the 90 s show start produced zero runtime pipeline creations,
+    zero >120 ms frames, ~8.2 ms steady CPU frames, and static-shadow refresh
+    CPU <=0.8 ms. Restore the normal >40 ms telemetry threshold after probes.

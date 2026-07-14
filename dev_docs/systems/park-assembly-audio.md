@@ -173,3 +173,13 @@
   columns, moulded arches with keystones, dome latitude rings + tip pearl,
   glazing-barred roofs, plaza medallions, instrument-grade ticket machine)
   with no per-district changes.
+
+## 2026-07-14 runtime-stability update
+
+- Fountain point-light membership is permanent. `BubbleFountainSystem` no
+  longer toggles `PointLight.visible` at the end of its six-second fade or on
+  scheduled show transitions; doing so changes Three's scene-wide LightsNode
+  shader key and rebuilds the entire park on the main thread. The old visual
+  cutoff is preserved exactly by setting intensity to zero whenever
+  `showGlow <= 0.02`. Never schedule a light by adding/removing it or changing
+  visibility/layers; keep topology fixed and animate intensity/color uniforms.
