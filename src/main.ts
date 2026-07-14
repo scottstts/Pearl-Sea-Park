@@ -157,7 +157,7 @@ async function boot(): Promise<void> {
       registry.add(new TeleportSystem(player, services.interaction, terrainHeight))
     }
     registry.add(new DescentBellSystem(services, player))
-    registry.add(new SubmarineSystem(services, player, medium))
+    registry.add(new SubmarineSystem(services, player, medium, sea))
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))
     registry.add(new TorrentSystem(services, player))

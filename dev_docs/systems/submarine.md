@@ -71,11 +71,33 @@ settles millimetres into the sand).
   (so wildlife avoidance, wheel/pearl dock sensors, and ride exits all see
   the pilot where the sub is) and is **excluded from the sub's queries** via
   the controller filter predicate.
-- Vertical envelope: ceiling at hull axis = 0 (**half-surfaced** — dome and
-  collar ride above the waves; the ocean shader owns the pierce, per the
-  no-bespoke-foam ruling); floor at the rest height over `terrainHeight`
-  (the same authority as physics/visuals, so basins and the drop-off cliff
-  all work unmodified).
+- Vertical envelope: floor at the rest height over `terrainHeight` (the same
+  authority as physics/visuals, so basins and the drop-off cliff all work
+  unmodified). The surface ceiling is not a clamp but **buoyancy** (below).
+- **Surface floating (semi-physics)**: `sea/buoyancyProbe.ts` samples the
+  TRUE displaced wave height at three hull points (bow, stern, starboard
+  beam) on the GPU — same cascades + fixed-point choppy correction as the
+  waterline probe, own storage buffer, async CPU readback, and it never
+  touches the waterline probe's same-frame visual state. Near the surface a
+  damped spring (4.0/3.2, stiffening to 12/5 once the axis breaches — water
+  pushes back harder than it lets go) heaves the hull with the rendered
+  swell instead of pinning it at y = 0; bow/stern and beam height
+  differences become smoothed wave pitch/roll, weighted by surfacedness.
+  Arriving at full ascent overshoots and plops, then settles into the bob.
+  Space cannot fly the hull out (spring owns up-motion in the float band);
+  Shift dives away normally. Probe dispatches only while under way within
+  8 m of the surface; a failsafe ceiling sits 0.75 m over the local wave.
+  The dome and collar ride above the waves half-surfaced; the ocean shader
+  owns the pierce (no-bespoke-foam ruling).
+- **The bob must survive the camera** (Scott's sighting: "the sub stays
+  still and the ocean moves"): a chase eye that follows the hull's heave
+  1:1 cancels the bob on screen no matter how well physics tracks it. The
+  eye keeps its own height reference — vertical follow at 0.45/s (vs
+  5.5/s planar) blending back to full speed once the height error exceeds
+  ~0.7 m (genuine dives/climbs) — while the LOOK target keeps tracking
+  fast, so the hull visibly ebbs and flows in frame. `?debug` exposes
+  `canvas.dataset.submarine` (y, probe heights, surfacedness, wave
+  attitude) as numeric evidence of the coupling.
 - **Force field**: circle centre (0, 10), radius 380 m — encloses every
   attraction including the Torrent abyss helix and the arrival buoy. Soft
   quadratic inward current over the last 28 m, hard wall at the radius.
@@ -110,12 +132,59 @@ settles millimetres into the sand).
 - The screw spins only under input: spin-up 3.0/s toward
   `22 rad/s × (0.35 + 0.65·command)`, coast-down 1.1/s — reverse thrust
   spins it the other way.
-- Wake = `SubmarineWake`: 240-instance GPU ring buffer. CPU writes only a
-  spawn record (origin on the prop disc, wash velocity opposite thrust);
-  drift/rise/wobble/growth/dissolve are vertex TSL against **absolute
-  elapsed time** (fountain recycling rule — never a resettable clock).
-  Bubbles fade approaching the displaced surface. Emission scales with spin
-  (≤80/s), rim-lit like the fountain's bubbles, one draw.
+- **A fast screw is an illusion, never a keyframe at the true rate**: an
+  8-blade wheel strobes at render cadence above ~10 rad/s. The mesh
+  rotation is clamped to 9 rad/s; a brass motion-blur annulus (chord-
+  weighted smear with eight faint ghost-blade arcs) fades in over
+  7→14 rad/s, the real blades hide once it carries the read (blur > 0.65),
+  and the ghost arcs drift at 10 % of shaft rate — the film-camera
+  wagon-wheel look. The disc is a **sibling** of the spinning group, its
+  pattern rotated only by the slow `ghost` uniform: parented to the shaft
+  it would strobe exactly like the blades it replaces.
+- Wake = `SubmarineWake`, **two regimes cross-faded by surfacedness**
+  (Scott's reference photos): submerged it is a dense milky turbulent cloud
+  with helical bubble glitter; surfaced it is a white boat-wake trail. Four
+  GPU ring-buffer pools, all motion vertex/fragment TSL against **absolute
+  elapsed time** (fountain recycling rule); the CPU only writes spawn
+  records:
+  - **Plume cloud** (512 puffs, ≤110/s underwater): soft milky spheres
+    shed across the disc, bulk-convected and bulk-swirled down the wake,
+    inflating ~2.6× over life. Fragment-stage `mx_noise` erosion (seeded,
+    age-scrolled, threshold tightening with age) carves each puff into an
+    irregular billow and breaks it apart downstream — volumetric and
+    irregular, never uniform smoke. This is what reads as the bright cloudy
+    mass; the bubbles below are the glitter inside it.
+  - **Surface foam** (512 patches, ≤110/s when surfaced, scaled by speed):
+    flattened pancake puffs churned out at the stern — 45 % thrown to the
+    stern quarters with lateral drive (the spreading V arms), the rest
+    boiling straight off the screw (the centre churn); the hull's own
+    advance paints the trail. Each patch's vertex stage **samples the same
+    displacement cascades the ocean renders with**, so foam is pinned to
+    the true displaced surface and rides the same waves as the hull. Noise
+    lacing tightens with age so sheets dissolve into lacy trailing edges.
+  - **Entrained bubbles** (2304 instances, ≤700/s underwater): each
+    record stores the hub centre, unit wake axis, and initial radial
+    vector. The shader advects it down a decaying helix — Rodrigues
+    rotation about the axis with swirl ∝ axialSpeed/(0.4+r₀), so the hub
+    vortex rope corkscrews fast and tight while tip filaments turn slower;
+    decaying axial convection with a slow residual; radial spreading;
+    size-correlated buoyant rise after an entrainment delay; and layered
+    positional + angular turbulence growing with age so filaments wander
+    and unravel downstream. 72 % of spawns cluster on the eight **live
+    blade angles** (± 0.12 rad) at the tip annulus — successive emissions
+    trace eight real interleaved tip-vortex filaments — and the rest seed
+    the hub rope. Per-spawn axial jitter (±25 %) smears the filaments into
+    turbulent streaks with distance.
+  - **Cavitation pockets** (128 instances): inception only above 16 rad/s
+    (~73 % shaft speed), rate ramping to 220/s. Soft-bodied vapour puffs
+    (full centre, faint silhouette — the inverse of a bubble's rim shell)
+    shed exactly at blade tips with the tip's tangential velocity plus a
+    short downstream kick, growing fast and collapsing faster (dead by
+    0.88 of a 0.07–0.18 s life).
+  - Both pools hide entirely once the last spawn has dissipated; bubbles
+    fade approaching the displaced surface; swirl handedness about the
+    wash axis is invariant under thrust reversal (sign(spin)·sign(wash)
+    ≡ −1), so no sign attribute is needed.
 - Emission position comes from `propeller.getWorldPosition()` — never
   hand-scaled local offsets through `localToWorld` (the group is scaled;
   pre-scaled locals double-apply).

@@ -8,7 +8,9 @@ import { PLAYER_CAPSULE_OFFSET } from '../player/player'
 import { markDynamicShadowCasters } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
+import { BuoyancyProbe } from '../sea/buoyancyProbe'
 import type { SeaMediumSystem } from '../sea/medium'
+import type { SeaSystem } from '../sea/seaSystem'
 import type { DistrictServices } from '../world/districts/atrium'
 import { terrainHeight } from '../world/terrain'
 import type { SubmarineModel } from './submarineModel'
@@ -33,11 +35,30 @@ const YAW_RESPONSE = 3.0
 const VERTICAL_RESPONSE = 2.4
 const ATTITUDE_RESPONSE = 3.0 // cosmetic pitch/bank easing
 
-// The craft may breach to half-surfaced (hull axis at mean sea level) and
-// may never push its belly into the seabed. The piloting floor equals the
-// rest pose so boarding never pops the parked hull upward.
-const SURFACE_MAX_Y = 0.0
+// The craft may breach to half-surfaced (hull axis at the displaced water
+// surface) and may never push its belly into the seabed. The piloting floor
+// equals the rest pose so boarding never pops the parked hull upward.
 const GROUND_CLEARANCE = SUBMARINE_REST_HEIGHT
+
+// ── Surface floating (semi-physics) ───────────────────────────────────────
+// Near the surface the hull is held by a damped buoyancy spring toward the
+// TRUE displaced wave height at the hull (BuoyancyProbe), so it heaves with
+// the rendered swell instead of pinning rigidly at y = 0. Water pushes back
+// far harder than it lets go: the spring stiffens sharply once the axis
+// breaches above the local wave. Wave slopes across bow/stern/beam feed
+// pitch and roll so the hull rides the sea, not a plane.
+const FLOAT_BAND = 0.55 // spring engages this far under the local wave
+// Stiff enough to track the swell rhythm nearly 1:1 (ωn ≈ 2.5 rad/s vs the
+// calm swell's ~1.1): the hull must visibly ebb and flow WITH the waves.
+const FLOAT_SPRING = 6.5
+const FLOAT_DAMP = 3.6
+const FLOAT_SPRING_ABOVE = 12.0
+const FLOAT_DAMP_ABOVE = 5.0
+const FLOAT_CEIL_MARGIN = 0.75 // absolute failsafe above the local wave
+const PROBE_BOW = 1.9 * SUBMARINE_SCALE // bow/stern sample reach
+const PROBE_BEAM = 1.2 * SUBMARINE_SCALE // starboard sample reach
+const WAVE_PITCH_MAX = 0.16
+const WAVE_ROLL_MAX = 0.14
 // Stepping out is granted only at rest on the seabed (Scott's ruling): a
 // craft abandoned mid-water would hover out of a walking guest's reach, and
 // any unmanned auto-descent could ground the hull on a dome or ride. Under
@@ -54,11 +75,31 @@ const FIELD_RADIUS = 380
 const FIELD_SOFT_BAND = 28
 
 // ── Propeller & wake ──────────────────────────────────────────────────────
-const PROP_MAX = 22 // rad/s at full command
+const PROP_MAX = 22 // rad/s at full command (the real shaft rate)
 const PROP_SPIN_UP = 3.0 // 1/s
 const PROP_SPIN_DOWN = 1.1 // slower coast-down than spin-up
 const PROP_WAKE_MIN = 3.0 // below this spin the screw sheds no bubbles
-const WAKE_RATE_MAX = 80 // bubbles/s at full spin
+// Wake seeding: most bubbles entrain at the blade tips (clustered on the
+// eight live blade angles, so successive spawns trace real interleaved
+// tip-vortex filaments); the rest seed the hub vortex rope. Cavitation
+// pockets shed only once the blade tips move fast enough.
+const WAKE_RATE_MAX = 700 // bubbles/s at full spin
+const WAKE_TIP_SHARE = 0.72
+const PLUME_RATE_MAX = 110 // milky cloud puffs/s at full spin, underwater
+const FOAM_RATE_MAX = 110 // surface foam patches/s when surfaced
+const PROP_TIP_RADIUS = 0.62 * SUBMARINE_SCALE
+const CAV_ONSET = 16 // rad/s — cavitation inception
+const CAV_RATE_MAX = 220 // pockets/s at full spin
+// A fast screw is an illusion, never a keyframe at the true rate: above
+// ~10 rad/s an 8-blade wheel strobes at render cadence. The mesh rotation
+// is clamped readable, the blur disc fades in over BLUR_START→BLUR_FULL,
+// the real blades hide once the disc carries the read, and the disc's
+// ghost arcs drift at a slow film-camera rate.
+const BLADE_SPIN_CLAMP = 9 // max visible mesh rate, rad/s
+const BLUR_START = 7
+const BLUR_FULL = 14
+const BLADE_HIDE_AT = 0.65 // blur strength beyond which real blades hide
+const GHOST_RATE = 0.1 // ghost-arc drift as a fraction of shaft rate
 
 // ── Third-person chase camera ─────────────────────────────────────────────
 // Close framing: the hull fills a good share of the frame while the eye
@@ -69,6 +110,13 @@ const LOOK_AHEAD = 6.5
 const LOOK_UP = 1.0
 const CAM_POS_RESPONSE = 5.5
 const CAM_LOOK_RESPONSE = 8.5
+// A boat-cam holds its own height reference: if the eye follows the hull's
+// wave heave 1:1, on screen the hull sits still and the OCEAN appears to
+// move — the exact inverse of the intended read. Vertical follow is slow
+// near the target and re-engages full speed for genuine dives/climbs.
+const CAM_HEIGHT_RESPONSE = 0.45
+const CAM_HEIGHT_CATCHUP_START = 0.7 // deviation (m) where catch-up begins
+const CAM_HEIGHT_CATCHUP_FULL = 2.1
 const BLEND_IN = 1.15
 const BLEND_OUT = 0.9
 // Step out to starboard, clear of the parked-hull blocker cylinder
@@ -94,6 +142,7 @@ export class SubmarineSystem implements GameSystem {
   private readonly services: DistrictServices
   private readonly player: PlayerSystem | null
   private readonly medium: SeaMediumSystem
+  private readonly sea: SeaSystem
 
   private model: SubmarineModel | null = null
   private wake: SubmarineWake | null = null
@@ -128,6 +177,15 @@ export class SubmarineSystem implements GameSystem {
   private helmAngle = 0
   private steerInput = { forward: 0, turn: 0, vertical: 0 }
 
+  // Surface-floating state (smoothed against the latent probe readback).
+  private buoyancy: BuoyancyProbe | null = null
+  private surfacedness = 0
+  private surfacednessTarget = 0
+  private wavePitch = 0
+  private wavePitchTarget = 0
+  private waveRoll = 0
+  private waveRollTarget = 0
+
   // Camera rig state.
   private blend = 0
   private readonly blendFromPosition = new Vector3()
@@ -139,6 +197,9 @@ export class SubmarineSystem implements GameSystem {
   private readonly promptAnchor = new Vector3()
   private exitInteractable: Interactable | null = null
   private wakeDebt = 0
+  private plumeDebt = 0
+  private foamDebt = 0
+  private cavDebt = 0
 
   // Scratch
   private readonly forward = new Vector3()
@@ -148,10 +209,16 @@ export class SubmarineSystem implements GameSystem {
   private readonly scratchMatrix = new Matrix4()
   private readonly scratchQuaternion = new Quaternion()
 
-  constructor(services: DistrictServices, player: PlayerSystem | null, medium: SeaMediumSystem) {
+  constructor(
+    services: DistrictServices,
+    player: PlayerSystem | null,
+    medium: SeaMediumSystem,
+    sea: SeaSystem,
+  ) {
     this.services = services
     this.player = player
     this.medium = medium
+    this.sea = sea
   }
 
   init(ctx: GameContext): void {
@@ -166,9 +233,11 @@ export class SubmarineSystem implements GameSystem {
     markDynamicShadowCasters(model.group)
     ctx.scene.add(model.group)
 
-    const wake = new SubmarineWake(this.medium)
+    const sim = this.sea.sim
+    if (!sim) throw new Error('SubmarineSystem requires SeaSystem to init first')
+    const wake = new SubmarineWake(this.medium, sim)
     this.wake = wake
-    ctx.scene.add(wake.mesh)
+    ctx.scene.add(...wake.meshes)
 
     registerBookmark({
       name: 'submarine',
@@ -181,6 +250,16 @@ export class SubmarineSystem implements GameSystem {
     const { physics, interaction } = this.services
     if (!this.player || !interaction || !physics.world || !physics.rapier) return
     const { world, rapier } = physics
+    if (this.sea.sim) {
+      this.buoyancy = new BuoyancyProbe(this.sea.sim)
+      // One dispatch behind the ticket compiles the compute pipeline so the
+      // first surfacing never pays a mid-gameplay stall.
+      this.buoyancy.update(ctx.renderer, [
+        [BERTH.x, BERTH.z],
+        [BERTH.x, BERTH.z],
+        [BERTH.x, BERTH.z],
+      ])
+    }
 
     // The craft's collision IS the guest capsule: same shape, hull axis.
     this.body = world.createRigidBody(
@@ -327,7 +406,23 @@ export class SubmarineSystem implements GameSystem {
 
     this.forwardSpeed = approach(this.forwardSpeed, targetForward, dt, THRUST_RESPONSE, RELEASE_RESPONSE)
     this.yawRate = approach(this.yawRate, targetYawRate, dt, YAW_RESPONSE, YAW_RESPONSE)
-    this.verticalSpeed = approach(this.verticalSpeed, targetVertical, dt, VERTICAL_RESPONSE, VERTICAL_RESPONSE)
+
+    // True displaced wave heights at the hull (latent CPU readback; 0 until
+    // the first surface visit — identical to a flat sea).
+    const waveHeights = this.buoyancy?.heights
+    const waveEq = waveHeights ? (waveHeights[0] + waveHeights[1]) / 2 : 0
+    const floating = verticalInput >= 0 && this.position.y > waveEq - FLOAT_BAND
+    if (floating) {
+      // Buoyancy owns heave near the surface: a damped spring toward the
+      // local wave, much stiffer above it (water pushes back harder than it
+      // lets go), so arriving at speed plops and settles into a gentle bob.
+      const depth = waveEq - this.position.y
+      const spring = depth >= 0 ? FLOAT_SPRING : FLOAT_SPRING_ABOVE
+      const damping = depth >= 0 ? FLOAT_DAMP : FLOAT_DAMP_ABOVE
+      this.verticalSpeed += (depth * spring - this.verticalSpeed * damping) * dt
+    } else {
+      this.verticalSpeed = approach(this.verticalSpeed, targetVertical, dt, VERTICAL_RESPONSE, VERTICAL_RESPONSE)
+    }
 
     this.yaw += this.yawRate * dt
     this.forward.set(Math.sin(this.yaw), 0, Math.cos(this.yaw))
@@ -369,15 +464,31 @@ export class SubmarineSystem implements GameSystem {
       this.position.add(this.scratch)
     }
 
-    // Vertical envelope: half-surfaced ceiling, seabed floor.
+    // Vertical envelope: seabed floor, and a failsafe ceiling just above the
+    // local wave (the buoyancy spring is the real surface authority).
     const floorY = terrainHeight(this.position.x, this.position.z) + GROUND_CLEARANCE
     if (this.position.y <= floorY) {
       this.position.y = floorY
       if (this.verticalSpeed < 0) this.verticalSpeed = 0
     }
-    if (this.position.y >= SURFACE_MAX_Y) {
-      this.position.y = SURFACE_MAX_Y
+    const ceilingY = waveEq + FLOAT_CEIL_MARGIN
+    if (this.position.y >= ceilingY) {
+      this.position.y = ceilingY
       if (this.verticalSpeed > 0) this.verticalSpeed = 0
+    }
+
+    // Ride the sea, not a plane: wave slope across bow/stern/beam becomes
+    // pitch/roll, weighted by how surfaced the hull is.
+    if (waveHeights) {
+      this.surfacednessTarget = clamp01(1 - (waveEq - this.position.y) / 0.9)
+      this.wavePitchTarget = clampAbs(
+        Math.atan2(waveHeights[1] - waveHeights[0], 2 * PROBE_BOW),
+        WAVE_PITCH_MAX,
+      )
+      this.waveRollTarget = clampAbs(
+        Math.atan2(waveHeights[2] - waveEq, PROBE_BEAM),
+        WAVE_ROLL_MAX,
+      )
     }
 
     // Hard force-field wall.
@@ -415,10 +526,19 @@ export class SubmarineSystem implements GameSystem {
     const spinRate = Math.abs(this.propTarget) > Math.abs(this.propSpeed) ? PROP_SPIN_UP : PROP_SPIN_DOWN
     this.propSpeed = approach(this.propSpeed, this.propTarget, dt, spinRate, spinRate)
 
-    // Cosmetic attitude: the bow lifts on ascent and banks into a turn.
-    const targetPitch = (-this.verticalSpeed / MAX_VERTICAL) * 0.11
+    // Smooth the latent, stepwise wave-slope targets before applying them.
+    const waveEase = 1 - Math.exp(-dt * 4.5)
+    this.surfacedness += (this.surfacednessTarget - this.surfacedness) * (1 - Math.exp(-dt * 2.5))
+    this.wavePitch += (this.wavePitchTarget - this.wavePitch) * waveEase
+    this.waveRoll += (this.waveRollTarget - this.waveRoll) * waveEase
+
+    // Cosmetic attitude: the bow lifts on ascent, banks into a turn, and at
+    // the surface the hull rides the local wave slope.
+    const targetPitch =
+      (-this.verticalSpeed / MAX_VERTICAL) * 0.11 + this.wavePitch * this.surfacedness
     const speedFraction = Math.max(0, Math.min(1, this.forwardSpeed / MAX_FORWARD))
-    const targetRoll = (this.yawRate / MAX_YAW_RATE) * 0.2 * speedFraction
+    const targetRoll =
+      (this.yawRate / MAX_YAW_RATE) * 0.2 * speedFraction + this.waveRoll * this.surfacedness
     const attitudeEase = 1 - Math.exp(-dt * ATTITUDE_RESPONSE)
     this.visualPitch += (targetPitch - this.visualPitch) * attitudeEase
     this.visualRoll += (targetRoll - this.visualRoll) * attitudeEase
@@ -429,6 +549,7 @@ export class SubmarineSystem implements GameSystem {
     this.yawRate = approach(this.yawRate, 0, dt, YAW_RESPONSE, YAW_RESPONSE)
     this.verticalSpeed = approach(this.verticalSpeed, 0, dt, VERTICAL_RESPONSE, VERTICAL_RESPONSE)
     this.steerInput = { forward: 0, turn: 0, vertical: 0 }
+    this.surfacednessTarget = 0 // parked hulls rest on the seabed
     this.advanceSharedDynamics(dt)
   }
 
@@ -444,15 +565,53 @@ export class SubmarineSystem implements GameSystem {
     this.applyVisualPose(this.scratch, renderYaw)
     this.promptAnchor.copy(this.scratch)
 
-    // Screw and helm are visual rates on the rendered clock.
-    model.propeller.rotation.z += this.propSpeed * dt
+    // Screw presentation: the mesh never keyframes the true shaft rate —
+    // it spins readably, and past the strobe threshold the blur disc takes
+    // over while the real blades hide beneath it.
+    const spin = this.propSpeed
+    const readableRate = Math.max(-BLADE_SPIN_CLAMP, Math.min(BLADE_SPIN_CLAMP, spin))
+    model.propeller.rotation.z += readableRate * dt
+    const blur = smooth01(clamp01((Math.abs(spin) - BLUR_START) / (BLUR_FULL - BLUR_START)))
+    model.propellerBlur.strength.value = blur
+    model.propellerBlur.ghost.value += spin * GHOST_RATE * dt
+    model.propellerBlur.disc.visible = blur > 0.01
+    const bladesVisible = blur < BLADE_HIDE_AT
+    for (const bladeMesh of model.propellerBlades) bladeMesh.visible = bladesVisible
+
     const helmTarget = -this.steerInput.turn * 0.9
     this.helmAngle += (helmTarget - this.helmAngle) * (1 - Math.exp(-dt * 4))
     model.helmWheel.rotation.z = this.helmAngle
 
+    // Buoyancy sampling runs only near the surface while under way.
+    if (this.buoyancy && this.mode !== 'idle' && this.position.y > -8) {
+      const fx = Math.sin(this.yaw)
+      const fz = Math.cos(this.yaw)
+      const rx = Math.cos(this.yaw)
+      const rz = -Math.sin(this.yaw)
+      this.buoyancy.update(ctx.renderer, [
+        [this.position.x + fx * PROBE_BOW, this.position.z + fz * PROBE_BOW],
+        [this.position.x - fx * PROBE_BOW, this.position.z - fz * PROBE_BOW],
+        [this.position.x + rx * PROBE_BEAM, this.position.z + rz * PROBE_BEAM],
+      ])
+    }
+
     this.emitWake(ctx, dt)
     this.wake?.update(ctx.time.elapsed)
     this.updateCamera(ctx, dt)
+
+    // Numeric evidence for the wave coupling (agents + humans): read
+    // canvas.dataset.submarine under ?debug while piloting.
+    if (ctx.flags.debug && this.mode === 'piloting' && ctx.time.frame % 30 === 0) {
+      const heights = this.buoyancy?.heights
+      ctx.renderer.domElement.dataset.submarine = JSON.stringify({
+        y: Number(this.position.y.toFixed(3)),
+        waveHeights: heights ? [...heights].map((v) => Number(v.toFixed(3))) : null,
+        surfacedness: Number(this.surfacedness.toFixed(2)),
+        wavePitch: Number(this.wavePitch.toFixed(3)),
+        waveRoll: Number(this.waveRoll.toFixed(3)),
+        propSpeed: Number(this.propSpeed.toFixed(2)),
+      })
+    }
   }
 
   private applyVisualPose(center: Vector3, yaw: number): void {
@@ -471,35 +630,132 @@ export class SubmarineSystem implements GameSystem {
     const spin = Math.abs(this.propSpeed)
     if (spin < PROP_WAKE_MIN) {
       this.wakeDebt = 0
+      this.plumeDebt = 0
+      this.foamDebt = 0
+      this.cavDebt = 0
       return
     }
-    this.wakeDebt += (WAKE_RATE_MAX * spin) / PROP_MAX * dt
-    let count = Math.floor(this.wakeDebt)
-    this.wakeDebt -= count
-    if (count <= 0) return
-    count = Math.min(count, 6)
+    const now = ctx.time.elapsed
 
     model.propeller.getWorldPosition(this.scratchB) // prop hub, world
     this.forward.set(Math.sin(this.yaw), 0, Math.cos(this.yaw))
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw))
-    const washSign = this.propSpeed < 0 ? 1 : -1 // wash streams opposite thrust
-    const washSpeed = 1.8 + Math.abs(this.forwardSpeed) * 0.45
-    const discRadius = 0.62 * SUBMARINE_SCALE
+    const washSign = this.propSpeed < 0 ? 1 : -1 // wake streams opposite thrust
+    const axis = new Vector3().copy(this.forward).multiplyScalar(washSign)
+    const propAngle = model.propeller.rotation.z
+    const axialBase = 2.1 + Math.abs(this.forwardSpeed) * 0.55
+    const radial = new Vector3()
     const origin = new Vector3()
-    const drive = new Vector3()
-    for (let i = 0; i < count; i++) {
-      const a = rng.next() * Math.PI * 2
-      const r = Math.sqrt(rng.next()) * discRadius
-      origin
-        .copy(this.scratchB)
-        .addScaledVector(this.right, Math.cos(a) * r)
-        .add(this.scratch.set(0, Math.sin(a) * r, 0))
-      drive
-        .copy(this.forward)
-        .multiplyScalar(washSign * washSpeed * (0.75 + rng.next() * 0.5))
-        .addScaledVector(this.right, rng.spread() * 0.35)
-      drive.y += rng.spread() * 0.3
-      wake.emit(origin, drive, ctx.time.elapsed)
+
+    // Regime cross-fade: submerged the screw builds the milky cloud +
+    // filament glitter; surfaced it churns the white boat-wake trail.
+    const spinFraction = spin / PROP_MAX
+    const underwaterWeight = 1 - this.surfacedness * 0.85
+    const foamGate = smooth01(clamp01((this.surfacedness - 0.3) / 0.5))
+
+    // ── Entrained bubbles: blade-tip filaments + the hub vortex rope ──────
+    this.wakeDebt += WAKE_RATE_MAX * spinFraction * underwaterWeight * dt
+    let bubbles = Math.floor(this.wakeDebt)
+    this.wakeDebt -= bubbles
+    bubbles = Math.min(bubbles, 16)
+    for (let i = 0; i < bubbles; i++) {
+      const tip = rng.next() < WAKE_TIP_SHARE
+      // Tip bubbles cluster on the live blade angles; hub bubbles seed the
+      // rope anywhere around the shaft.
+      const angle = tip
+        ? propAngle + rng.int(0, 7) * (Math.PI / 4) + rng.spread() * 0.12
+        : rng.next() * Math.PI * 2
+      const radius = tip
+        ? PROP_TIP_RADIUS * (0.88 + rng.next() * 0.24)
+        : PROP_TIP_RADIUS * (0.06 + rng.next() * 0.22)
+      radial
+        .copy(this.right)
+        .multiplyScalar(Math.cos(angle) * radius)
+        .addScaledVector(UP, Math.sin(angle) * radius)
+      origin.copy(this.scratchB).addScaledVector(axis, 0.12 + rng.next() * 0.1)
+      wake.emitBubble(origin, axis, radial, axialBase * (0.75 + rng.next() * 0.5), now)
+    }
+
+    // ── Milky plume: the dense turbulent cloud behind the disc ────────────
+    this.plumeDebt += PLUME_RATE_MAX * spinFraction * underwaterWeight * dt
+    let puffs = Math.floor(this.plumeDebt)
+    this.plumeDebt -= puffs
+    puffs = Math.min(puffs, 4)
+    for (let i = 0; i < puffs; i++) {
+      const angle = rng.next() * Math.PI * 2
+      const radius = Math.sqrt(rng.next()) * PROP_TIP_RADIUS * 0.9
+      radial
+        .copy(this.right)
+        .multiplyScalar(Math.cos(angle) * radius)
+        .addScaledVector(UP, Math.sin(angle) * radius)
+      origin.copy(this.scratchB).addScaledVector(axis, 0.15 + rng.next() * 0.15)
+      wake.emitPlume(origin, axis, radial, axialBase * (0.8 + rng.next() * 0.4), now)
+    }
+
+    // ── Surface foam: the white boat-wake trail (churn + V arms) ──────────
+    if (foamGate > 0.01) {
+      const speedFraction = Math.abs(this.forwardSpeed) / MAX_FORWARD
+      this.foamDebt += FOAM_RATE_MAX * foamGate * (0.3 + 0.7 * speedFraction) * dt
+      let patches = Math.floor(this.foamDebt)
+      this.foamDebt -= patches
+      patches = Math.min(patches, 4)
+      const drive = new Vector3()
+      for (let i = 0; i < patches; i++) {
+        const arm = rng.next() < 0.45
+        const side = rng.chance(0.5) ? 1 : -1
+        if (arm) {
+          // The V arms: shed at the stern quarters with lateral throw.
+          origin
+            .copy(this.scratchB)
+            .addScaledVector(this.right, side * (0.9 + rng.next() * 0.5))
+            .addScaledVector(axis, rng.next() * 0.3)
+          drive
+            .copy(this.right)
+            .multiplyScalar(side * (0.7 + rng.next() * 0.5))
+            .addScaledVector(axis, 0.4 + rng.next() * 0.3)
+        } else {
+          // Centre churn boiling straight off the screw.
+          origin
+            .copy(this.scratchB)
+            .addScaledVector(this.right, side * rng.next() * 0.8)
+            .addScaledVector(axis, rng.next() * 0.4)
+          drive
+            .copy(this.right)
+            .multiplyScalar(side * (0.15 + rng.next() * 0.3))
+            .addScaledVector(axis, 0.5 + rng.next() * 0.4)
+        }
+        wake.emitFoam(origin, drive, now)
+      }
+    }
+
+    // ── Cavitation: vapour pockets off fast-moving blade tips only ────────
+    if (spin > CAV_ONSET) {
+      this.cavDebt += CAV_RATE_MAX * ((spin - CAV_ONSET) / (PROP_MAX - CAV_ONSET)) * dt
+      let pockets = Math.floor(this.cavDebt)
+      this.cavDebt -= pockets
+      pockets = Math.min(pockets, 8)
+      const spinSign = this.propSpeed < 0 ? -1 : 1
+      const tipSpeed = PROP_TIP_RADIUS * spin
+      const drive = new Vector3()
+      for (let i = 0; i < pockets; i++) {
+        const angle = propAngle + rng.int(0, 7) * (Math.PI / 4) + rng.spread() * 0.06
+        const radius = PROP_TIP_RADIUS * (0.97 + rng.next() * 0.1)
+        origin
+          .copy(this.scratchB)
+          .addScaledVector(this.right, Math.cos(angle) * radius)
+          .addScaledVector(UP, Math.sin(angle) * radius)
+          .addScaledVector(axis, 0.03)
+        // Sheds with the tip's tangential motion plus a short downstream kick.
+        drive
+          .copy(this.right)
+          .multiplyScalar(-Math.sin(angle))
+          .addScaledVector(UP, Math.cos(angle))
+          .multiplyScalar(spinSign * tipSpeed * 0.1)
+          .addScaledVector(axis, 1.0 + rng.next() * 0.6)
+        wake.emitCavitation(origin, drive, now)
+      }
+    } else {
+      this.cavDebt = 0
     }
   }
 
@@ -540,8 +796,22 @@ export class SubmarineSystem implements GameSystem {
     if (this.mode === 'piloting') {
       this.chasePose(this.scratch, this.scratchB)
       const posEase = 1 - Math.exp(-dt * CAM_POS_RESPONSE)
+      // The eye's height reference is its own: slow vertical follow so wave
+      // heave moves the HULL in frame (the look target still tracks fast),
+      // blending back to full follow for genuine dives and climbs.
+      const heightError = Math.abs(this.scratch.y - this.cameraPosition.y)
+      const catchUp = smooth01(
+        clamp01(
+          (heightError - CAM_HEIGHT_CATCHUP_START) /
+            (CAM_HEIGHT_CATCHUP_FULL - CAM_HEIGHT_CATCHUP_START),
+        ),
+      )
+      const heightResponse = CAM_HEIGHT_RESPONSE + (CAM_POS_RESPONSE - CAM_HEIGHT_RESPONSE) * catchUp
+      const heightEase = 1 - Math.exp(-dt * heightResponse)
       const lookEase = 1 - Math.exp(-dt * CAM_LOOK_RESPONSE)
-      this.cameraPosition.lerp(this.scratch, posEase)
+      this.cameraPosition.x += (this.scratch.x - this.cameraPosition.x) * posEase
+      this.cameraPosition.z += (this.scratch.z - this.cameraPosition.z) * posEase
+      this.cameraPosition.y += (this.scratch.y - this.cameraPosition.y) * heightEase
       this.cameraLook.lerp(this.scratchB, lookEase)
       camera.position.copy(this.cameraPosition)
       camera.lookAt(this.cameraLook)
@@ -564,7 +834,7 @@ export class SubmarineSystem implements GameSystem {
       this.model = null
     }
     if (this.wake) {
-      ctx.scene.remove(this.wake.mesh)
+      ctx.scene.remove(...this.wake.meshes)
       this.wake.dispose()
       this.wake = null
     }
@@ -578,4 +848,16 @@ const UP = new Vector3(0, 1, 0)
 function approach(current: number, target: number, dt: number, gain: number, release: number): number {
   const rate = Math.abs(target) > Math.abs(current) ? gain : release
   return current + (target - current) * (1 - Math.exp(-dt * rate))
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value))
+}
+
+function clampAbs(value: number, limit: number): number {
+  return Math.max(-limit, Math.min(limit, value))
+}
+
+function smooth01(t: number): number {
+  return t * t * (3 - 2 * t)
 }

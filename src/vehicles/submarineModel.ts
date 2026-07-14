@@ -21,6 +21,7 @@ import {
   PointLight,
   RepeatWrapping,
   RGBAFormat,
+  RingGeometry,
   Shape,
   SphereGeometry,
   SRGBColorSpace,
@@ -31,6 +32,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { MeshBasicNodeMaterial, MeshPhysicalNodeMaterial } from 'three/webgpu'
 import type { Node } from 'three/webgpu'
 import {
+  atan,
   color,
   float,
   frontFacing,
@@ -40,8 +42,10 @@ import {
   normalView,
   positionGeometry,
   select,
+  sin,
   texture,
   time,
+  uniform,
   uv,
   vec3,
   vec4,
@@ -77,6 +81,16 @@ export interface SubmarineModel {
   group: Group
   /** Tail propeller assembly — spin around local z. */
   propeller: Object3D
+  /** The eight blade meshes — hidden at speed while the blur disc reads. */
+  propellerBlades: Object3D[]
+  /**
+   * Motion-blur disc in the propeller plane. `strength` fades it in as the
+   * real blades strobe out; `ghost` slowly rotates its eight ghost-blade
+   * arcs (the film-camera wagon-wheel read). The disc is deliberately NOT a
+   * child of the spinning group — its pattern must only ever move at the
+   * ghost rate, never at the true shaft rate.
+   */
+  propellerBlur: { strength: { value: number }; ghost: { value: number }; disc: Mesh }
   /** Cabin helm wheel — cosmetic steering animation around local z. */
   helmWheel: Object3D
   dispose(): void
@@ -1589,6 +1603,8 @@ export function buildSubmarineModel(medium: SeaMediumSystem): SubmarineModel {
    * ================================================================ */
   const tailY = 0.075 // spine height at stern
   const propGroup = new Group()
+  const propellerBlades: Mesh[] = []
+  let blurMaterial: MeshBasicNodeMaterial | null = null
 
   /* — tail cone (porcelain) with brass junction collars — */
   {
@@ -1714,6 +1730,7 @@ export function buildSubmarineModel(medium: SeaMediumSystem): SubmarineModel {
     for (let k = 0; k < 8; k++) {
       const bm = M(bg, MAT.brass, propGroup, 'blade')
       bm.rotation.z = (k / 8) * TAU
+      propellerBlades.push(bm)
     }
     const halo = ringPoints(V3(0, 0, -0.075), V3(1, 0, 0), V3(0, 1, 0), D.tail.prop.r + 0.012, 80)
     halo.push(halo[0].clone())
@@ -1734,6 +1751,45 @@ export function buildSubmarineModel(medium: SeaMediumSystem): SubmarineModel {
     bm2.position.z = -0.235
     bm2.castShadow = false
     M(new SphereGeometry(0.02, 10, 8), MAT.lampCore, propGroup).position.z = -0.235
+  }
+
+  /* — propeller motion-blur disc —
+   * A fast screw is faked, never keyframed at true speed: the mesh rate is
+   * clamped below the strobe threshold and this annulus carries "fast" —
+   * brass-tinted rotational smear with eight faint ghost-blade arcs that
+   * drift at a slow film-camera rate via the `ghost` uniform. Sibling of
+   * the spinning group on purpose: parented to it, the pattern would spin
+   * at shaft rate and strobe exactly like the blades it replaces. */
+  const blurStrength = uniform(0)
+  const blurGhost = uniform(0)
+  let blurDisc: Mesh
+  {
+    const m = new MeshBasicNodeMaterial()
+    m.transparent = true
+    m.depthWrite = false
+    m.side = DoubleSide
+    const radius = positionGeometry.xy.length()
+    const angle = atan(positionGeometry.y, positionGeometry.x)
+    const radial01 = radius.sub(0.13).div(0.49).clamp(0, 1)
+    // Blade planform weight: the smear is densest where the chord is widest.
+    const chord = sin(radial01.mul(Math.PI)).pow(0.6)
+    const ghostNode = blurGhost as unknown as Node<'float'>
+    const arcs = sin(angle.mul(8).sub(ghostNode)).mul(0.5).add(0.5)
+    m.colorNode = vec3(0.72, 0.55, 0.26).mul(arcs.mul(0.35).add(0.8))
+    m.opacityNode = chord
+      .mul(arcs.mul(0.45).add(0.55))
+      .mul(blurStrength as unknown as Node<'float'>)
+      .mul(0.34)
+    // Transparent optics never feed the opaque AO's depth/normal pair.
+    m.mrtNode = mrt({ normal: vec4(normalView, 0) })
+    blurMaterial = m
+    blurDisc = new Mesh(new RingGeometry(0.13, 0.615, 72, 1), m)
+    blurDisc.name = 'propBlurDisc'
+    blurDisc.position.set(0, tailY, -1.745 - 0.075)
+    blurDisc.castShadow = false
+    blurDisc.receiveShadow = false
+    blurDisc.visible = false
+    sub.add(blurDisc)
   }
 
   /* — stern spike with collar & pearl tip — */
@@ -1874,11 +1930,14 @@ export function buildSubmarineModel(medium: SeaMediumSystem): SubmarineModel {
   return {
     group: sub,
     propeller: propGroup,
+    propellerBlades,
+    propellerBlur: { strength: blurStrength, ghost: blurGhost, disc: blurDisc },
     helmWheel,
     dispose: () => {
       for (const geometry of geometries) geometry.dispose()
       for (const materialTexture of ownedTextures) materialTexture.dispose()
       for (const material of Object.values(MAT)) material.dispose()
+      blurMaterial?.dispose()
     },
   }
 }

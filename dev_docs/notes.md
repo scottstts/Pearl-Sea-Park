@@ -1236,3 +1236,71 @@
   - Chase framing tightened by ruling: 7.0 m back / 2.7 m up (was 10.6/4.0)
     so the hull takes a bigger share of the frame while the eye still
     clears the dome.
+- 2026-07-14 submarine screw illusion + surface floating (Scott's rulings):
+  - Fast rotors are FAKED, never keyframed at the true rate: an 8-blade
+    wheel strobes at render cadence above ~10 rad/s. Pattern (reusable for
+    any future fast rotor): clamp the mesh rotation to a readable rate,
+    cross-fade a motion-blur disc (chord-weighted smear + N-fold ghost
+    arcs) over the strobe band, hide the real blades once the disc carries
+    the read, and drift the ghost arcs at ~10% of shaft rate (wagon-wheel).
+    CRITICAL: the disc must be a SIBLING of the spinning group with its
+    pattern rotated only by a slow uniform — parented to the shaft it
+    strobes exactly like the blades it replaces.
+  - Floating craft get TRUE wave heights, not an approximate CPU swell:
+    sea/buoyancyProbe.ts samples the displacement cascades at N hull
+    points (same fixed-point choppy correction as the waterline probe) into
+    its own storage buffer with async readback — gameplay CPU data only,
+    never touching the waterline probe's same-frame visual state. Heave is
+    a damped spring toward the local wave (stiffer above the surface than
+    below — water pushes back harder than it lets go), and bow/stern/beam
+    height differences become smoothed pitch/roll. Latency of a few frames
+    is invisible through the spring. Dispatch only near the surface; one
+    init dispatch prewarms the compute pipeline behind the ticket.
+- 2026-07-14 propeller wake rework (Scott's spec: helical slipstream with
+  tip vortices, hub rope, turbulence, subtle cavitation — never a straight
+  particle cone):
+  - The whole effect stays in the spawn-record + vertex-TSL architecture:
+    store (hub centre, unit wake axis, initial radial vector) per bubble
+    and rotate the radial with Rodrigues about the axis — this needs NO
+    basis/angle bookkeeping on the CPU and radial ⊥ axis keeps it to two
+    terms. Swirl ∝ axial/(0.4+r0) gives a fast tight hub vortex rope and
+    slower tip filaments from one formula.
+  - Real tip-vortex filaments are an EMISSION pattern, not a shader
+    feature: cluster tip spawns on the live blade angles (visual prop
+    rotation + k·2π/blades ± small jitter) and successive frames trace N
+    interleaved helices through space for free. Per-spawn axial jitter and
+    age-growing angular turbulence then unravel them downstream.
+  - Swirl handedness about the WASH axis is invariant under thrust
+    reversal (sign(spin)·sign(wash) ≡ −1): no per-instance sign attribute.
+  - Cavitation reads as soft-bodied vapour (opacity fullest at the centre,
+    faint at the rim — the exact inverse of a bubble's fresnel shell),
+    shed at blade tips with tangential velocity, collapsing faster than it
+    grew. Gate inception on shaft speed so it only appears near full
+    throttle.
+  - Ring pools sized ≈ rate × max life so an instance is only recycled
+    after its dissipate envelope reaches ~0 — recycling is then invisible
+    without any bookkeeping.
+- 2026-07-14 wake regimes + the bob that vanished (Scott's screenshots):
+  - A submerged prop wake and a surfaced boat wake are DIFFERENT effects —
+    cross-fade emission by surfacedness, never one particle system for
+    both. Underwater = milky turbulent cloud (soft puffs with seeded,
+    age-scrolled fragment mx_noise erosion — reads volumetric/irregular,
+    never uniform smoke) + bubble glitter inside it. Surfaced = flattened
+    white foam patches churned at the stern: 45% thrown laterally at the
+    stern quarters (the V arms), the rest centre churn; the hull's advance
+    paints the trail. Foam pins itself to the TRUE surface by sampling the
+    ocean's own displacement cascades in its vertex stage — same waves as
+    the hull, no plane at y=0.
+  - Discrete small rim-lit spheres alone can NEVER read as a dense bubble
+    cloud — they read as scattered dots. The cloud is the low-opacity
+    overlapping puff layer; bubbles are only its sparkle.
+  - A chase camera that follows a floating vehicle's heave 1:1 CANCELS the
+    bob on screen — the user sees "the boat stays still and the ocean
+    moves" no matter how correct the buoyancy is. Boat-cams hold their own
+    height reference: slow vertical follow (~0.45/s) with deviation-gated
+    catch-up for real dives, fast look-target tracking. Perception bugs
+    can masquerade as physics bugs — check what the camera subtracts
+    before touching the simulation.
+  - Numeric evidence beats guessing at coupled systems:
+    canvas.dataset.submarine (?debug, while piloting) reports hull y, the
+    three probe wave heights, surfacedness, and wave attitude at 2 Hz.
