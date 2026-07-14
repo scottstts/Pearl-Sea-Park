@@ -1,7 +1,8 @@
 # The Submarine — Le Nautile Blanc (pilotable vehicle)
 
 Files: `src/vehicles/submarineModel.ts` (model), `src/vehicles/submarine.ts`
-(piloting system), `src/vehicles/submarineWake.ts` (propeller bubbles).
+(piloting system), `src/vehicles/submarineWake.ts` (propeller bubbles/foam), and
+`src/physics/vehicleStructureColliders.ts` (vehicle-only building envelopes).
 Validation bookmark: `?view=submarine`.
 
 ## Model provenance & scale
@@ -63,10 +64,18 @@ settles millimetres into the sand).
 
 ## Collision & envelope
 
-- **Collision is the guest capsule by ruling** (Scott: "same collision as
-  the player person"): a 0.35 r / 1.7 m kinematic capsule at the hull axis
-  with its own character controller. The hull visually overlaps structures
-  the way a walking guest's view would; anywhere a guest fits, the sub fits.
+- The movement probe remains the guest-sized capsule by ruling (Scott: "same
+  collision as the player person"): a 0.35 r / 1.7 m kinematic capsule at
+  the hull axis with its own character controller. It collides with every
+  ordinary Rapier structure collider.
+- Buildings need a second collision representation because their normal
+  colliders intentionally describe walkable floors, posts, and rails rather
+  than solid interiors. `vehicleStructureColliders.ts` adds broad 3D envelopes
+  for enclosed domes, roofed halls/stations, the carousel, Great Wheel sweep,
+  and arrival structure. The submarine query sees these envelopes; the guest
+  controller explicitly filters them, so facilities remain enterable on foot.
+  Their active collision types also exclude dynamic game pieces: these are
+  vehicle query geometry, not invisible walls for midway toys.
 - The seated guest's own body is carried at the hull axis every fixed step
   (so wildlife avoidance, wheel/pearl dock sensors, and ride exits all see
   the pilot where the sub is) and is **excluded from the sub's queries** via
@@ -141,50 +150,26 @@ settles millimetres into the sand).
   wagon-wheel look. The disc is a **sibling** of the spinning group, its
   pattern rotated only by the slow `ghost` uniform: parented to the shaft
   it would strobe exactly like the blades it replaces.
-- Wake = `SubmarineWake`, **two regimes cross-faded by surfacedness**
-  (Scott's reference photos): submerged it is a dense milky turbulent cloud
-  with helical bubble glitter; surfaced it is a white boat-wake trail. Four
-  GPU ring-buffer pools, all motion vertex/fragment TSL against **absolute
-  elapsed time** (fountain recycling rule); the CPU only writes spawn
-  records:
-  - **Plume cloud** (512 puffs, ≤110/s underwater): soft milky spheres
-    shed across the disc, bulk-convected and bulk-swirled down the wake,
-    inflating ~2.6× over life. Fragment-stage `mx_noise` erosion (seeded,
-    age-scrolled, threshold tightening with age) carves each puff into an
-    irregular billow and breaks it apart downstream — volumetric and
-    irregular, never uniform smoke. This is what reads as the bright cloudy
-    mass; the bubbles below are the glitter inside it.
-  - **Surface foam** (512 patches, ≤110/s when surfaced, scaled by speed):
-    flattened pancake puffs churned out at the stern — 45 % thrown to the
-    stern quarters with lateral drive (the spreading V arms), the rest
-    boiling straight off the screw (the centre churn); the hull's own
-    advance paints the trail. Each patch's vertex stage **samples the same
-    displacement cascades the ocean renders with**, so foam is pinned to
-    the true displaced surface and rides the same waves as the hull. Noise
-    lacing tightens with age so sheets dissolve into lacy trailing edges.
-  - **Entrained bubbles** (2304 instances, ≤700/s underwater): each
-    record stores the hub centre, unit wake axis, and initial radial
-    vector. The shader advects it down a decaying helix — Rodrigues
-    rotation about the axis with swirl ∝ axialSpeed/(0.4+r₀), so the hub
-    vortex rope corkscrews fast and tight while tip filaments turn slower;
-    decaying axial convection with a slow residual; radial spreading;
-    size-correlated buoyant rise after an entrainment delay; and layered
-    positional + angular turbulence growing with age so filaments wander
-    and unravel downstream. 72 % of spawns cluster on the eight **live
-    blade angles** (± 0.12 rad) at the tip annulus — successive emissions
-    trace eight real interleaved tip-vortex filaments — and the rest seed
-    the hub rope. Per-spawn axial jitter (±25 %) smears the filaments into
-    turbulent streaks with distance.
-  - **Cavitation pockets** (128 instances): inception only above 16 rad/s
-    (~73 % shaft speed), rate ramping to 220/s. Soft-bodied vapour puffs
-    (full centre, faint silhouette — the inverse of a bubble's rim shell)
-    shed exactly at blade tips with the tip's tangential velocity plus a
-    short downstream kick, growing fast and collapsing faster (dead by
-    0.88 of a 0.07–0.18 s life).
-  - Both pools hide entirely once the last spawn has dissipated; bubbles
-    fade approaching the displaced surface; swirl handedness about the
-    wash axis is invariant under thrust reversal (sign(spin)·sign(wash)
-    ≡ −1), so no sign attribute is needed.
+- Wake = `SubmarineWake`, with exactly **two mutually exclusive regimes**.
+  A CPU gate switches at `surfacedness >= 0.3`, so old instances from the
+  other regime cannot remain visible after crossing the surface boundary:
+  - **Underwater bubbles only** (3200/5200/7200 instances, ≤1600/s): small
+    bubbles are seeded uniformly across the propeller disc. Each record stores
+    only its origin, downstream drive, and spawn time; the shader adds simple
+    decaying wash drift, buoyant rise, and a slight wobble. Diameters are
+    6–22 mm and biased toward the small end. There is no aeration cloud,
+    cavitation, spray, vortex filament, helical path, or other underwater
+    wake layer.
+  - **Surface foam only** (640/960/1280 ribbons, ≤135/s): tessellated thin
+    planes form broad stern churn and signed Kelvin arms at the cusp
+    half-angle `asin(1/3) = 19.47°`. The craft's world-space motion paints a
+    persistent trail, while every ribbon vertex samples all three ocean
+    displacement vectors — horizontal chop and height — to follow the exact
+    rendered FFT surface. After a short 2.5%-life settle-in, opacity decays
+    continuously as `remainingLife^1.35`; there is no late TTL-style pop. No
+    bubbles or secondary wake layer draw at the surface.
+  - Validation modes remain `?pass=wake-layers`, `wake-age`, and `wake-flow`;
+    they now inspect only the bubble and foam pools.
 - Emission position comes from `propeller.getWorldPosition()` — never
   hand-scaled local offsets through `localToWorld` (the group is scaled;
   pre-scaled locals double-apply).

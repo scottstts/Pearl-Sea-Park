@@ -1304,3 +1304,25 @@
   - Numeric evidence beats guessing at coupled systems:
     canvas.dataset.submarine (?debug, while piloting) reports hull y, the
     three probe wave heights, surfacedness, and wave attitude at 2 Hz.
+- 2026-07-14 wake simplification (Scott's visual ruling; supersedes the cloud,
+  helical, and cavitation wake notes above):
+  - Underwater wake is intentionally only a high-count pool of small bubbles
+    with simple origin/drive/spawn records. There is no aeration cloud, helix,
+    cavitation, spray, or secondary layer.
+  - Surface wake is intentionally only the accepted foam. A CPU regime gate
+    hides bubbles at `surfacedness >= 0.3` and hides foam below it, so old
+    instances cannot leak across regimes.
+  - The retained foam uses Kelvin arms plus centre churn and samples all three
+    FFT displacement components.
+  - Artifact diagnosis is deferred. The god-ray hypothesis was falsified and
+    its experiment fully reverted; do not treat the stripe cause as known.
+- 2026-07-15 submarine residue + facility collision:
+  - Surface wake foam must age visibly, not hold nearly constant and then read
+    as TTL removal. After a brief settle-in its opacity follows normalized
+    remaining life continuously (`remaining^1.35`); geometric collapse is only
+    the final overdraw cleanup.
+  - Guest-walkable architecture and vehicle-solid architecture need different
+    collision representations. Keep detailed floor/post/rail Rapier colliders
+    for guests, and broad named envelopes for the submarine's building/ride
+    query. The guest controller filters those envelopes by collider handle;
+    dynamic game pieces are excluded through active collision types.

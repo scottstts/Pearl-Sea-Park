@@ -59,7 +59,7 @@ Choices beyond the code:
   loop.
 - **Emissive hierarchy contract:** bloom threshold is 1.0 — materials must express glow through genuinely HDR emissive values (sun sparkle strongest, lamps mid, bioluminescence subtle), never by lowering the threshold.
 - **Type boundary:** @types/three TSL generics (`Node<"vec4">` etc.) churn per release — cross-module node handoffs type as `object` and cast once at the boundary (`asColor` in grade.ts). Do not thread precise TSL generic types through system APIs.
-- `?pass=` views: `ao · ao-filtered · ao-applied · ao-mask · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`, plus the fountain field modes. `?view`/`?pass` skip the enter button (validation mode).
+- `?pass=` views: `ao · ao-filtered · ao-applied · ao-mask · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`; wake diagnostics are `wake-layers · wake-age · wake-flow`, plus the fountain field modes. `?view`/`?pass` skip the enter button (validation mode).
 - Dynamic resolution = `setPixelRatio(base × quality.renderScale)`; all pass targets follow the drawing-buffer size automatically. The base is capped by DPR 1.7 **and** a 4,000,000-pixel drawing-buffer budget (`recommendedPixelRatio`), recomputed on resize before dynamic scale is applied.
 - Dynamic resolution is driven by the actual animation-frame interval, not CPU
   command-submission time. It is an emergency pressure valve bounded to

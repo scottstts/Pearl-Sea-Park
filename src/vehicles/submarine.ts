@@ -79,17 +79,9 @@ const PROP_MAX = 22 // rad/s at full command (the real shaft rate)
 const PROP_SPIN_UP = 3.0 // 1/s
 const PROP_SPIN_DOWN = 1.1 // slower coast-down than spin-up
 const PROP_WAKE_MIN = 3.0 // below this spin the screw sheds no bubbles
-// Wake seeding: most bubbles entrain at the blade tips (clustered on the
-// eight live blade angles, so successive spawns trace real interleaved
-// tip-vortex filaments); the rest seed the hub vortex rope. Cavitation
-// pockets shed only once the blade tips move fast enough.
-const WAKE_RATE_MAX = 700 // bubbles/s at full spin
-const WAKE_TIP_SHARE = 0.72
-const PLUME_RATE_MAX = 110 // milky cloud puffs/s at full spin, underwater
-const FOAM_RATE_MAX = 110 // surface foam patches/s when surfaced
+const WAKE_RATE_MAX = 1_600 // small bubbles/s at full spin underwater
+const FOAM_RATE_MAX = 135 // wave-conforming foam ribbons/s when surfaced
 const PROP_TIP_RADIUS = 0.62 * SUBMARINE_SCALE
-const CAV_ONSET = 16 // rad/s — cavitation inception
-const CAV_RATE_MAX = 220 // pockets/s at full spin
 // A fast screw is an illusion, never a keyframe at the true rate: above
 // ~10 rad/s an 8-blade wheel strobes at render cadence. The mesh rotation
 // is clamped readable, the blur disc fades in over BLUR_START→BLUR_FULL,
@@ -197,9 +189,7 @@ export class SubmarineSystem implements GameSystem {
   private readonly promptAnchor = new Vector3()
   private exitInteractable: Interactable | null = null
   private wakeDebt = 0
-  private plumeDebt = 0
   private foamDebt = 0
-  private cavDebt = 0
 
   // Scratch
   private readonly forward = new Vector3()
@@ -235,7 +225,10 @@ export class SubmarineSystem implements GameSystem {
 
     const sim = this.sea.sim
     if (!sim) throw new Error('SubmarineSystem requires SeaSystem to init first')
-    const wake = new SubmarineWake(this.medium, sim)
+    const wake = new SubmarineWake(sim, {
+      qualityTier: ctx.quality.tier,
+      debugPass: ctx.flags.pass,
+    })
     this.wake = wake
     ctx.scene.add(...wake.meshes)
 
@@ -596,7 +589,7 @@ export class SubmarineSystem implements GameSystem {
     }
 
     this.emitWake(ctx, dt)
-    this.wake?.update(ctx.time.elapsed)
+    this.wake?.update(ctx.time.elapsed, this.surfacedness >= 0.3)
     this.updateCamera(ctx, dt)
 
     // Numeric evidence for the wave coupling (agents + humans): read
@@ -630,9 +623,7 @@ export class SubmarineSystem implements GameSystem {
     const spin = Math.abs(this.propSpeed)
     if (spin < PROP_WAKE_MIN) {
       this.wakeDebt = 0
-      this.plumeDebt = 0
       this.foamDebt = 0
-      this.cavDebt = 0
       return
     }
     const now = ctx.time.elapsed
@@ -642,121 +633,80 @@ export class SubmarineSystem implements GameSystem {
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw))
     const washSign = this.propSpeed < 0 ? 1 : -1 // wake streams opposite thrust
     const axis = new Vector3().copy(this.forward).multiplyScalar(washSign)
-    const propAngle = model.propeller.rotation.z
     const axialBase = 2.1 + Math.abs(this.forwardSpeed) * 0.55
     const radial = new Vector3()
     const origin = new Vector3()
+    const drive = new Vector3()
 
-    // Regime cross-fade: submerged the screw builds the milky cloud +
-    // filament glitter; surfaced it churns the white boat-wake trail.
+    // Mutually exclusive regimes: below the transition only bubbles can
+    // emit/draw; at and above it only the foam pool can emit/draw.
     const spinFraction = spin / PROP_MAX
-    const underwaterWeight = 1 - this.surfacedness * 0.85
-    const foamGate = smooth01(clamp01((this.surfacedness - 0.3) / 0.5))
+    const surfaceWake = this.surfacedness >= 0.3
+    const bubbleGate = surfaceWake
+      ? 0
+      : 1 - smooth01(clamp01(this.surfacedness / 0.3))
+    const foamGate = surfaceWake
+      ? smooth01(clamp01((this.surfacedness - 0.3) / 0.5))
+      : 0
 
-    // ── Entrained bubbles: blade-tip filaments + the hub vortex rope ──────
-    this.wakeDebt += WAKE_RATE_MAX * spinFraction * underwaterWeight * dt
+    // ── Underwater: simple high-count bubbles across the prop disc ────────
+    this.wakeDebt += WAKE_RATE_MAX * spinFraction * bubbleGate * dt
     let bubbles = Math.floor(this.wakeDebt)
     this.wakeDebt -= bubbles
-    bubbles = Math.min(bubbles, 16)
+    bubbles = Math.min(bubbles, 36)
     for (let i = 0; i < bubbles; i++) {
-      const tip = rng.next() < WAKE_TIP_SHARE
-      // Tip bubbles cluster on the live blade angles; hub bubbles seed the
-      // rope anywhere around the shaft.
-      const angle = tip
-        ? propAngle + rng.int(0, 7) * (Math.PI / 4) + rng.spread() * 0.12
-        : rng.next() * Math.PI * 2
-      const radius = tip
-        ? PROP_TIP_RADIUS * (0.88 + rng.next() * 0.24)
-        : PROP_TIP_RADIUS * (0.06 + rng.next() * 0.22)
-      radial
-        .copy(this.right)
-        .multiplyScalar(Math.cos(angle) * radius)
-        .addScaledVector(UP, Math.sin(angle) * radius)
-      origin.copy(this.scratchB).addScaledVector(axis, 0.12 + rng.next() * 0.1)
-      wake.emitBubble(origin, axis, radial, axialBase * (0.75 + rng.next() * 0.5), now)
-    }
-
-    // ── Milky plume: the dense turbulent cloud behind the disc ────────────
-    this.plumeDebt += PLUME_RATE_MAX * spinFraction * underwaterWeight * dt
-    let puffs = Math.floor(this.plumeDebt)
-    this.plumeDebt -= puffs
-    puffs = Math.min(puffs, 4)
-    for (let i = 0; i < puffs; i++) {
       const angle = rng.next() * Math.PI * 2
       const radius = Math.sqrt(rng.next()) * PROP_TIP_RADIUS * 0.9
       radial
         .copy(this.right)
         .multiplyScalar(Math.cos(angle) * radius)
         .addScaledVector(UP, Math.sin(angle) * radius)
-      origin.copy(this.scratchB).addScaledVector(axis, 0.15 + rng.next() * 0.15)
-      wake.emitPlume(origin, axis, radial, axialBase * (0.8 + rng.next() * 0.4), now)
+      origin
+        .copy(this.scratchB)
+        .add(radial)
+        .addScaledVector(axis, 0.08 + rng.next() * 0.12)
+      drive
+        .copy(axis)
+        .multiplyScalar(axialBase * (0.72 + rng.next() * 0.45))
+        .addScaledVector(radial, 0.1 + rng.next() * 0.08)
+      wake.emitBubble(origin, drive, now)
     }
 
-    // ── Surface foam: the white boat-wake trail (churn + V arms) ──────────
+    // ── Surface foam: persistent center churn + Kelvin-angle arms ─────────
     if (foamGate > 0.01) {
       const speedFraction = Math.abs(this.forwardSpeed) / MAX_FORWARD
-      this.foamDebt += FOAM_RATE_MAX * foamGate * (0.3 + 0.7 * speedFraction) * dt
+      this.foamDebt += FOAM_RATE_MAX
+        * foamGate
+        * (0.3 + 0.7 * speedFraction)
+        * (0.35 + 0.65 * spinFraction)
+        * dt
       let patches = Math.floor(this.foamDebt)
       this.foamDebt -= patches
-      patches = Math.min(patches, 4)
-      const drive = new Vector3()
+      patches = Math.min(patches, 5)
+      const armShare = 0.2 + speedFraction * 0.45
+      const strength = 0.2 + speedFraction * 0.8
       for (let i = 0; i < patches; i++) {
-        const arm = rng.next() < 0.45
+        const arm = rng.next() < armShare
         const side = rng.chance(0.5) ? 1 : -1
         if (arm) {
-          // The V arms: shed at the stern quarters with lateral throw.
+          // The shader supplies the exact 19.47° Kelvin direction. CPU
+          // emission only chooses a stern quarter and signed arm.
           origin
             .copy(this.scratchB)
-            .addScaledVector(this.right, side * (0.9 + rng.next() * 0.5))
-            .addScaledVector(axis, rng.next() * 0.3)
-          drive
-            .copy(this.right)
-            .multiplyScalar(side * (0.7 + rng.next() * 0.5))
-            .addScaledVector(axis, 0.4 + rng.next() * 0.3)
+            .addScaledVector(this.right, side * (0.82 + rng.next() * 0.45))
+            .addScaledVector(axis, rng.next() * 0.28)
+          wake.emitFoam(origin, axis, side, strength, now)
         } else {
-          // Centre churn boiling straight off the screw.
+          // Center churn is wider and slower than the divergent arm ribbons.
           origin
             .copy(this.scratchB)
-            .addScaledVector(this.right, side * rng.next() * 0.8)
-            .addScaledVector(axis, rng.next() * 0.4)
-          drive
-            .copy(this.right)
-            .multiplyScalar(side * (0.15 + rng.next() * 0.3))
-            .addScaledVector(axis, 0.5 + rng.next() * 0.4)
+            .addScaledVector(this.right, side * rng.next() * 0.72)
+            .addScaledVector(axis, rng.next() * 0.36)
+          wake.emitFoam(origin, axis, 0, strength, now)
         }
-        wake.emitFoam(origin, drive, now)
       }
     }
 
-    // ── Cavitation: vapour pockets off fast-moving blade tips only ────────
-    if (spin > CAV_ONSET) {
-      this.cavDebt += CAV_RATE_MAX * ((spin - CAV_ONSET) / (PROP_MAX - CAV_ONSET)) * dt
-      let pockets = Math.floor(this.cavDebt)
-      this.cavDebt -= pockets
-      pockets = Math.min(pockets, 8)
-      const spinSign = this.propSpeed < 0 ? -1 : 1
-      const tipSpeed = PROP_TIP_RADIUS * spin
-      const drive = new Vector3()
-      for (let i = 0; i < pockets; i++) {
-        const angle = propAngle + rng.int(0, 7) * (Math.PI / 4) + rng.spread() * 0.06
-        const radius = PROP_TIP_RADIUS * (0.97 + rng.next() * 0.1)
-        origin
-          .copy(this.scratchB)
-          .addScaledVector(this.right, Math.cos(angle) * radius)
-          .addScaledVector(UP, Math.sin(angle) * radius)
-          .addScaledVector(axis, 0.03)
-        // Sheds with the tip's tangential motion plus a short downstream kick.
-        drive
-          .copy(this.right)
-          .multiplyScalar(-Math.sin(angle))
-          .addScaledVector(UP, Math.cos(angle))
-          .multiplyScalar(spinSign * tipSpeed * 0.1)
-          .addScaledVector(axis, 1.0 + rng.next() * 0.6)
-        wake.emitCavitation(origin, drive, now)
-      }
-    } else {
-      this.cavDebt = 0
-    }
   }
 
   // ── Chase camera ────────────────────────────────────────────────────────

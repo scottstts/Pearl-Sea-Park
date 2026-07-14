@@ -2,6 +2,7 @@ import RAPIER from '@dimforge/rapier3d-compat'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { TERRAIN_EXTENT, terrainHeight } from '../world/terrain'
+import { vehicleStructureColliders } from './vehicleStructureColliders'
 
 /**
  * Rapier world (plan §2). The sea is air (plan §1): plain gravity, no
@@ -14,6 +15,7 @@ export class PhysicsSystem implements GameSystem {
   world: RAPIER.World | null = null
   rapier: typeof RAPIER | null = null
   private pendingVerify = false
+  private readonly vehicleOnlyColliderHandles = new Set<number>()
 
   async init(ctx: GameContext): Promise<void> {
     await initializeRapier()
@@ -75,6 +77,35 @@ export class PhysicsSystem implements GameSystem {
       basinBody,
     )
 
+    // Guest architecture uses detailed floor/post/rail collision so its
+    // interiors stay walkable. Vehicles additionally see broad building and
+    // ride envelopes, which stop the submarine from passing through roofs,
+    // domes, and elevated machinery.
+    for (const obstacle of vehicleStructureColliders()) {
+      const bodyDesc = RAPIER.RigidBodyDesc.fixed().setTranslation(
+        obstacle.x,
+        obstacle.y,
+        obstacle.z,
+      )
+      if (obstacle.kind === 'box' && obstacle.yaw) {
+        bodyDesc.setRotation({
+          x: 0,
+          y: Math.sin(obstacle.yaw / 2),
+          z: 0,
+          w: Math.cos(obstacle.yaw / 2),
+        })
+      }
+      const body = world.createRigidBody(bodyDesc)
+      const desc = obstacle.kind === 'box'
+        ? RAPIER.ColliderDesc.cuboid(obstacle.hx, obstacle.hy, obstacle.hz)
+        : RAPIER.ColliderDesc.cylinder(obstacle.halfHeight, obstacle.radius)
+      // Character-controller queries still see these shapes, but the solver
+      // must not let an invisible envelope push dynamic midway game pieces.
+      desc.setActiveCollisionTypes(RAPIER.ActiveCollisionTypes.KINEMATIC_FIXED)
+      const collider = world.createCollider(desc, body)
+      this.vehicleOnlyColliderHandles.add(collider.handle)
+    }
+
     // Query pipeline is only valid after the first step — verify then.
     if (ctx.flags.debug) this.pendingVerify = true
   }
@@ -135,6 +166,11 @@ export class PhysicsSystem implements GameSystem {
     this.world.createCollider(this.rapier.ColliderDesc.cuboid(hx, hy, hz), body)
   }
 
+  /** Vehicle envelopes are deliberately absent from guest walking queries. */
+  isVehicleOnlyCollider(collider: RAPIER.Collider): boolean {
+    return this.vehicleOnlyColliderHandles.has(collider.handle)
+  }
+
   fixedUpdate(_ctx: GameContext, dt: number): void {
     if (!this.world) return
     this.world.timestep = dt
@@ -148,6 +184,7 @@ export class PhysicsSystem implements GameSystem {
   dispose(): void {
     this.world?.free()
     this.world = null
+    this.vehicleOnlyColliderHandles.clear()
   }
 }
 

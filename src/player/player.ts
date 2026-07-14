@@ -49,6 +49,8 @@ export class PlayerSystem implements GameSystem {
   private body: RAPIER.RigidBody | null = null
   private collider: RAPIER.Collider | null = null
   private controller: RAPIER.KinematicCharacterController | null = null
+  private readonly collisionFilter = (candidate: RAPIER.Collider): boolean =>
+    !this.physics.isVehicleOnlyCollider(candidate)
 
   private yaw = 0 // camera default looks -z = north (toward the park)
   private pitch = 0
@@ -183,7 +185,13 @@ export class PlayerSystem implements GameSystem {
       y: this.verticalVelocity * dt,
       z: this.velocity.z * dt,
     }
-    controller.computeColliderMovement(collider, desired)
+    controller.computeColliderMovement(
+      collider,
+      desired,
+      undefined,
+      undefined,
+      this.collisionFilter,
+    )
     const movement = controller.computedMovement()
     const current = body.translation()
     body.setNextKinematicTranslation({
