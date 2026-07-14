@@ -1153,3 +1153,19 @@
     crossing the 90 s show start produced zero runtime pipeline creations,
     zero >120 ms frames, ~8.2 ms steady CPU frames, and static-shadow refresh
     CPU <=0.8 ms. Restore the normal >40 ms telemetry threshold after probes.
+- 2026-07-14 recorded medium ambience: only the global camera-medium bed uses
+  assets (`ocean_ambiance.mp3` + `seagulls.mp3` above, `underwater.mp3` below,
+  and `water_splash.mp3` on either-direction crossing); all ride, wildlife,
+  music, chime, and interaction sound remains procedural. Ambient loop
+  tails/heads are baked through a 3 s equal-power crossfade before native
+  looping, and the medium buses crossfade on the canonical displaced-waterline
+  event.
+- 2026-07-14 ambience tuning: `seagulls.mp3` joins the above-water ocean bed on
+  its own lightly attenuated, crossfaded loop bus; the underwater bus gain is
+  raised modestly.
+- 2026-07-14 replacement splash + submergence tail: the new 0.94 s
+  `water_splash.mp3` impacts within its first 0.1 s, so it plays from offset 0
+  at gain 0.28 (2× the previous source gain). Recorded medium beds now join
+  after the procedural waterline low-pass but before master volume; this lets
+  ocean + seagulls retain a real 4.5 s gain tail when submerging instead of
+  having their high frequencies disappear during the 0.6 s filter sweep.

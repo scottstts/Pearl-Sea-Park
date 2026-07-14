@@ -2,17 +2,24 @@ import { Vector3 } from 'three'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { PARK_PLAN, anchorGround } from '../world/parkPlan'
+import {
+  RecordedAmbience,
+  type EncodedRecordedAmbience,
+  preloadRecordedAmbience,
+} from './recordedAmbience'
 
 const PROCEDURAL_SAMPLE_RATE = 48_000
 const HUM_NAMES = ['bell', 'pearl', 'wheel', 'carousel', 'torrent'] as const
 
 /**
- * Fully procedural audio (plan §12): no files, everything synthesized.
- * - Underwater ambience: filtered noise bed + slow shimmer pad.
+ * Procedural park audio with a recorded camera-medium ambience layer.
+ * - Above/below-water ambience: quiet, crossfaded asset loops.
+ * - Waterline crossing: recorded splash plus an acoustic filter sweep.
  * - Chimes: FM bell peals on the park schedule.
  * - Interaction ticks (ticket punch).
- * The submerged state sweeps a master low-pass — crossing the waterline
- * audibly swaps worlds. Ride, game, wildlife, and fountain sources are positional.
+ * The submerged state sweeps the procedural bus low-pass while the recorded
+ * medium beds use their own fades. Ride, game, wildlife, and fountain sources
+ * are positional.
  */
 export class AudioEngineSystem implements GameSystem {
   readonly id = 'audio'
@@ -22,6 +29,7 @@ export class AudioEngineSystem implements GameSystem {
 
   private context: AudioContext | null = null
   private master: GainNode | null = null
+  private proceduralBus: GainNode | null = null
   private lowpass: BiquadFilterNode | null = null
   private started = false
   private waltzGain: GainNode | null = null
@@ -30,10 +38,13 @@ export class AudioEngineSystem implements GameSystem {
   private readonly listenerForward = new Vector3()
   private readonly listenerUp = new Vector3()
   private volume = 0.55
+  private submerged = false
+  private encodedAmbience: EncodedRecordedAmbience | null = null
+  private recordedAmbience: RecordedAmbience | null = null
+  private splashPending = false
   private fountainActive = false
   private fountainGain: GainNode | null = null
   private fountainLoopEnd = 0
-  private ambiencePcm: Float32Array<ArrayBuffer> | null = createPinkNoisePcm(6)
   private whaleBreathPcm: Float32Array<ArrayBuffer> | null = createNoisePcm(8, 9059, 0.18)
   private readonly humPcm = new Map<string, Float32Array<ArrayBuffer>>(
     HUM_NAMES.map((name) => [name, createNoisePcm(2, deterministicStringHash(name), 1)]),
@@ -41,7 +52,9 @@ export class AudioEngineSystem implements GameSystem {
   private whaleBreathBuffer: AudioBuffer | null = null
   private readonly humBuffers = new Map<string, AudioBuffer>()
 
-  init(ctx: GameContext): void {
+  async init(ctx: GameContext): Promise<void> {
+    this.encodedAmbience = await preloadRecordedAmbience()
+
     // The context must start from a user gesture: the enter click.
     ctx.events.on('park/entered', ({ revealSeconds }) => this.start(ctx, revealSeconds))
     ctx.events.on('audio/volume-changed', ({ volume }) => {
@@ -75,11 +88,20 @@ export class AudioEngineSystem implements GameSystem {
       this.playKrakenBell(power, x, y, z)
     })
     ctx.events.on('sea/waterline-crossed', ({ submerged }) => {
+      this.submerged = submerged
       if (this.lowpass && this.context) {
         this.lowpass.frequency.linearRampToValueAtTime(
           submerged ? 1900 : 16000,
           this.context.currentTime + 0.6,
         )
+      }
+      if (this.recordedAmbience) {
+        this.recordedAmbience.setSubmerged(submerged)
+        this.recordedAmbience.playSplash()
+      } else if (this.context) {
+        // Decoding starts on entry. Preserve an unusually early crossing
+        // rather than silently dropping its splash while the MP3s decode.
+        this.splashPending = true
       }
     })
     // Ride machinery: cable hums while anything is being winched around.
@@ -129,11 +151,14 @@ export class AudioEngineSystem implements GameSystem {
     )
     const lowpass = context.createBiquadFilter()
     lowpass.type = 'lowpass'
-    lowpass.frequency.value = 1900 // guests begin underwater
+    lowpass.frequency.value = this.submerged ? 1900 : 16000
     lowpass.Q.value = 0.4
-    master.connect(lowpass)
-    lowpass.connect(context.destination)
+    const proceduralBus = context.createGain()
+    proceduralBus.connect(lowpass)
+    lowpass.connect(master)
+    master.connect(context.destination)
     this.master = master
+    this.proceduralBus = proceduralBus
     this.lowpass = lowpass
 
     this.whaleBreathBuffer = copyPcmToAudioBuffer(context, this.whaleBreathPcm)
@@ -143,7 +168,26 @@ export class AudioEngineSystem implements GameSystem {
     }
     this.humPcm.clear()
 
-    this.buildAmbience(context, master)
+    const encodedAmbience = this.encodedAmbience
+    this.encodedAmbience = null
+    if (encodedAmbience) {
+      void RecordedAmbience.create(context, master, encodedAmbience, this.submerged)
+        .then((ambience) => {
+          if (this.context !== context) {
+            ambience.dispose()
+            return
+          }
+          ambience.setSubmerged(this.submerged)
+          this.recordedAmbience = ambience
+          if (this.splashPending) {
+            this.splashPending = false
+            ambience.playSplash()
+          }
+        })
+        .catch((error: unknown) => {
+          console.error('[audio] Could not decode recorded ambience', error)
+        })
+    }
 
     // The carousel waltz bus: distance sets gain + its own muffle filter.
     const waltzGain = context.createGain()
@@ -151,7 +195,7 @@ export class AudioEngineSystem implements GameSystem {
     const waltzFilter = context.createBiquadFilter()
     waltzFilter.type = 'lowpass'
     waltzFilter.frequency.value = 6000
-    waltzGain.connect(waltzFilter).connect(master)
+    waltzGain.connect(waltzFilter).connect(proceduralBus)
     this.waltzGain = waltzGain
     this.waltzFilter = waltzFilter
 
@@ -166,7 +210,7 @@ export class AudioEngineSystem implements GameSystem {
     fountainPanner.positionX.value = PARK_PLAN.tidalCourt.x
     fountainPanner.positionY.value = anchorGround(PARK_PLAN.tidalCourt) + 5
     fountainPanner.positionZ.value = PARK_PLAN.tidalCourt.z
-    fountainGain.connect(fountainPanner).connect(master)
+    fountainGain.connect(fountainPanner).connect(proceduralBus)
     this.fountainGain = fountainGain
     this.setFountainActive()
   }
@@ -254,8 +298,8 @@ export class AudioEngineSystem implements GameSystem {
    */
   private playWhaleSong(): void {
     const context = this.context
-    const master = this.master
-    if (!context || !master) return
+    const proceduralBus = this.proceduralBus
+    if (!context || !proceduralBus) return
     const at = context.currentTime + 0.05
     const bus = context.createGain()
     bus.gain.setValueAtTime(0.0001, at)
@@ -266,7 +310,7 @@ export class AudioEngineSystem implements GameSystem {
     filter.type = 'lowpass'
     filter.frequency.setValueAtTime(260, at)
     filter.frequency.exponentialRampToValueAtTime(680, at + 10)
-    bus.connect(filter).connect(master)
+    bus.connect(filter).connect(proceduralBus)
 
     for (const [frequency, bend, level] of [
       [38, 47, 0.7],
@@ -357,58 +401,13 @@ export class AudioEngineSystem implements GameSystem {
     partial.stop(at + duration + 0.05)
   }
 
-  /** Deep, soft ambience: pink-ish noise through a slow-breathing filter. */
-  private buildAmbience(context: AudioContext, out: GainNode): void {
-    const buffer = copyPcmToAudioBuffer(context, this.ambiencePcm)
-    this.ambiencePcm = null
-    const source = context.createBufferSource()
-    source.buffer = buffer
-    source.loop = true
-
-    const filter = context.createBiquadFilter()
-    filter.type = 'lowpass'
-    filter.frequency.value = 320
-    const lfo = context.createOscillator()
-    lfo.frequency.value = 0.05
-    const lfoGain = context.createGain()
-    lfoGain.gain.value = 120
-    lfo.connect(lfoGain).connect(filter.frequency)
-    lfo.start()
-
-    const gain = context.createGain()
-    gain.gain.value = 0.35
-    source.connect(filter).connect(gain).connect(out)
-    source.start()
-
-    // Faint shimmer pad: two detuned sines far up, very quiet.
-    const shimmerVoices = [
-      [523.25, 0.012],
-      [659.26, 0.009],
-    ] as const
-    for (const [index, [frequency, level]] of shimmerVoices.entries()) {
-      const osc = context.createOscillator()
-      osc.frequency.value = frequency
-      osc.detune.value = deterministicNoise(index + 8303) * 4
-      const g = context.createGain()
-      g.gain.value = level
-      const trem = context.createOscillator()
-      trem.frequency.value = 0.095 + deterministicNoise(index + 12109) * 0.025
-      const tremGain = context.createGain()
-      tremGain.gain.value = level * 0.6
-      trem.connect(tremGain).connect(g.gain)
-      trem.start()
-      osc.connect(g).connect(out)
-      osc.start()
-    }
-  }
-
   private readonly hums = new Map<string, { gain: GainNode; stop: () => void }>()
 
   /** Machinery hum: low sine + slow-filtered noise, faded in and out. */
   private startHum(name: string, frequency: number, level: number): void {
     const context = this.context
-    const master = this.master
-    if (!context || !master || this.hums.has(name)) return
+    const proceduralBus = this.proceduralBus
+    if (!context || !proceduralBus || this.hums.has(name)) return
     const gain = context.createGain()
     gain.gain.setValueAtTime(0.0001, context.currentTime)
     gain.gain.linearRampToValueAtTime(level, context.currentTime + 1.4)
@@ -429,7 +428,7 @@ export class AudioEngineSystem implements GameSystem {
     osc.connect(gain)
     oscB.connect(gain)
     noise.connect(noiseFilter).connect(noiseGain).connect(gain)
-    gain.connect(master)
+    gain.connect(proceduralBus)
     osc.start()
     oscB.start()
     noise.start()
@@ -461,8 +460,8 @@ export class AudioEngineSystem implements GameSystem {
     output: AudioNode | null = null,
   ): void {
     const context = this.context
-    const master = this.master
-    if (!context || !master) return
+    const proceduralBus = this.proceduralBus
+    if (!context || !proceduralBus) return
     const carrier = context.createOscillator()
     carrier.frequency.value = frequency
     const modulator = context.createOscillator()
@@ -476,7 +475,7 @@ export class AudioEngineSystem implements GameSystem {
     gain.gain.setValueAtTime(0.0001, at)
     gain.gain.exponentialRampToValueAtTime(level, at + 0.015)
     gain.gain.exponentialRampToValueAtTime(0.0001, at + duration)
-    carrier.connect(gain).connect(output ?? master)
+    carrier.connect(gain).connect(output ?? proceduralBus)
     modulator.start(at)
     carrier.start(at)
     modulator.stop(at + duration + 0.1)
@@ -485,8 +484,8 @@ export class AudioEngineSystem implements GameSystem {
 
   private playKrakenBell(power: number, x: number, y: number, z: number): void {
     const context = this.context
-    const master = this.master
-    if (!context || !master) return
+    const proceduralBus = this.proceduralBus
+    if (!context || !proceduralBus) return
     const panner = context.createPanner()
     panner.panningModel = 'HRTF'
     panner.distanceModel = 'inverse'
@@ -496,7 +495,7 @@ export class AudioEngineSystem implements GameSystem {
     panner.positionX.value = x
     panner.positionY.value = y
     panner.positionZ.value = z
-    panner.connect(master)
+    panner.connect(proceduralBus)
     const at = context.currentTime + 0.02
     this.bell(110, at, 3.8, 0.16 + power * 0.08, panner)
     this.bell(440, at + 0.03, 3.2, 0.1 + power * 0.05, panner)
@@ -514,8 +513,8 @@ export class AudioEngineSystem implements GameSystem {
 
   playPunch(): void {
     const context = this.context
-    const master = this.master
-    if (!context || !master) return
+    const proceduralBus = this.proceduralBus
+    if (!context || !proceduralBus) return
     const t = context.currentTime
     const osc = context.createOscillator()
     osc.type = 'square'
@@ -524,7 +523,7 @@ export class AudioEngineSystem implements GameSystem {
     const gain = context.createGain()
     gain.gain.setValueAtTime(0.2, t)
     gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.09)
-    osc.connect(gain).connect(master)
+    osc.connect(gain).connect(proceduralBus)
     osc.start(t)
     osc.stop(t + 0.1)
     this.bell(1318.5, t + 0.1, 1.2, 0.08)
@@ -553,21 +552,6 @@ function createNoisePcm(
 ): Float32Array<ArrayBuffer> {
   const data = new Float32Array(PROCEDURAL_SAMPLE_RATE * seconds)
   for (let i = 0; i < data.length; i++) data[i] = deterministicNoise(i + seed) * level
-  return data
-}
-
-function createPinkNoisePcm(seconds: number): Float32Array<ArrayBuffer> {
-  const data = new Float32Array(PROCEDURAL_SAMPLE_RATE * seconds)
-  let b0 = 0
-  let b1 = 0
-  let b2 = 0
-  for (let i = 0; i < data.length; i++) {
-    const white = deterministicNoise(i + 4099)
-    b0 = 0.997 * b0 + 0.029 * white
-    b1 = 0.985 * b1 + 0.032 * white
-    b2 = 0.95 * b2 + 0.048 * white
-    data[i] = (b0 + b1 + b2) * 0.32
-  }
   return data
 }
 

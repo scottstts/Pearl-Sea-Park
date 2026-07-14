@@ -107,18 +107,29 @@
   conventional two-panel pitched roof in board-local coordinates. The ridge
   follows local X; the eaves follow local ±Z regardless of the whole board's
   world yaw. `audit:geometry` verifies both panels meet the ridge and eaves.
-- `AudioEngineSystem` is fully procedural (pink-noise bed + breathing filter,
-  detuned shimmer pad, FM bell chimes, ticket-punch thunk). The master chain
-  ends in a low-pass swept 1900 Hz ↔ 16 kHz on `sea/waterline-crossed` — the
-  audible half of the waterline crossing. AudioContext starts on
-  `park/entered` (the enter click satisfies the gesture requirement).
+- `AudioEngineSystem` keeps ride, wildlife, music, chime, and interaction audio
+  procedural, with four supplied exceptions routed through the same master
+  chain: `ocean_ambiance.mp3` plus the naturally quieter `seagulls.mp3` above
+  water, `underwater.mp3` below water, and `water_splash.mp3` on every
+  `sea/waterline-crossed` transition. All ambience files are baked into native
+  loops with a 3 s equal-power tail/head crossfade. Medium entry normally
+  crossfades over 1.4 s, but submerging gives the ocean and seagulls a 4.5 s
+  decay tail. Recorded beds join after the procedural 1900 Hz ↔ 16 kHz
+  waterline low-pass so that filter cannot erase the seagulls' high-frequency
+  tail after 0.6 s; both paths still meet before the user's master-volume gain.
+  The underwater bus is slightly stronger than the ocean bed; seagulls retain
+  a higher source gain because their recording is much quieter. The replacement
+  `water_splash.mp3` has an immediate impact, so it plays from the beginning at
+  twice the previous source gain, with the existing anti-stacking cooldown.
+  AudioContext starts on `park/entered` (the enter click satisfies the gesture
+  requirement); encoded assets preload behind the ticket and decode after
+  context creation.
 - Entry is one 1.6 s image/sound crossfade: `TICKET_REVEAL_SECONDS` writes the
   ticket CSS transition variable and travels on `park/entered`; the Web Audio
-  master ramps from silence over that exact interval. Procedural PCM for the
-  ambience, whale breath, and all five machinery hums is generated during
-  loading and copied into reusable AudioBuffers at entry, so neither the click
-  nor a later schedule/ride event runs a sample-generation loop on the game
-  frame.
+  master ramps from silence over that exact interval. Procedural PCM for whale
+  breath and all five machinery hums is generated during loading and copied
+  into reusable AudioBuffers at entry, so neither the click nor a later
+  schedule/ride event runs a sample-generation loop on the game frame.
 - S13 updates the Web Audio listener from the camera pose every frame. The
   Kraken Bell is the first true HRTF world source (inverse distance, 90 m
   cutoff); its low body and high strike partials originate at the physical
