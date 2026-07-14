@@ -1,0 +1,581 @@
+import { Euler, Matrix4, Quaternion, Vector3 } from 'three'
+import type RAPIER from '@dimforge/rapier3d-compat'
+import { registerBookmark } from '../core/debug'
+import type { Rng } from '../core/prng'
+import type { Interactable } from '../player/interact'
+import type { PlayerSystem } from '../player/player'
+import { PLAYER_CAPSULE_OFFSET } from '../player/player'
+import { markDynamicShadowCasters } from '../render/layers'
+import type { GameContext } from '../runtime/context'
+import type { GameSystem } from '../runtime/system'
+import type { SeaMediumSystem } from '../sea/medium'
+import type { DistrictServices } from '../world/districts/atrium'
+import { terrainHeight } from '../world/terrain'
+import type { SubmarineModel } from './submarineModel'
+import { buildSubmarineModel, SUBMARINE_REST_HEIGHT, SUBMARINE_SCALE } from './submarineModel'
+import { SubmarineWake } from './submarineWake'
+
+/**
+ * Berth: mirrored across the arrival road (x = 0) from the park-entrance
+ * sign at (−6, 311) — sign to the west of the threshold, submarine to the
+ * east, nose north toward the park like a vessel ready to depart.
+ */
+const BERTH = { x: 6, z: 311, yaw: Math.PI } as const
+
+// ── Handling (fixed 60 Hz dynamics; all speeds m/s, angles rad) ───────────
+const MAX_FORWARD = 9.0
+const MAX_REVERSE = 3.6
+const MAX_VERTICAL = 3.4
+const MAX_YAW_RATE = 0.85
+const THRUST_RESPONSE = 1.6 // 1/s toward a larger command
+const RELEASE_RESPONSE = 2.4 // 1/s toward zero — station-keeping is quick
+const YAW_RESPONSE = 3.0
+const VERTICAL_RESPONSE = 2.4
+const ATTITUDE_RESPONSE = 3.0 // cosmetic pitch/bank easing
+
+// The craft may breach to half-surfaced (hull axis at mean sea level) and
+// may never push its belly into the seabed. The piloting floor equals the
+// rest pose so boarding never pops the parked hull upward.
+const SURFACE_MAX_Y = 0.0
+const GROUND_CLEARANCE = SUBMARINE_REST_HEIGHT
+// Stepping out is granted only at rest on the seabed (Scott's ruling): a
+// craft abandoned mid-water would hover out of a walking guest's reach, and
+// any unmanned auto-descent could ground the hull on a dome or ride. Under
+// way, E answers with a gentle reminder instead. "On the seabed" means the
+// hull sits at its terrain floor — a perch atop a structure does not count.
+const PARKED_EPSILON = 0.08
+
+// Invisible force field around the park range: a soft inward push over the
+// last metres, then a hard wall. Encloses every attraction incl. the
+// Torrent's abyss helix and the arrival threshold.
+const FIELD_CENTER_X = 0
+const FIELD_CENTER_Z = 10
+const FIELD_RADIUS = 380
+const FIELD_SOFT_BAND = 28
+
+// ── Propeller & wake ──────────────────────────────────────────────────────
+const PROP_MAX = 22 // rad/s at full command
+const PROP_SPIN_UP = 3.0 // 1/s
+const PROP_SPIN_DOWN = 1.1 // slower coast-down than spin-up
+const PROP_WAKE_MIN = 3.0 // below this spin the screw sheds no bubbles
+const WAKE_RATE_MAX = 80 // bubbles/s at full spin
+
+// ── Third-person chase camera ─────────────────────────────────────────────
+// Close framing: the hull fills a good share of the frame while the eye
+// still clears the dome to read the water ahead.
+const CHASE_BACK = 7.0
+const CHASE_UP = 2.7
+const LOOK_AHEAD = 6.5
+const LOOK_UP = 1.0
+const CAM_POS_RESPONSE = 5.5
+const CAM_LOOK_RESPONSE = 8.5
+const BLEND_IN = 1.15
+const BLEND_OUT = 0.9
+// Step out to starboard, clear of the parked-hull blocker cylinder
+// (r ≈ 2.87) plus the guest capsule radius and a margin.
+const EXIT_SIDE = 3.5
+
+type SubmarineMode = 'idle' | 'entering' | 'piloting' | 'exiting'
+
+const STEER_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft', 'ShiftRight'])
+
+/**
+ * The pilotable submarine (Le Nautile Blanc). Parked beside the park
+ * threshold; E boards into a third-person chase view, WASD/Space/Shift
+ * steer, and E steps out once the craft is settled on the seabed — under
+ * way it answers with a gentle reminder to park first. Collision is
+ * deliberately the player's own capsule (a guest-sized ghost at the hull
+ * axis), so the craft passes structures exactly where a guest could walk.
+ * When no key is held the vessel holds position and the screw coasts down.
+ */
+export class SubmarineSystem implements GameSystem {
+  readonly id = 'submarine'
+
+  private readonly services: DistrictServices
+  private readonly player: PlayerSystem | null
+  private readonly medium: SeaMediumSystem
+
+  private model: SubmarineModel | null = null
+  private wake: SubmarineWake | null = null
+  private rng: Rng | null = null
+
+  private body: RAPIER.RigidBody | null = null
+  private collider: RAPIER.Collider | null = null
+  private controller: RAPIER.KinematicCharacterController | null = null
+  private blockerBody: RAPIER.RigidBody | null = null
+  private blockerCollider: RAPIER.Collider | null = null
+  // The guest capsule rides inside the hull and the parked blocker wraps it —
+  // neither may answer the craft's own collide-and-slide queries.
+  private readonly collisionFilter = (candidate: RAPIER.Collider): boolean =>
+    candidate !== this.player?.capsuleCollider && candidate !== this.blockerCollider
+
+  private mode: SubmarineMode = 'idle'
+  private readonly keys = new Set<string>()
+
+  // Authoritative pose advances at the fixed step; rendering interpolates.
+  private readonly position = new Vector3()
+  private readonly previousPosition = new Vector3()
+  private yaw = BERTH.yaw
+  private previousYaw = BERTH.yaw
+
+  private forwardSpeed = 0
+  private verticalSpeed = 0
+  private yawRate = 0
+  private visualPitch = 0
+  private visualRoll = 0
+  private propSpeed = 0
+  private propTarget = 0
+  private helmAngle = 0
+  private steerInput = { forward: 0, turn: 0, vertical: 0 }
+
+  // Camera rig state.
+  private blend = 0
+  private readonly blendFromPosition = new Vector3()
+  private readonly blendFromQuaternion = new Quaternion()
+  private readonly cameraPosition = new Vector3()
+  private readonly cameraLook = new Vector3()
+  private readonly exitPoint = new Vector3()
+
+  private readonly promptAnchor = new Vector3()
+  private exitInteractable: Interactable | null = null
+  private wakeDebt = 0
+
+  // Scratch
+  private readonly forward = new Vector3()
+  private readonly right = new Vector3()
+  private readonly scratch = new Vector3()
+  private readonly scratchB = new Vector3()
+  private readonly scratchMatrix = new Matrix4()
+  private readonly scratchQuaternion = new Quaternion()
+
+  constructor(services: DistrictServices, player: PlayerSystem | null, medium: SeaMediumSystem) {
+    this.services = services
+    this.player = player
+    this.medium = medium
+  }
+
+  init(ctx: GameContext): void {
+    this.rng = ctx.rng.fork('submarine')
+    const model = buildSubmarineModel(this.medium)
+    this.model = model
+    const berthY = terrainHeight(BERTH.x, BERTH.z) + SUBMARINE_REST_HEIGHT
+    this.position.set(BERTH.x, berthY, BERTH.z)
+    this.previousPosition.copy(this.position)
+    model.group.rotation.order = 'YXZ'
+    this.applyVisualPose(this.position, this.yaw)
+    markDynamicShadowCasters(model.group)
+    ctx.scene.add(model.group)
+
+    const wake = new SubmarineWake(this.medium)
+    this.wake = wake
+    ctx.scene.add(wake.mesh)
+
+    registerBookmark({
+      name: 'submarine',
+      position: [BERTH.x + 6.5, berthY + 3.2, BERTH.z + 6.5],
+      look: [BERTH.x, berthY, BERTH.z],
+      note: 'Le Nautile Blanc berthed beside the park threshold',
+    })
+
+    // Piloting exists only with a guest; validation views still get the hull.
+    const { physics, interaction } = this.services
+    if (!this.player || !interaction || !physics.world || !physics.rapier) return
+    const { world, rapier } = physics
+
+    // The craft's collision IS the guest capsule: same shape, hull axis.
+    this.body = world.createRigidBody(
+      rapier.RigidBodyDesc.kinematicPositionBased().setTranslation(
+        this.position.x,
+        this.position.y,
+        this.position.z,
+      ),
+    )
+    this.collider = world.createCollider(rapier.ColliderDesc.capsule(0.5, 0.35), this.body)
+    this.controller = world.createCharacterController(0.05)
+
+    // While parked, a solid footprint keeps guests from walking through the
+    // hull; it drops far below the park whenever the craft is under way.
+    this.blockerBody = world.createRigidBody(
+      rapier.RigidBodyDesc.kinematicPositionBased().setTranslation(
+        this.position.x,
+        this.position.y,
+        this.position.z,
+      ),
+    )
+    this.blockerCollider = world.createCollider(
+      rapier.ColliderDesc.cylinder(1.35, 2.35 * SUBMARINE_SCALE),
+      this.blockerBody,
+    )
+
+    window.addEventListener('keydown', (event) => {
+      // Capture during the boarding blend too: a W held while the camera
+      // settles engages the moment the helm goes live (auto-repeat would
+      // otherwise delay it by the OS repeat interval).
+      if ((this.mode !== 'piloting' && this.mode !== 'entering') || !STEER_CODES.has(event.code)) return
+      this.keys.add(event.code)
+    })
+    window.addEventListener('keyup', (event) => this.keys.delete(event.code))
+    window.addEventListener('blur', () => this.keys.clear())
+
+    this.promptAnchor.copy(this.position)
+    const player = this.player
+    interaction.register({
+      position: this.promptAnchor,
+      radius: 7.5,
+      prompt: 'Pilot the submarine',
+      onInteract: () => this.enter(ctx),
+      enabled: () => this.mode === 'idle' && player.controlEnabled && !player.inputFrozen,
+    })
+    // The exit prompt anchors to the hull itself; the chase camera always
+    // faces it, so the view-cone rule keeps it visible from the helm.
+    this.exitInteractable = {
+      position: this.promptAnchor,
+      radius: 20,
+      prompt: 'Step out',
+      onInteract: () => this.requestExit(ctx),
+      enabled: () => this.mode === 'piloting',
+    }
+    interaction.register(this.exitInteractable)
+  }
+
+  // ── Boarding & stepping out ─────────────────────────────────────────────
+
+  private enter(ctx: GameContext): void {
+    if (this.mode !== 'idle' || !this.player) return
+    this.mode = 'entering'
+    this.blend = 0
+    this.keys.clear()
+    this.blendFromPosition.copy(ctx.camera.position)
+    this.blendFromQuaternion.copy(ctx.camera.quaternion)
+    this.player.controlEnabled = false
+    this.blockerBody?.setTranslation({ x: this.position.x, y: -500, z: this.position.z }, false)
+    // Only the "step out" prompt exists while at the helm — every park gate,
+    // ride, and game stays mute until the guest is back on foot.
+    if (this.services.interaction) this.services.interaction.exclusive = this.exitInteractable
+  }
+
+  /** At rest on its terrain floor — a perch atop a structure never counts. */
+  private isParkedOnSeabed(): boolean {
+    const floorY = terrainHeight(this.position.x, this.position.z) + GROUND_CLEARANCE
+    return this.position.y <= floorY + PARKED_EPSILON
+  }
+
+  private requestExit(ctx: GameContext): void {
+    if (this.mode !== 'piloting' || !this.player) return
+    const interaction = this.services.interaction
+    if (!this.isParkedOnSeabed()) {
+      interaction?.notice('Settle on the seabed to step out')
+      return
+    }
+    interaction?.dismissNotice()
+    this.mode = 'exiting'
+    this.blend = 0
+    this.keys.clear()
+    this.blendFromPosition.copy(ctx.camera.position)
+    this.blendFromQuaternion.copy(ctx.camera.quaternion)
+    // Step out to starboard onto the sand beside the hull.
+    this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw))
+    const ground = terrainHeight(
+      this.position.x + this.right.x * EXIT_SIDE,
+      this.position.z + this.right.z * EXIT_SIDE,
+    )
+    this.exitPoint
+      .copy(this.position)
+      .addScaledVector(this.right, EXIT_SIDE)
+      .setY(Math.max(ground + 0.05, this.position.y - 1.35))
+    // The craft holds station where it was left: park the blocker there.
+    this.blockerBody?.setTranslation(
+      { x: this.position.x, y: this.position.y, z: this.position.z },
+      false,
+    )
+  }
+
+  private finishExit(ctx: GameContext): void {
+    const player = this.player
+    if (!player) return
+    const euler = new Euler().setFromQuaternion(ctx.camera.quaternion, 'YXZ')
+    player.setLook(euler.y, euler.x)
+    player.placeAt(this.exitPoint.x, this.exitPoint.y, this.exitPoint.z)
+    player.controlEnabled = true
+    this.mode = 'idle'
+    if (this.services.interaction) this.services.interaction.exclusive = null
+  }
+
+  // ── Fixed-step dynamics ─────────────────────────────────────────────────
+
+  fixedUpdate(_ctx: GameContext, dt: number): void {
+    this.previousPosition.copy(this.position)
+    this.previousYaw = this.yaw
+    if (this.mode !== 'piloting') {
+      // Idle and both blend phases hold station; the screw coasts down.
+      // (The hull never moves unmanned — exit requires a seabed park.)
+      this.settleDynamics(dt)
+      return
+    }
+
+    // Steering intent.
+    const forwardInput = (this.keys.has('KeyW') ? 1 : 0) - (this.keys.has('KeyS') ? 1 : 0)
+    const turnInput = (this.keys.has('KeyA') ? 1 : 0) - (this.keys.has('KeyD') ? 1 : 0)
+    const verticalInput =
+      (this.keys.has('Space') ? 1 : 0) -
+      (this.keys.has('ShiftLeft') || this.keys.has('ShiftRight') ? 1 : 0)
+    this.steerInput = { forward: forwardInput, turn: turnInput, vertical: verticalInput }
+
+    const targetForward = forwardInput > 0 ? MAX_FORWARD : forwardInput < 0 ? -MAX_REVERSE : 0
+    const targetYawRate = turnInput * MAX_YAW_RATE
+    const targetVertical = verticalInput * MAX_VERTICAL
+
+    this.forwardSpeed = approach(this.forwardSpeed, targetForward, dt, THRUST_RESPONSE, RELEASE_RESPONSE)
+    this.yawRate = approach(this.yawRate, targetYawRate, dt, YAW_RESPONSE, YAW_RESPONSE)
+    this.verticalSpeed = approach(this.verticalSpeed, targetVertical, dt, VERTICAL_RESPONSE, VERTICAL_RESPONSE)
+
+    this.yaw += this.yawRate * dt
+    this.forward.set(Math.sin(this.yaw), 0, Math.cos(this.yaw))
+
+    // Desired displacement this step.
+    this.scratch
+      .copy(this.forward)
+      .multiplyScalar(this.forwardSpeed * dt)
+      .add(this.scratchB.set(0, this.verticalSpeed * dt, 0))
+
+    // Soft force field: an inward current rises over the last metres.
+    const dx = this.position.x - FIELD_CENTER_X
+    const dz = this.position.z - FIELD_CENTER_Z
+    const radial = Math.hypot(dx, dz)
+    const softStart = FIELD_RADIUS - FIELD_SOFT_BAND
+    if (radial > softStart && radial > 1e-4) {
+      const over = Math.min(1, (radial - softStart) / FIELD_SOFT_BAND)
+      const push = over * over * 7.5 * dt
+      this.scratch.x -= (dx / radial) * push
+      this.scratch.z -= (dz / radial) * push
+    }
+
+    // Collide-and-slide with the guest capsule; the player's own parked
+    // collider rides inside the hull and is excluded from the query.
+    const { collider, controller, body } = this
+    if (collider && controller && body) {
+      controller.computeColliderMovement(
+        collider,
+        { x: this.scratch.x, y: this.scratch.y, z: this.scratch.z },
+        undefined,
+        undefined,
+        this.collisionFilter,
+      )
+      const movement = controller.computedMovement()
+      this.position.x += movement.x
+      this.position.y += movement.y
+      this.position.z += movement.z
+    } else {
+      this.position.add(this.scratch)
+    }
+
+    // Vertical envelope: half-surfaced ceiling, seabed floor.
+    const floorY = terrainHeight(this.position.x, this.position.z) + GROUND_CLEARANCE
+    if (this.position.y <= floorY) {
+      this.position.y = floorY
+      if (this.verticalSpeed < 0) this.verticalSpeed = 0
+    }
+    if (this.position.y >= SURFACE_MAX_Y) {
+      this.position.y = SURFACE_MAX_Y
+      if (this.verticalSpeed > 0) this.verticalSpeed = 0
+    }
+
+    // Hard force-field wall.
+    const dx2 = this.position.x - FIELD_CENTER_X
+    const dz2 = this.position.z - FIELD_CENTER_Z
+    const radial2 = Math.hypot(dx2, dz2)
+    if (radial2 > FIELD_RADIUS) {
+      const clampScale = FIELD_RADIUS / radial2
+      this.position.x = FIELD_CENTER_X + dx2 * clampScale
+      this.position.z = FIELD_CENTER_Z + dz2 * clampScale
+    }
+
+    body?.setNextKinematicTranslation({
+      x: this.position.x,
+      y: this.position.y,
+      z: this.position.z,
+    })
+    // Carry the seated guest: their capsule (and world position) rides at
+    // the hull axis, so wildlife, docks, and exits all see the pilot here.
+    this.player?.placeAt(
+      this.position.x,
+      this.position.y - PLAYER_CAPSULE_OFFSET,
+      this.position.z,
+    )
+
+    this.advanceSharedDynamics(dt)
+  }
+
+  /** Screw + attitude dynamics shared by every mode. */
+  private advanceSharedDynamics(dt: number): void {
+    const { forward, turn, vertical } = this.steerInput
+    const anyInput = forward !== 0 || turn !== 0 || vertical !== 0
+    const commanded = Math.max(Math.abs(forward), 0.6 * Math.abs(vertical), 0.45 * Math.abs(turn))
+    this.propTarget = anyInput ? PROP_MAX * (0.35 + 0.65 * commanded) * (forward < 0 ? -1 : 1) : 0
+    const spinRate = Math.abs(this.propTarget) > Math.abs(this.propSpeed) ? PROP_SPIN_UP : PROP_SPIN_DOWN
+    this.propSpeed = approach(this.propSpeed, this.propTarget, dt, spinRate, spinRate)
+
+    // Cosmetic attitude: the bow lifts on ascent and banks into a turn.
+    const targetPitch = (-this.verticalSpeed / MAX_VERTICAL) * 0.11
+    const speedFraction = Math.max(0, Math.min(1, this.forwardSpeed / MAX_FORWARD))
+    const targetRoll = (this.yawRate / MAX_YAW_RATE) * 0.2 * speedFraction
+    const attitudeEase = 1 - Math.exp(-dt * ATTITUDE_RESPONSE)
+    this.visualPitch += (targetPitch - this.visualPitch) * attitudeEase
+    this.visualRoll += (targetRoll - this.visualRoll) * attitudeEase
+  }
+
+  private settleDynamics(dt: number): void {
+    this.forwardSpeed = approach(this.forwardSpeed, 0, dt, RELEASE_RESPONSE, RELEASE_RESPONSE)
+    this.yawRate = approach(this.yawRate, 0, dt, YAW_RESPONSE, YAW_RESPONSE)
+    this.verticalSpeed = approach(this.verticalSpeed, 0, dt, VERTICAL_RESPONSE, VERTICAL_RESPONSE)
+    this.steerInput = { forward: 0, turn: 0, vertical: 0 }
+    this.advanceSharedDynamics(dt)
+  }
+
+  // ── Per-frame presentation ──────────────────────────────────────────────
+
+  update(ctx: GameContext, dt: number, alpha: number): void {
+    const model = this.model
+    if (!model) return
+
+    // Interpolated pose between fixed steps — never the raw physics step.
+    this.scratch.lerpVectors(this.previousPosition, this.position, alpha)
+    const renderYaw = this.previousYaw + (this.yaw - this.previousYaw) * alpha
+    this.applyVisualPose(this.scratch, renderYaw)
+    this.promptAnchor.copy(this.scratch)
+
+    // Screw and helm are visual rates on the rendered clock.
+    model.propeller.rotation.z += this.propSpeed * dt
+    const helmTarget = -this.steerInput.turn * 0.9
+    this.helmAngle += (helmTarget - this.helmAngle) * (1 - Math.exp(-dt * 4))
+    model.helmWheel.rotation.z = this.helmAngle
+
+    this.emitWake(ctx, dt)
+    this.wake?.update(ctx.time.elapsed)
+    this.updateCamera(ctx, dt)
+  }
+
+  private applyVisualPose(center: Vector3, yaw: number): void {
+    const group = this.model?.group
+    if (!group) return
+    group.position.copy(center)
+    group.rotation.set(this.visualPitch, yaw, this.visualRoll)
+    group.updateMatrixWorld()
+  }
+
+  private emitWake(ctx: GameContext, dt: number): void {
+    const model = this.model
+    const wake = this.wake
+    const rng = this.rng
+    if (!model || !wake || !rng) return
+    const spin = Math.abs(this.propSpeed)
+    if (spin < PROP_WAKE_MIN) {
+      this.wakeDebt = 0
+      return
+    }
+    this.wakeDebt += (WAKE_RATE_MAX * spin) / PROP_MAX * dt
+    let count = Math.floor(this.wakeDebt)
+    this.wakeDebt -= count
+    if (count <= 0) return
+    count = Math.min(count, 6)
+
+    model.propeller.getWorldPosition(this.scratchB) // prop hub, world
+    this.forward.set(Math.sin(this.yaw), 0, Math.cos(this.yaw))
+    this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw))
+    const washSign = this.propSpeed < 0 ? 1 : -1 // wash streams opposite thrust
+    const washSpeed = 1.8 + Math.abs(this.forwardSpeed) * 0.45
+    const discRadius = 0.62 * SUBMARINE_SCALE
+    const origin = new Vector3()
+    const drive = new Vector3()
+    for (let i = 0; i < count; i++) {
+      const a = rng.next() * Math.PI * 2
+      const r = Math.sqrt(rng.next()) * discRadius
+      origin
+        .copy(this.scratchB)
+        .addScaledVector(this.right, Math.cos(a) * r)
+        .add(this.scratch.set(0, Math.sin(a) * r, 0))
+      drive
+        .copy(this.forward)
+        .multiplyScalar(washSign * washSpeed * (0.75 + rng.next() * 0.5))
+        .addScaledVector(this.right, rng.spread() * 0.35)
+      drive.y += rng.spread() * 0.3
+      wake.emit(origin, drive, ctx.time.elapsed)
+    }
+  }
+
+  // ── Chase camera ────────────────────────────────────────────────────────
+
+  private chasePose(outEye: Vector3, outLook: Vector3): void {
+    const group = this.model?.group
+    const center = group ? group.position : this.position
+    const yaw = group ? group.rotation.y : this.yaw
+    const fx = Math.sin(yaw)
+    const fz = Math.cos(yaw)
+    outEye.set(center.x - fx * CHASE_BACK, center.y + CHASE_UP, center.z - fz * CHASE_BACK)
+    // Never sink the eye under the sand while skimming the seabed.
+    const camFloor = terrainHeight(outEye.x, outEye.z) + 0.7
+    if (outEye.y < camFloor) outEye.y = camFloor
+    outLook.set(center.x + fx * LOOK_AHEAD, center.y + LOOK_UP, center.z + fz * LOOK_AHEAD)
+  }
+
+  private updateCamera(ctx: GameContext, dt: number): void {
+    if (this.mode === 'idle') return
+    const camera = ctx.camera
+
+    if (this.mode === 'entering') {
+      this.blend = Math.min(1, this.blend + dt / BLEND_IN)
+      const eased = this.blend * this.blend * (3 - 2 * this.blend)
+      this.chasePose(this.cameraPosition, this.cameraLook)
+      // Camera convention: Matrix4.lookAt aims −z at the target. A plain
+      // Object3D.lookAt aims +z instead, which slewed this blend to face
+      // exactly backward before piloting's camera.lookAt "cut" it right.
+      this.scratchMatrix.lookAt(this.cameraPosition, this.cameraLook, UP)
+      this.scratchQuaternion.setFromRotationMatrix(this.scratchMatrix)
+      camera.position.lerpVectors(this.blendFromPosition, this.cameraPosition, eased)
+      camera.quaternion.copy(this.blendFromQuaternion).slerp(this.scratchQuaternion, eased)
+      if (this.blend >= 1) this.mode = 'piloting'
+      return
+    }
+
+    if (this.mode === 'piloting') {
+      this.chasePose(this.scratch, this.scratchB)
+      const posEase = 1 - Math.exp(-dt * CAM_POS_RESPONSE)
+      const lookEase = 1 - Math.exp(-dt * CAM_LOOK_RESPONSE)
+      this.cameraPosition.lerp(this.scratch, posEase)
+      this.cameraLook.lerp(this.scratchB, lookEase)
+      camera.position.copy(this.cameraPosition)
+      camera.lookAt(this.cameraLook)
+      return
+    }
+
+    // exiting
+    this.blend = Math.min(1, this.blend + dt / BLEND_OUT)
+    const eased = this.blend * this.blend * (3 - 2 * this.blend)
+    this.scratch.set(this.exitPoint.x, this.exitPoint.y + 1.7, this.exitPoint.z)
+    camera.position.lerpVectors(this.blendFromPosition, this.scratch, eased)
+    camera.quaternion.copy(this.blendFromQuaternion)
+    if (this.blend >= 1) this.finishExit(ctx)
+  }
+
+  dispose(ctx: GameContext): void {
+    if (this.model) {
+      ctx.scene.remove(this.model.group)
+      this.model.dispose()
+      this.model = null
+    }
+    if (this.wake) {
+      ctx.scene.remove(this.wake.mesh)
+      this.wake.dispose()
+      this.wake = null
+    }
+    if (this.services.interaction) this.services.interaction.exclusive = null
+  }
+}
+
+const UP = new Vector3(0, 1, 0)
+
+/** Exponential ease toward a target with separate approach/release rates. */
+function approach(current: number, target: number, dt: number, gain: number, release: number): number {
+  const rate = Math.abs(target) > Math.abs(current) ? gain : release
+  return current + (target - current) * (1 - Math.exp(-dt * rate))
+}

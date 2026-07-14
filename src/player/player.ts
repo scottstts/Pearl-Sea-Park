@@ -22,6 +22,9 @@ const AIR_GRAVITY = 9.81
 const SWIM_GRAVITY = 2.6
 const JUMP_SPEED = 3.15
 
+/** Body-centre height above the feet (`placeAt` y) — capsule half + radius. */
+export const PLAYER_CAPSULE_OFFSET = CAPSULE_HALF + CAPSULE_RADIUS
+
 /**
  * First-person guest (plan §8): Rapier kinematic character controller,
  * pointer-lock look, smooth-step stairs, and a buoyant underwater jump.
@@ -229,6 +232,12 @@ export class PlayerSystem implements GameSystem {
   get position(): Vector3 {
     const t = this.body?.translation()
     return t ? new Vector3(t.x, t.y, t.z) : new Vector3()
+  }
+
+  /** The guest capsule — vehicles that carry the body exclude it from their
+   *  own collision queries (it rides inside their hull). */
+  get capsuleCollider(): RAPIER.Collider | null {
+    return this.collider
   }
 }
 

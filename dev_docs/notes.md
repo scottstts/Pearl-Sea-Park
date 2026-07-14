@@ -1183,3 +1183,56 @@
   position/tangent from the live spline; use the table for smoothly
   interpolated authored bank. Spatially ease force-zone boundaries and
   compensate total work so removing jerk does not silently redesign pacing.
+- 2026-07-14 pilotable submarine (see systems/submarine.md for the full set):
+  - `refs/submarine.html` is ported verbatim into vehicles/submarineModel.ts
+    (contract, atlas, geometry kit, every part) at SUBMARINE_SCALE 1.22.
+    Four sanctioned adaptations only: geometry-space noise (moving body),
+    park pane glass + MRT AO-alpha-0 (no transmission backdrop pass), lamp
+    emission recalibrated to park HDR, caustics on all lit materials.
+    MeshPhysicalNodeMaterial works fine in the pipeline (extends Standard,
+    so applyCaustics/mrtNode/fog inherit; clearcoat+sheen render).
+  - `select()` over a color()/vec3 pair types as Node<"vec3"|"color"> —
+    cast at creation, same rule as varying().
+  - A scaled Group makes hand-scaled local offsets through localToWorld
+    DOUBLE-apply the scale. For emission/attachment points on scaled rigs,
+    use child.getWorldPosition(), never precomputed scaled locals.
+  - New `InteractionSystem.exclusive`: while set, only that interactable is
+    eligible. Required for roaming vehicles — the piloted sub passes every
+    gate/game in the park and an E meant for the helm would board a ride.
+    Owners MUST clear it when focus ends (enter sets, exit/dispose clear).
+  - Vehicle collision by ruling: the sub collides as the GUEST CAPSULE
+    (0.35 r kinematic capsule + own character controller at the hull axis) —
+    anywhere a guest fits, the sub fits; hull-vs-wall overlap is accepted.
+    The carried player body and the parked blocker cylinder must both be
+    excluded from the vehicle's computeColliderMovement via the filter
+    predicate or the craft collides with its own passenger/footprint.
+  - Kinematic vehicles at 60 Hz need render interpolation: keep prev/current
+    pose in fixedUpdate and lerp with the loop's `alpha` in update(), or
+    motion is visibly choppy on non-60 Hz displays. The chase camera then
+    follows the RENDER pose, not the physics pose.
+  - Exit is gated on a genuine seabed park (Scott's ruling — supersedes the
+    briefly-implemented settle-on-exit auto-descent, which is REMOVED): E
+    under way shows a gentle reminder instead, via the new
+    `InteractionSystem.notice(text)` transient caption (no key chip, same
+    serif voice; `dismissNotice()` retires it when the action succeeds).
+    Rationale: an abandoned hull mid-water is unreachable forever, and an
+    unmanned auto-descent could ground it on a dome or ride. "Parked on the
+    seabed" = at the terrain floor — a perch atop a structure (collider
+    holding the capsule above the terrain floor) deliberately does not
+    count. The hull therefore NEVER moves without a pilot.
+  - Exit hand-back lands the camera exactly on the walking eye
+    (feet + 1.7 = body + EYE_HEIGHT − capsule offset) — same-frame cut is
+    invisible; copy the exit math from vehicleSeat/submarine when building
+    future vehicles.
+- 2026-07-14 submarine camera fixes (Scott's sighting: boarding blend faced
+  backward, then "cut" to the sub):
+  - NEVER bake a camera orientation through a plain Object3D scratch:
+    `Object3D.lookAt` aims the object's +z AT the target, while cameras
+    render down −z — the resulting quaternion is exactly reversed, and the
+    error hides until the first real `camera.lookAt` snaps it right (reads
+    as a cut). Build camera-facing quaternions with
+    `Matrix4.lookAt(eye, target, up)` (camera convention) +
+    `setFromRotationMatrix`, or use a scratch camera.
+  - Chase framing tightened by ruling: 7.0 m back / 2.7 m up (was 10.6/4.0)
+    so the hull takes a bigger share of the frame while the eye still
+    clears the dome.

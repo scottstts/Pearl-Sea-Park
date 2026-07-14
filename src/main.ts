@@ -28,6 +28,7 @@ import { GreatWheelSystem } from './rides/greatWheel'
 import { GamesSystem } from './games/gamesSystem'
 import { PearlLineSystem } from './rides/pearlLine'
 import { TorrentSystem } from './rides/torrent'
+import { SubmarineSystem } from './vehicles/submarine'
 import type { GameContext } from './runtime/context'
 import { GameLoop } from './runtime/loop'
 import { SystemRegistry } from './runtime/registry'
@@ -156,6 +157,7 @@ async function boot(): Promise<void> {
       registry.add(new TeleportSystem(player, services.interaction, terrainHeight))
     }
     registry.add(new DescentBellSystem(services, player))
+    registry.add(new SubmarineSystem(services, player, medium))
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))
     registry.add(new TorrentSystem(services, player))
