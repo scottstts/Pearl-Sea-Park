@@ -8,7 +8,9 @@ import {
   float,
   fract,
   mix,
+  mrt,
   normalGeometry,
+  normalView,
   normalWorld,
   normalize,
   positionWorld,
@@ -16,6 +18,7 @@ import {
   smoothstep,
   vec2,
   vec3,
+  vec4,
 } from 'three/tsl'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 import type { SeaMediumSystem } from '../sea/medium'
@@ -191,6 +194,11 @@ export class ParkMaterials {
       m.side = DoubleSide
       m.depthWrite = false
       m.envMapIntensity = 0.25
+      // Transparent glass does not own the opaque depth buffer. Letting its
+      // near-surface normal replace the normal MRT pairs that normal with the
+      // distant scene depth, so GTAO turns curved panes into vertical bands.
+      // Glass is transmissive jewelry rather than a diffuse AO receiver.
+      m.mrtNode = mrt({ normal: vec4(normalView, 0) })
       return m
     })()
 

@@ -45,7 +45,10 @@
   exterior views while a seated camera cannot see the shell's backfaces. A
   constant-alpha DoubleSide shell overlays its open edge across the passenger
   view; against the changing waterline that reads as a smooth camera-centred
-  pale bubble unrelated to the ocean waves.
+  pale bubble unrelated to the ocean waves. The shared glass material also
+  opts out of the normal MRT's AO receiver channel: the shell has no depth of
+  its own, so feeding its curved normal to GTAO alongside the ocean/deck depth
+  produces vertical facet-like bands across exterior views.
 - Terrace = the bell's own SlotWriter build (plaza, steps, lamps, landing
   ring); the arrival→atrium path lives in `PARK_PATHS`.
 

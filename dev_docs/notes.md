@@ -1169,3 +1169,9 @@
   after the procedural waterline low-pass but before master volume; this lets
   ocean + seagulls retain a real 4.5 s gain tail when submerging instead of
   having their high frequencies disappear during the 0.6 s filter sweep.
+- 2026-07-14 Descent Bell glass barcode: transparent `depthWrite=false` glass
+  was still replacing the scene pass's no-blend normal MRT with its curved
+  near-shell normal while depth remained the distant ocean/deck. GTAO shaded
+  that incoherent depth/normal pair into vertical bands bounded exactly by the
+  bell shell. Shared decorative glass now writes AO-receiver alpha zero, as
+  the ocean already does; do not feed transparent optics into opaque AO.
