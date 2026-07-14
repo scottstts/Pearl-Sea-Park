@@ -1,5 +1,8 @@
 import { BufferAttribute, BufferGeometry, CatmullRomCurve3, Vector2, Vector3 } from 'three'
 
+/** Audited rider eye shared by the hull sightline check and live seat rig. */
+export const TORRENT_SEAT_EYE = { x: 0, y: 0.9, z: -0.12 } as const
+
 /**
  * The Torrent sled hull authority (leaf module — imports only three, so the
  * offline geometry audit can build and interrogate the exact game mesh).
@@ -208,6 +211,7 @@ export interface TorrentCarHullAudit {
   opennessFailures: number
   /** Hull triangles blocking the seated eye's view of the squab. */
   eyeToSeatOcclusions: number
+  seatEye: [number, number, number]
   /** Worst collar-top offset from the coaming torus centerline (fraction). */
   collarTuckWorst: number
 }
@@ -305,7 +309,7 @@ export function auditTorrentCarHull(): TorrentCarHullAudit {
     if (rayHits(new Vector3(x, 2, z), down, 0, 4) === 0) opennessFailures++
   }
 
-  const eye = new Vector3(0, 0.82, -0.12)
+  const eye = new Vector3(TORRENT_SEAT_EYE.x, TORRENT_SEAT_EYE.y, TORRENT_SEAT_EYE.z)
   const squab = new Vector3(0, 0.45, -0.1)
   const toSquab = squab.clone().sub(eye)
   const eyeToSeatOcclusions = rayHits(eye, toSquab.clone().normalize(), 0, toSquab.length())
@@ -329,6 +333,7 @@ export function auditTorrentCarHull(): TorrentCarHullAudit {
     zRange: [minZ, maxZ],
     opennessFailures,
     eyeToSeatOcclusions,
+    seatEye: [TORRENT_SEAT_EYE.x, TORRENT_SEAT_EYE.y, TORRENT_SEAT_EYE.z],
     collarTuckWorst,
   }
 }

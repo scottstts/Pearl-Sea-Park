@@ -10,7 +10,8 @@
   turnaround points anywhere) → unwind shoulder → shelf return dip →
   booster straight → +2.6 m breach hump (wide −4 shoulders) → splash
   re-entry → one even 180° brake arc → home. ~720 m.
-- Frames: 2400 arc-length samples with **scalar-bank analytic frames** (see
+- Frames: 2400 arc-length samples backed by a 9600-division curve-length
+  cache with **scalar-bank analytic frames** (see
   the 2026-07-12 ride-feel pass below): signed bank angle
   `atan2(min(v²·κ_lateral, g·tan 0.55), g)` in the zero-roll frame, smoothed
   as a scalar over ±32 samples, then `up = refUp·cos b + side·sin b`. The
@@ -24,12 +25,14 @@
 
 - `v̇ = −g·t_y − c_d·v|v| − c_r` + zone accelerations; `ṡ = v`, all through
   the ONE shared `trackAccel()` (runtime + design pass + lap simulator).
-  Zones: station launch (2.4 m/s²), **helix surge** (2.9 m/s², first 60% of
+  Zone forces use short spatial smoothstep ramps at both ends, with their
+  peak accelerations work-compensated to preserve the established rhythm:
+  station launch (2.55 m/s²), **helix surge** (3.05 m/s², first 60% of
   the helix only — the jet dies and the last turns climb on momentum), hump
-  booster (13 m/s²), brake run (8 m/s cruise + √-ease onto the platform,
+  booster (14.5 m/s²), brake run (8 m/s cruise + √-ease onto the platform,
   decel capped 8 m/s²), exact-landing dock.
-- Measured lap: ~59 s with a real rhythm — launch 15, plunge 28.6 max,
-  helix decaying to a 12.8 crest, shelf-saddle drift 6.1, breach hump ~16,
+- Measured lap: ~60.4 s with a real rhythm — launch 15, plunge 28.6 max,
+  helix decaying to a 12.1 crest, shelf-saddle drift ~6, breach hump ~16,
   splash 22, brake cruise 8.
 - **Two traps found by honest physics:**
   1. The brake zone ends AT the station mark, so a freshly-launched train is
@@ -61,7 +64,7 @@
   half-embedded nacre pearl. Head car has a bow lamp, tail car a stern
   lantern (lampGlobe, inside bloom hierarchy). Every extreme stays inside
   the audited envelope: half-width ≤ 0.62, z ∈ [−1.5, 1.62]; the rig eye
-  (0, 0.82, −0.12) keeps ≥0.35 m clearance from every member ahead of it.
+  (0, 0.90, −0.12) keeps ≥0.35 m clearance from every member ahead of it.
 - Hull authority (2026-07-13): rides/torrentCarHull.ts, a leaf module the
   geometry audit builds directly. The hull is NOT a LatheGeometry — a full
   revolve roofs the cockpit with its own top arc (the tub sat buried inside
@@ -149,3 +152,18 @@
   element (the helix went to 1.5 turns @ θ₀ 90° precisely so its entry/exit
   tangents match the neighbouring legs). Measured: 10.3°/m max turn,
   13.1 m self-distance.
+
+## 2026-07-14 motion-continuity polish
+
+- Three's default 200-division `Curve.getPointAt()` lookup made nominal
+  0.300 m samples vary from 0.266–0.334 m: a 22.6% cadence error that read as
+  periodic steering/speed corrections through long turns. The curve now owns
+  a 9600-division length cache; the geometry audit caps sample-step deviation
+  at 0.25% (measured 0.032%). Rendered cars read exact live-spline positions
+  and tangents, with periodic Catmull-Rom interpolation of the scalar bank.
+- Runtime integration substeps variable render deltas at no more than 1/120 s,
+  so a slow frame cannot become a multi-metre physics leap. Launch, surge,
+  boost, and brake forces ease spatially instead of switching acceleration at
+  one sample; peak force compensation preserves the existing lap rhythm.
+- Torrent's shared audited seat eye is now (0, 0.90, −0.12), 8 cm higher than
+  before, and remains clear of the hull in the geometry audit.

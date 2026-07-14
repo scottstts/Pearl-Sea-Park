@@ -1175,3 +1175,11 @@
   that incoherent depth/normal pair into vertical bands bounded exactly by the
   bell shell. Shared decorative glass now writes AO-receiver alpha zero, as
   the ocean already does; do not feed transparent optics into opaque AO.
+- 2026-07-14 Torrent motion polish: Three `Curve.getPointAt()` defaults to a
+  200-division arc-length cache even when callers build a much denser frame
+  table. On the 720 m Torrent this produced 22.6% nominal-step variation and
+  visible cadence through sustained turns. Set `arcLengthDivisions` before
+  the first length/sample query, audit step uniformity, and evaluate rendered
+  position/tangent from the live spline; use the table for smoothly
+  interpolated authored bank. Spatially ease force-zone boundaries and
+  compensate total work so removing jerk does not silently redesign pacing.

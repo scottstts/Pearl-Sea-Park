@@ -35,11 +35,16 @@ import {
   type TorrentTrack,
   type TrackFrame,
 } from './torrentTrack'
-import { buildTorrentHullGeometry, torrentHullRadiusAt } from './torrentCarHull'
+import {
+  TORRENT_SEAT_EYE,
+  buildTorrentHullGeometry,
+  torrentHullRadiusAt,
+} from './torrentCarHull'
 import { VehicleSeatRig } from './vehicleSeat'
 
 const CARS = 5
 const CAR_GAP = 3.3
+const MAX_DYNAMICS_STEP = 1 / 120
 
 /**
  * The Torrent (plan §9.3): launch coaster — station on the north reach,
@@ -616,7 +621,12 @@ export class TorrentSystem implements GameSystem {
           if (this.state !== 'docked' || rig.seated) return
           // baseYaw π turns the seat camera onto the car's +z — the HEAD of
           // the train and the direction of travel.
-          rig.attach(this.cars[0], new Vector3(0, 0.82, -0.12), Math.PI, ctx.camera)
+          rig.attach(
+            this.cars[0],
+            new Vector3(TORRENT_SEAT_EYE.x, TORRENT_SEAT_EYE.y, TORRENT_SEAT_EYE.z),
+            Math.PI,
+            ctx.camera,
+          )
           ctx.events.emit('ticket/punched', { ride: 'torrent' })
           ctx.events.emit('ride/torrent-riding', { riding: true })
           this.state = 'armed'
@@ -793,41 +803,49 @@ export class TorrentSystem implements GameSystem {
     }
 
     if (this.state === 'running' || this.state === 'braking') {
-      const frame: TrackFrame = frameOnTrack(track, this.s)
-      // The brake zone ends AT the station mark, so a freshly-launched train
-      // still sits inside it — only capture after the lap is truly underway.
-      if (
-        (this.state === 'braking' || this.stateTime > 10) &&
-        inTrackZone(track.length, this.s, landmarks.brakeStartS, landmarks.stationS)
-      ) {
-        this.state = 'braking'
-      }
-      const a = trackAccel(
-        track.length,
-        landmarks,
-        this.s,
-        this.v,
-        frame.tangent.y,
-        this.state === 'braking',
-      )
-      this.v = Math.max(0.5, this.v + a * dt)
-      let step = this.v * dt
-      // Arrive with an exact landing on the platform mark (the wheel's
-      // lesson: never detect-then-ease past a stop). The next run only ever
-      // starts from the boarding interaction — never while a guest sits.
-      if (this.state === 'braking') {
-        const remaining =
-          ((landmarks.stationS - this.s) % track.length + track.length) % track.length
-        if ((remaining <= step && remaining < 8) || remaining > track.length - 8) {
-          step = 0
-          this.s = landmarks.stationS
-          this.v = 0
-          this.state = 'docked'
-          this.stateTime = 0
-          if (this.rig) this.rig.canExit = true
+      // Variable render dt is subdivided so a dropped frame cannot become a
+      // several-metre physics leap or a sudden speed correction. The final
+      // pose is still evaluated once per rendered frame from the live spline.
+      let remainingTime = dt
+      while (remainingTime > 1e-6 && (this.state === 'running' || this.state === 'braking')) {
+        const stepTime = Math.min(remainingTime, MAX_DYNAMICS_STEP)
+        const frame: TrackFrame = frameOnTrack(track, this.s)
+        // The brake zone ends AT the station mark, so a freshly-launched train
+        // still sits inside it — only capture after the lap is truly underway.
+        if (
+          (this.state === 'braking' || this.stateTime > 10) &&
+          inTrackZone(track.length, this.s, landmarks.brakeStartS, landmarks.stationS)
+        ) {
+          this.state = 'braking'
         }
+        const a = trackAccel(
+          track.length,
+          landmarks,
+          this.s,
+          this.v,
+          frame.tangent.y,
+          this.state === 'braking',
+        )
+        this.v = Math.max(0.5, this.v + a * stepTime)
+        let step = this.v * stepTime
+        // Arrive with an exact landing on the platform mark (the wheel's
+        // lesson: never detect-then-ease past a stop). The next run only ever
+        // starts from the boarding interaction — never while a guest sits.
+        if (this.state === 'braking') {
+          const remaining =
+            ((landmarks.stationS - this.s) % track.length + track.length) % track.length
+          if ((remaining <= step && remaining < 8) || remaining > track.length - 8) {
+            step = 0
+            this.s = landmarks.stationS
+            this.v = 0
+            this.state = 'docked'
+            this.stateTime = 0
+            if (this.rig) this.rig.canExit = true
+          }
+        }
+        this.s = (this.s + step) % track.length
+        remainingTime -= stepTime
       }
-      this.s = (this.s + step) % track.length
       this.placeTrain()
     }
 

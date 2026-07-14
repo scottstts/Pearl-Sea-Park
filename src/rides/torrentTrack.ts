@@ -30,9 +30,11 @@ export const ROLLING = 0.12
 // a slow crest and a slower shelf-return saddle, then one hard water-jet
 // kick to clear the breach hump. The old 7.2/6.0/3.4 trio kept the whole
 // lap pinned near max speed.
-export const LAUNCH_ACCEL = 2.4
-export const BOOST_ACCEL = 13
-export const SURGE_ACCEL = 2.9
+// Peaks sit slightly above the former binary-zone values so the eased
+// envelopes preserve the same total work and established lap rhythm.
+export const LAUNCH_ACCEL = 2.55
+export const BOOST_ACCEL = 14.5
+export const SURGE_ACCEL = 3.05
 export const STATION_SPEED = 1.1
 // Brake run: cruise home, then a √(2·a·d) ease onto the platform mark. The
 // old profile targeted 2.2 m/s across the whole ~65 m zone — a 30 s crawl.
@@ -40,11 +42,17 @@ export const BRAKE_RETURN_SPEED = 8
 const BRAKE_EASE = 1.3
 const BRAKE_MAX_DECEL = 8
 const MAX_BANK = 0.55
+const LAUNCH_RAMP_METERS = 3
+const SURGE_RAMP_METERS = 4
+const BOOST_RAMP_METERS = 2.5
+const BRAKE_RAMP_METERS = 4
 
 export interface TrackFrame {
   position: Vector3
   tangent: Vector3
   up: Vector3
+  /** Signed roll around the tangent, relative to world-up projected flat. */
+  bank: number
   s: number
 }
 
@@ -61,6 +69,8 @@ export interface TorrentLandmarks {
 }
 
 export interface TorrentTrack {
+  /** Live spline authority used for continuous rendered position/tangent. */
+  curve: CatmullRomCurve3
   frames: TrackFrame[]
   length: number
   stationY: number
@@ -72,6 +82,33 @@ export function inTrackZone(length: number, s: number, from: number, to: number)
   const rel = (((s - from) % L) + L) % L
   const span = (((to - from) % L) + L) % L
   return rel <= span
+}
+
+function smoothstep01(value: number): number {
+  const t = Math.max(0, Math.min(1, value))
+  return t * t * (3 - 2 * t)
+}
+
+/**
+ * Spatial force envelope with continuous acceleration at both zone edges.
+ * Keeping this distance-based makes the authored jet hardware deterministic
+ * while avoiding the longitudinal jerk of binary on/off acceleration.
+ */
+function trackZoneEnvelope(
+  length: number,
+  s: number,
+  from: number,
+  to: number,
+  rampIn: number,
+  rampOut: number,
+): number {
+  const L = length || 1
+  const rel = (((s - from) % L) + L) % L
+  const span = (((to - from) % L) + L) % L
+  if (rel > span) return 0
+  const entry = rampIn > 0 ? smoothstep01(rel / Math.min(rampIn, span * 0.5)) : 1
+  const exit = rampOut > 0 ? smoothstep01((span - rel) / Math.min(rampOut, span * 0.5)) : 1
+  return Math.min(entry, exit)
 }
 
 /**
@@ -90,37 +127,103 @@ export function trackAccel(
   braking: boolean,
 ): number {
   let a = -GRAVITY * slope - DRAG * v * Math.abs(v) - ROLLING
-  if (inTrackZone(length, s, landmarks.stationS, landmarks.launchEndS)) a += LAUNCH_ACCEL
-  if (inTrackZone(length, s, landmarks.boostStartS, landmarks.boostEndS)) a += BOOST_ACCEL
-  if (inTrackZone(length, s, landmarks.surgeStartS, landmarks.surgeEndS)) a += SURGE_ACCEL
+  a +=
+    LAUNCH_ACCEL *
+    trackZoneEnvelope(
+      length,
+      s,
+      landmarks.stationS,
+      landmarks.launchEndS,
+      LAUNCH_RAMP_METERS,
+      LAUNCH_RAMP_METERS,
+    )
+  a +=
+    BOOST_ACCEL *
+    trackZoneEnvelope(
+      length,
+      s,
+      landmarks.boostStartS,
+      landmarks.boostEndS,
+      BOOST_RAMP_METERS,
+      BOOST_RAMP_METERS,
+    )
+  a +=
+    SURGE_ACCEL *
+    trackZoneEnvelope(
+      length,
+      s,
+      landmarks.surgeStartS,
+      landmarks.surgeEndS,
+      SURGE_RAMP_METERS,
+      SURGE_RAMP_METERS,
+    )
   if (braking && inTrackZone(length, s, landmarks.brakeStartS, landmarks.stationS)) {
     // Cruise home at BRAKE_RETURN_SPEED; inside the last metres the √ ease
     // walks the target down to the platform. min() means the brakes only
     // ever slow the train, and the decel cap keeps the grab from lurching.
     const remaining = (((landmarks.stationS - s) % length) + length) % length
     const target = Math.min(BRAKE_RETURN_SPEED, Math.sqrt(2 * BRAKE_EASE * remaining))
-    a = Math.min(a, Math.max((target - v) * 2.5, -BRAKE_MAX_DECEL))
+    const brakeAcceleration = Math.max((target - v) * 2.5, -BRAKE_MAX_DECEL)
+    const authority = trackZoneEnvelope(
+      length,
+      s,
+      landmarks.brakeStartS,
+      landmarks.stationS,
+      BRAKE_RAMP_METERS,
+      0,
+    )
+    if (brakeAcceleration < a) a += (brakeAcceleration - a) * authority
   }
   return a
 }
 
-/** Interpolated, re-orthonormalized frame at arc position s. */
+function catmullRomScalar(p0: number, p1: number, p2: number, p3: number, t: number): number {
+  const t2 = t * t
+  const t3 = t2 * t
+  return (
+    0.5 *
+    (2 * p1 +
+      (-p0 + p2) * t +
+      (2 * p0 - 5 * p1 + 4 * p2 - p3) * t2 +
+      (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
+  )
+}
+
+/** Continuous spline position/tangent with a C1 periodic bank at arc position s. */
 export function frameOnTrack(track: TorrentTrack, s: number): TrackFrame {
   const L = track.length
   const wrapped = ((s % L) + L) % L
-  const f = (wrapped / L) * TRACK_SAMPLES
+  const u = wrapped / L
+  const f = u * TRACK_SAMPLES
   const i = Math.floor(f) % TRACK_SAMPLES
   const j = (i + 1) % TRACK_SAMPLES
   const t = f - Math.floor(f)
-  const a = track.frames[i]
-  const b = track.frames[j]
-  const tangent = a.tangent.clone().lerp(b.tangent, t).normalize()
-  const up = a.up.clone().lerp(b.up, t)
-  up.addScaledVector(tangent, -up.dot(tangent)).normalize()
+  const bank = catmullRomScalar(
+    track.frames[(i - 1 + TRACK_SAMPLES) % TRACK_SAMPLES].bank,
+    track.frames[i].bank,
+    track.frames[j].bank,
+    track.frames[(j + 1) % TRACK_SAMPLES].bank,
+    t,
+  )
+  const position = track.curve.getPointAt(u, new Vector3())
+  const tangent = track.curve.getTangentAt(u, new Vector3()).normalize()
+  const refUp = new Vector3(0, 1, 0).addScaledVector(tangent, -tangent.y)
+  let up: Vector3
+  if (refUp.lengthSq() < 1e-4) {
+    // Insurance for any future near-vertical element: preserve the authored
+    // frame rather than letting projected world-up become numerically noisy.
+    up = track.frames[i].up.clone().lerp(track.frames[j].up, t)
+    up.addScaledVector(tangent, -up.dot(tangent)).normalize()
+  } else {
+    refUp.normalize()
+    const side = new Vector3().crossVectors(tangent, refUp).normalize()
+    up = refUp.multiplyScalar(Math.cos(bank)).addScaledVector(side, Math.sin(bank))
+  }
   return {
-    position: a.position.clone().lerp(b.position, t),
+    position,
     tangent,
     up,
+    bank,
     s: wrapped,
   }
 }
@@ -205,6 +308,10 @@ export function buildTorrentTrack(): TorrentTrack {
   P(st.x + 9, -23.2, st.z + 45.5)
   P(st.x + 2, -23.5, st.z + 40)
   const curve = new CatmullRomCurve3(points, true, 'centripetal', 0.5)
+  // Curve.getPointAt() otherwise inherits Three's 200-segment arc-length
+  // lookup. On this 720 m loop that made nominal 0.30 m samples vary by more
+  // than 22%, producing a repeating pose/speed cadence in sustained turns.
+  curve.arcLengthDivisions = TRACK_SAMPLES * 4
 
   // ── Arc-length samples ────────────────────────────────────────────────
   const positions: Vector3[] = []
@@ -309,10 +416,10 @@ export function buildTorrentTrack(): TorrentTrack {
       .clone()
       .multiplyScalar(Math.cos(bank))
       .addScaledVector(sides[i], Math.sin(bank))
-    frames.push({ position: positions[i], tangent: tangents[i], up, s: i * ds })
+    frames.push({ position: positions[i], tangent: tangents[i], up, bank, s: i * ds })
   }
 
-  return { frames, length, stationY, landmarks }
+  return { curve, frames, length, stationY, landmarks }
 }
 
 /**
@@ -369,6 +476,7 @@ export function simulateTorrentLap(track: TorrentTrack): {
 
 export function auditTorrentTrack(): {
   length: number
+  maxArcStepDeviationPct: number
   minClearance: number
   minClearanceAt: [number, number, number]
   seamUpDot: number
@@ -387,10 +495,15 @@ export function auditTorrentTrack(): {
   brakeSeconds: number
 } {
   const track = buildTorrentTrack()
+  const ds = track.length / TRACK_SAMPLES
+  let maxArcStepDeviationPct = 0
   let minClearance = Infinity
   let minAt: [number, number, number] = [0, 0, 0]
   let humpApexY = -Infinity
-  for (const frame of track.frames) {
+  for (let i = 0; i < TRACK_SAMPLES; i++) {
+    const frame = track.frames[i]
+    const step = frame.position.distanceTo(track.frames[(i + 1) % TRACK_SAMPLES].position)
+    maxArcStepDeviationPct = Math.max(maxArcStepDeviationPct, (Math.abs(step - ds) / ds) * 100)
     const p = frame.position
     humpApexY = Math.max(humpApexY, p.y)
     const ground = terrainHeight(p.x, p.z)
@@ -418,7 +531,6 @@ export function auditTorrentTrack(): {
   const worldUp = new Vector3(0, 1, 0)
   const refUp = new Vector3()
   const cross = new Vector3()
-  const ds = track.length / TRACK_SAMPLES
   let maxBankDeg = 0
   let maxRollRateDegPerM = 0
   let prevBank: number | null = null
@@ -477,6 +589,11 @@ export function auditTorrentTrack(): {
         .join(', ')})`,
     )
   }
+  if (maxArcStepDeviationPct > 0.25) {
+    throw new Error(
+      `Torrent arc sampling is uneven (${maxArcStepDeviationPct.toFixed(2)}% max step deviation)`,
+    )
+  }
   if (maxTurnDegPerM > 14) {
     // 14°/m ≈ a 4 m radius floor; an actual spline cusp/knot measures
     // 50–500°/m, so this margin still flags one instantly.
@@ -513,6 +630,7 @@ export function auditTorrentTrack(): {
   }
   return {
     length: track.length,
+    maxArcStepDeviationPct,
     minClearance,
     minClearanceAt: minAt,
     seamUpDot,
