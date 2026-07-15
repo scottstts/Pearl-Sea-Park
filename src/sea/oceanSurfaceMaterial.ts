@@ -48,7 +48,6 @@ import type { WaveSim } from './waveSim'
 const DEEP = vec3(0.005, 0.045, 0.09)
 const SHALLOW = vec3(0.014, 0.13, 0.17)
 const SSS_TINT = vec3(0.035, 0.2, 0.22)
-const MIST = vec3(0.38, 0.5, 0.58)
 
 export interface OceanMaterialOptions {
   /** Full three-cascade sampling + foam; false = far skirt (cascade 0 only). */
@@ -435,12 +434,6 @@ export function createOceanSurfaceMaterial(
     )
     above = mix(above, foamShade, foamMask)
   }
-
-  // Aerial haze toward the horizon.
-  const haze = float(1).sub(viewDistance.mul(0.0011).pow(2).negate().exp())
-  const sunward = pow(max(dot(viewDir.negate(), sunDir), 0.0), 8.0)
-  const hazeColor = MIST.add(sunColorUniform.mul(sunward).mul(0.4))
-  above = mix(above, hazeColor, haze.clamp(0, 1))
 
   // ── Below-surface shading: the Silver Ceiling ──────────────────────────
   const skyThrough = skyRadiance(refracted, float(0)).mul(0.9)

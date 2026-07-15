@@ -18,12 +18,25 @@
 - 2026-07-09 S2 lessons (see systems/sea-and-sky.md for the full set):
   - Horizon haze belongs in the shared `skyRadiance` elevation response, not a
     detached transparent fog shell: that keeps the dome, ocean reflection,
-    and Snell-window sky coherent. Gate marine haze to non-negative ray
-    elevation so the underwater hemisphere remains untouched.
+    and Snell-window sky coherent. A short lower-elevation tail may cover sky
+    exposed beyond the finite ocean plane; the GPU waterline gate, not a hard
+    ray-elevation cutoff, keeps the actual underwater composite untouched.
   - Far-surface marine haze needs both reconstructed view distance and raw
     depth: view distance drives analytic extinction, while raw depth rejects
     the non-depth-writing sky. Gate it with the GPU displaced-waterline state;
     a CPU camera-height check can leak air fog into crossing frames.
+  - Once the shared marine aerial-perspective pass owns distance extinction,
+    the ocean material must not also converge to a fixed `MIST` color. That
+    duplicate blend turned the intentionally flat far-ocean skirt into a pale
+    shelf. Keep the skirt flat for grazing-angle stability; remove competing
+    color ownership instead of reintroducing distant wave displacement.
+  - Never gate a horizon tint with `step(0, ray.y)`: elevated cameras expose
+    lower sky between the finite ocean edge and the mathematical horizon, so
+    the binary gate becomes a screen-wide color ring. A narrow smoothstep
+    interval can still expose its outer edge as a belt. Use broad, faint C1
+    shoulders and keep the result strictly bounded: this shared function also
+    feeds water reflection, so a non-finite haze value can black out the ocean.
+    Keep the actual air/underwater composite gated by the GPU waterline state.
   - **Debug mystery artifacts with `?pass=` isolation BEFORE touching materials.** A dither band on distant water survived five material fixes; it was GTAO the whole time (`?pass=ao` showed it in seconds). AO now distance-fades to neutral in the pipeline.
   - GPU readback for verification: storage buffer + `renderer.getArrayBufferAsync()`, NEVER a material/quad blit (tone mapping clamps negatives → corrupted comparisons).
   - TSL Fn params: annotate as `Node<'vec2'>` etc. (`import type { Node } from 'three/webgpu'`); `varying()` returns lose arity — cast at creation. `ComputeNode` type is exported for arrays of dispatches.
