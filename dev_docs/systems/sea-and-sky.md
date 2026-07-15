@@ -80,6 +80,20 @@ Hard-won lessons (do not re-learn these):
 - **Snell's window includes real above-water geometry, anchored at the interface.** The ocean renders first in the transparent queue (while remaining alpha-opaque and depth-writing). A first depth sample estimates subject distance, then the physically refracted ray is reprojected from the actual displaced surface hit point for the final color/depth sample. Omitting that surface origin makes structures drift away from their water-entry points with camera distance. Reconstructed depth admits only geometry on the transmitted side and nearer than the 3400 m sky dome; an alignment tolerance rejects detached foreground samples. Invalid/offscreen samples and the dome fall back to the shared analytic sky + filtered window glint. Exact water→air dielectric Fresnel fades transmission to zero at the critical angle. The optical side is one camera-level uniform derived from the same displaced waterline as the underwater medium; never use per-fragment `faceDirection`, because nearby wave triangles can expose opposite faces just before a crossing and mix the underwater/Snell regime into an above-water frame. The framebuffer depth/color reprojection is coherently skipped while above water.
 - `texture(...).sample(uv)` re-samples a texture node at a custom UV; `textureNode.value = tex` repoints after ping-pong swaps. `.sample()` inside a compute shader compiles to `textureSampleLevel(…, 0)` automatically — the waterline probe relies on this.
 - Sun is FIXED (elevation 42°, azimuth 215°) in `sky/sun.ts` — everything shares its uniforms. PMREM environment baked once at init (sky never changes).
+- The shared sky radiance includes a subtle lavender marine-aerosol band from
+  the horizon to about 6° elevation. Its mask depends only on positive
+  sky-ray elevation, so it wraps all 360°, never colors the below-surface
+  hemisphere, and remains consistent in the dome, ocean reflection, and the
+  above-water sky seen through Snell's window.
+- `sky/marineAerialPerspective.ts` extends that same tint onto real distant
+  surfaces in the HDR pipeline. It begins at 150 m, uses one exponential with
+  0.0005 m⁻¹ extinction, and caps at 78%: the near field remains crisp,
+  mid-distance silhouettes pick up visible mist, and the far ocean converges
+  toward the horizon without losing all surface signal. The raw depth
+  background sentinel excludes sky pixels, and the
+  same-frame displaced-waterline state makes the term an underwater no-op.
+  This path adds no draw, auxiliary target, or march; it reads the existing
+  scene depth once. `?pass=haze` shows its mask.
 - **The sun disc is physical**: 0.53° angular diameter, Neckel–Labs limb darkening, HDR core ~1500× with a three-lobe circumsolar aureole; bloom makes the glare. `skyRadiance(dir, discStrength)` — the ocean passes `discStrength 0` because its analytic `sunGlint`/`windowGlint` terms ARE the delta-light specular response; re-reflecting the HDR disc through bumpy normals double-counts it as sparkling white pixels. Never re-add a wide flat smoothstep disc.
 - **Waterline authority** (`sea/waterlineProbe.ts`): after the final camera pose, a 1-thread compute samples the same three displacement cascades at camera XZ (2 fixed-point rounds against choppy horizontal offset). It writes a 1×1 sampled state texture for the same frame's ocean/medium render and separately starts an async storage-buffer height copy for CPU events. `SeaSystem.surfaceHeightAtCamera` is therefore intentionally latent and must never gate visual underwater effects; nothing may compare camera y against 0 as a substitute for the displaced surface.
 - Camera: near 0.1, far 5000 (dome 3400, skirt 9000 wide) — don't shrink far below the dome radius; the "black sky" failure mode is far-plane culling.

@@ -45,7 +45,7 @@ const AO_WORLD_RADIUS = 0.25
  * sRGB via renderOutput → dream grade (display-referred).
  *
  * `?pass=` isolation views: ao · ao-filtered/applied/mask/footprint · bloom ·
- * depth · normal · no-post · no-grade.
+ * depth · normal · haze · no-post · no-grade.
  * S3 composites (aquatic fog, god rays) splice in between AO and bloom.
  */
 export class RenderPipelineSystem implements GameSystem {
@@ -68,10 +68,13 @@ export class RenderPipelineSystem implements GameSystem {
   scenePass: PassNode | null = null
 
   /**
-   * S3 hook: the medium system replaces this to composite aquatic fog and
-   * god rays into the HDR chain. `extras.viewZNode` carries scene depth.
+   * HDR atmosphere/medium hook. `extras.viewZNode` carries reconstructed view
+   * depth; `extras.sceneDepthNode` preserves background classification.
    */
-  hdrTransform: (hdrColor: object, extras: { viewZNode: object }) => object = (c) => c
+  hdrTransform: (
+    hdrColor: object,
+    extras: { viewZNode: object; sceneDepthNode: object },
+  ) => object = (c) => c
 
   /**
    * Lens hook, applied after the medium and before bloom: screen-space water
@@ -201,7 +204,10 @@ export class RenderPipelineSystem implements GameSystem {
     const aoReceiver = sceneNormal.a.clamp(0, 1)
     const aoAmount = mix(float(1), distanceFilteredAo, aoReceiver)
     const occluded = sceneColor.mul(aoAmount)
-    const withMedium = this.hdrTransform(occluded, { viewZNode }) as typeof occluded
+    const withMedium = this.hdrTransform(occluded, {
+      viewZNode,
+      sceneDepthNode: sceneDepth.sample(uv()).r,
+    }) as typeof occluded
     const withLens = this.lensTransform(withMedium, { sceneColorNode: sceneColor }) as typeof occluded
     const bloomNode = bloom(withLens, 0.35, 0.55, 1.0)
     const hdr = withLens.add(bloomNode)
@@ -256,6 +262,9 @@ export class RenderPipelineSystem implements GameSystem {
           AgXToneMapping,
           SRGBColorSpace,
         )
+        break
+      case 'haze':
+        outputNode = vec4(vec3((this.debugNodes.haze ?? float(0)) as Node<'float'>), 1)
         break
       case 'no-rays':
         outputNode = renderOutput(

@@ -35,6 +35,7 @@ import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { RenderPipelineSystem } from '../render/pipeline'
 import { markMainDetail } from '../render/layers'
+import { applyMarineAerialPerspective } from '../sky/marineAerialPerspective'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
 import { CausticsPass, causticWorldSample } from './caustics'
 import { currentFlow } from './current'
@@ -54,8 +55,9 @@ const AMBIENT_UP = vec3(0.1, 0.32, 0.37)
 /**
  * The undersea medium (plan §5): aquatic-perspective fog + volumetric god
  * rays composited in the HDR pipeline hook, the caustics projector, drifting
- * particulates, and the submerged gate. Above the surface it is a strict
- * no-op — crossing the waterline swaps worlds.
+ * particulates, and the submerged gate. Those aquatic terms are a strict
+ * above-water no-op; the same hook also owns the separately gated, low-cost
+ * marine aerial perspective used only in air.
  */
 export class SeaMediumSystem implements GameSystem {
   readonly id = 'sea-medium'
@@ -94,8 +96,13 @@ export class SeaMediumSystem implements GameSystem {
     const godraySteps = ctx.quality.params.godraySteps
     // ── HDR composite: fog + god rays, spliced before bloom ───────────────
     this.pipeline.hdrTransform = (color, extras) => {
-      const viewZ = (extras as { viewZNode: Node<'float'> }).viewZNode
+      const { viewZNode: viewZ, sceneDepthNode: sceneDepth } = extras as {
+        viewZNode: Node<'float'>
+        sceneDepthNode: Node<'float'>
+      }
       const scene = (color as Node<'vec4'>).rgb
+      const airHaze = applyMarineAerialPerspective(scene, viewZ, sceneDepth, submerged)
+      this.pipeline.debugNodes.haze = airHaze.amount
 
       const foggedNode = Fn(() => {
         const dist = viewZ.negate().min(3500).toVar()
@@ -120,7 +127,7 @@ export class SeaMediumSystem implements GameSystem {
         const fogged = scene
           .mul(transmittance)
           .add(inscatter.mul(float(1).sub(transmittance.g)))
-        return vec4(mix(scene, fogged, submerged), 1)
+        return vec4(mix(airHaze.color, fogged, submerged), 1)
       })()
 
       // Preserve the pre-S14 full-resolution mechanism. The caustic field's

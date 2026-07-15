@@ -16,6 +16,14 @@
   - r185 post-processing class is `RenderPipeline` (in `three/webgpu`); `PostProcessing` still exists as legacy alias. `pass(scene, camera, { samples: 4 })` gives MSAA. `renderOutput()` placed manually + `outputColorTransform = false` = explicit tonemap ownership.
   - TSL node types: keep system boundaries typed as `object` + single cast (see systems/render-pipeline.md); fighting `Node<"vec4">` generics across modules is a time sink.
 - 2026-07-09 S2 lessons (see systems/sea-and-sky.md for the full set):
+  - Horizon haze belongs in the shared `skyRadiance` elevation response, not a
+    detached transparent fog shell: that keeps the dome, ocean reflection,
+    and Snell-window sky coherent. Gate marine haze to non-negative ray
+    elevation so the underwater hemisphere remains untouched.
+  - Far-surface marine haze needs both reconstructed view distance and raw
+    depth: view distance drives analytic extinction, while raw depth rejects
+    the non-depth-writing sky. Gate it with the GPU displaced-waterline state;
+    a CPU camera-height check can leak air fog into crossing frames.
   - **Debug mystery artifacts with `?pass=` isolation BEFORE touching materials.** A dither band on distant water survived five material fixes; it was GTAO the whole time (`?pass=ao` showed it in seconds). AO now distance-fades to neutral in the pipeline.
   - GPU readback for verification: storage buffer + `renderer.getArrayBufferAsync()`, NEVER a material/quad blit (tone mapping clamps negatives → corrupted comparisons).
   - TSL Fn params: annotate as `Node<'vec2'>` etc. (`import type { Node } from 'three/webgpu'`); `varying()` returns lose arity — cast at creation. `ComputeNode` type is exported for arrays of dispatches.

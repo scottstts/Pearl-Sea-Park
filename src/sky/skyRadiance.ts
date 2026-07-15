@@ -1,4 +1,4 @@
-import { Fn, dot, float, max, mix, normalize, pow, smoothstep, vec3 } from 'three/tsl'
+import { Fn, dot, float, max, mix, normalize, pow, smoothstep, step, vec3 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
 import { sunColorUniform, sunDirectionUniform } from './sun'
 
@@ -19,6 +19,9 @@ import { sunColorUniform, sunDirectionUniform } from './sun'
 /** The real sun subtends ~0.53°; work in x² = (1−cosθ)/(1−cosR) ≈ (θ/R)². */
 const SUN_COS_RADIUS = Math.cos((0.266 * Math.PI) / 180)
 
+/** Shared marine-aerosol tint for the dome and far-surface inscattering. */
+export const marineHazeTint = /*@__PURE__*/ vec3(0.65, 0.59, 0.69)
+
 export const skyRadiance = /*@__PURE__*/ Fn(
   ([direction, discStrength]: [Node<'vec3'>, Node<'float'>]) => {
     const dir = normalize(direction).toVar()
@@ -30,6 +33,14 @@ export const skyRadiance = /*@__PURE__*/ Fn(
 
     const gradient = mix(horizon, zenith, pow(up, 0.48))
     const sky = mix(seaMist, gradient, smoothstep(-0.08, 0.02, dir.y)).toVar()
+
+    // A shallow marine aerosol layer softens the open-ocean horizon in every
+    // azimuth. Keep it on the atmospheric side of the interface and fade it
+    // within ~6 degrees so it never becomes a broad white sky gradient.
+    const marineHazeAmount = step(0.0, dir.y)
+      .mul(float(1).sub(smoothstep(0.0, 0.11, dir.y)))
+      .mul(0.42)
+    sky.assign(mix(sky, marineHazeTint, marineHazeAmount))
 
     const sunAmount = max(dot(dir, sunDirectionUniform), 0.0).toVar()
 
