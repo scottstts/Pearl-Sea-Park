@@ -40,10 +40,18 @@
   from the glass shell's own `CatmullRomCurve3`. Each centreline is displaced
   along the 2D profile normal by the rib radius plus a 2 cm air gap, so the
   brass cannot alternate between cutting into and floating away from the
-  curved shell. Base and waist collars sample that same offset profile; one
-  crown collar deliberately bridges the rib endpoints into the solid crown.
+  curved shell. The base collar samples that same offset profile, the two
+  profile-radius opening collars meet the ribs at the glass cuts, and one crown
+  collar deliberately bridges the rib endpoints into the solid crown.
   Keep this as one coherent cage — segmented cylinder chords and ball-joint
   elbows visibly disagree with the smooth lathed glass.
+- Bell boarding retains the shared rig's original 1.2 s straight camera blend.
+  The shell is two independent lathed glass sections with a 360-degree opening
+  from local y = 1.20 to 1.92, so the camera enters through empty space from
+  every azimuth rather than crossing physical transmission. Profile-matched
+  brass collars capture both cut edges and connect them to the continuous cage
+  ribs. The shell clone keeps full-time physical glass properties; never
+  animate its IOR, thickness, clearcoat, visibility, or shader variant.
 - The lathed glass shell clones the shared decorative glass but renders
   `FrontSide` only. Its winding is outward, so the bell remains glazed from
   exterior views while a seated camera cannot see the shell's backfaces. The

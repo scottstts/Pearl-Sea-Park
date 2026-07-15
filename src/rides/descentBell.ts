@@ -25,38 +25,24 @@ import type { GameSystem } from '../runtime/system'
 import { ARRIVAL_POSITION, CABLE_TOP_Y, DECK_TOP_Y } from '../world/arrival'
 import type { DistrictServices } from '../world/districts/atrium'
 import { terrainHeight } from '../world/terrain'
+import {
+  BELL_CAGE_GLASS_CLEARANCE,
+  BELL_CAGE_RIB_RADIUS,
+  BELL_GLASS_OPENING_LOWER_Y,
+  BELL_GLASS_OPENING_UPPER_Y,
+  BELL_OPENING_RIM_OFFSET,
+  BELL_OPENING_RIM_RADIUS,
+  bellProfileTAtY,
+  createBellShellCurve,
+  offsetBellProfile,
+  sampleBellProfileSection,
+} from './descentBellGeometry'
 import { VehicleSeatRig } from './vehicleSeat'
 
 const DESCENT_SECONDS = 40
 const DOCK_DELAY = 2.4
 
 type BellState = 'docked-top' | 'descending' | 'docked-bottom' | 'ascending'
-
-function profileTAtY(profile: CatmullRomCurve3, targetY: number): number {
-  let low = 0
-  let high = 1
-  for (let i = 0; i < 24; i++) {
-    const middle = (low + high) * 0.5
-    if (profile.getPoint(middle).y < targetY) low = middle
-    else high = middle
-  }
-  return (low + high) * 0.5
-}
-
-function offsetBellProfile(
-  profile: CatmullRomCurve3,
-  t: number,
-  offset: number,
-  target = new Vector2(),
-): Vector2 {
-  const point = profile.getPoint(t)
-  const tangent = profile.getTangent(t)
-  const tangentLength = Math.max(Math.hypot(tangent.x, tangent.y), Number.EPSILON)
-  return target.set(
-    point.x + (tangent.y / tangentLength) * offset,
-    point.y - (tangent.x / tangentLength) * offset,
-  )
-}
 
 /** A meridian rib held at a constant surface-normal clearance from the glass. */
 class BellCageRibCurve extends Curve<Vector3> {
@@ -169,31 +155,36 @@ export class DescentBellSystem implements GameSystem {
     const shellMaterial = lib.glass.clone()
     shellMaterial.side = FrontSide
     this.shellMaterial = shellMaterial
-    const shellCurve = new CatmullRomCurve3([
-      new Vector3(1.22, 0.16, 0),
-      new Vector3(1.3, 0.7, 0),
-      new Vector3(1.26, 1.5, 0),
-      new Vector3(1.02, 2.15, 0),
-      new Vector3(0.55, 2.52, 0),
-      new Vector3(0.12, 2.66, 0),
-    ])
-    const shellProfile = shellCurve
-      .getPoints(26)
-      .map((p) => new Vector2(p.x, p.y))
-    const shell = new Mesh(new LatheGeometry(shellProfile, 48), shellMaterial)
+    const shellCurve = createBellShellCurve()
+    const lowerOpeningT = bellProfileTAtY(shellCurve, BELL_GLASS_OPENING_LOWER_Y)
+    const upperOpeningT = bellProfileTAtY(shellCurve, BELL_GLASS_OPENING_UPPER_Y)
+    const lowerShell = new Mesh(
+      new LatheGeometry(
+        sampleBellProfileSection(shellCurve, 0, lowerOpeningT, 18),
+        48,
+      ),
+      shellMaterial,
+    )
+    const upperShell = new Mesh(
+      new LatheGeometry(
+        sampleBellProfileSection(shellCurve, upperOpeningT, 1, 18),
+        48,
+      ),
+      shellMaterial,
+    )
+    lowerShell.name = 'Descent Bell lower glass'
+    upperShell.name = 'Descent Bell upper glass'
     const floor = new Mesh(new CylinderGeometry(1.22, 1.28, 0.1, 32), lib.brass)
     floor.position.y = 0.1
     // Build the external cage from the exact same meridian used by the glass.
     // The rib centreline sits one rib radius plus a small air gap away along
     // the profile normal, so its clearance cannot drift as the shell curves.
-    const ribRadius = 0.03
-    const glassClearance = 0.02
+    const ribRadius = BELL_CAGE_RIB_RADIUS
+    const glassClearance = BELL_CAGE_GLASS_CLEARANCE
     const cageOffset = ribRadius + glassClearance
-    const ribStartT = profileTAtY(shellCurve, 0.2)
-    const ribEndT = profileTAtY(shellCurve, 2.605)
+    const ribStartT = bellProfileTAtY(shellCurve, 0.2)
+    const ribEndT = bellProfileTAtY(shellCurve, 2.605)
     const baseAnchor = offsetBellProfile(shellCurve, ribStartT, cageOffset)
-    const waistT = profileTAtY(shellCurve, 1.1)
-    const waistAnchor = offsetBellProfile(shellCurve, waistT, cageOffset)
     const crownAnchor = offsetBellProfile(shellCurve, ribEndT, cageOffset)
 
     // The base collar lightly captures the lower glass edge and meets the car
@@ -209,14 +200,33 @@ export class DescentBellSystem implements GameSystem {
     const fender = new Mesh(new TorusGeometry(1.35, 0.065, 9, 44), lib.rope)
     fender.rotation.x = Math.PI / 2
     fender.position.y = 0.1
-    // A slim stand-off hoop ties the cage together without sinking into the
-    // shell. Its centreline is sampled from the same offset curve as the ribs.
-    const waistRing = new Mesh(
-      new TorusGeometry(waistAnchor.x, ribRadius, 10, 56),
+    // The physical glass remains fully enabled, so boarding passes through a
+    // real 360-degree opening instead of crossing a transmissive surface. Two
+    // brass collars capture the raw glass edges and tie into all four ribs.
+    const lowerOpeningEdge = shellCurve.getPoint(lowerOpeningT)
+    const upperOpeningEdge = shellCurve.getPoint(upperOpeningT)
+    const lowerOpeningRing = new Mesh(
+      new TorusGeometry(
+        lowerOpeningEdge.x + BELL_OPENING_RIM_OFFSET,
+        BELL_OPENING_RIM_RADIUS,
+        10,
+        56,
+      ),
       lib.brass,
     )
-    waistRing.rotation.x = Math.PI / 2
-    waistRing.position.y = waistAnchor.y
+    lowerOpeningRing.rotation.x = Math.PI / 2
+    lowerOpeningRing.position.y = BELL_GLASS_OPENING_LOWER_Y
+    const upperOpeningRing = new Mesh(
+      new TorusGeometry(
+        upperOpeningEdge.x + BELL_OPENING_RIM_OFFSET,
+        BELL_OPENING_RIM_RADIUS,
+        10,
+        56,
+      ),
+      lib.brass,
+    )
+    upperOpeningRing.rotation.x = Math.PI / 2
+    upperOpeningRing.position.y = BELL_GLASS_OPENING_UPPER_Y
     const crownTopRadius = 0.16
     const crownBaseRadius = 0.3
     const crownHeight = 0.35
@@ -245,11 +255,13 @@ export class DescentBellSystem implements GameSystem {
     const hook = new Mesh(new TorusGeometry(0.12, 0.035, 8, 18), lib.brass)
     hook.position.y = 3.02
     this.car.add(
-      shell,
+      lowerShell,
+      upperShell,
       floor,
       fender,
       bottomRing,
-      waistRing,
+      lowerOpeningRing,
+      upperOpeningRing,
       crown,
       crownCollar,
       hook,

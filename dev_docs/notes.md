@@ -1463,3 +1463,15 @@
     invariant rather than an authored guess. The base and waist collars use
     samples from that identical offset curve; a single crown collar bridges
     the stand-off ribs into the metal crown without buried endpoint knuckles.
+- 2026-07-15 Descent Bell glass-belt entrance:
+  - Keep the upgraded physical glass constant. The late boarding "zoom" came
+    from moving the camera through a refractive shell, so geometry now owns the
+    ingress instead of runtime material changes: the shell is split into lower
+    and upper lathes with a full 360-degree empty belt from local y = 1.20 to
+    1.92. The original shared 1.2 s straight camera blend is restored exactly.
+  - Two 4.5 cm brass torus collars replace the former waist collar, follow the
+    profile radii at the glass cuts, overlap the raw edges deliberately, and
+    join the existing four continuous meridian ribs. `audit:geometry` checks
+    that the independently sampled glass sections end at the authored cuts,
+    never intrude into the 72 cm opening, and preserve the minimum
+    camera-clearance height.

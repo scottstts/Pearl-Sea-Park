@@ -1,4 +1,5 @@
 import { auditNoticeBoardRoof } from '../src/shows/noticeBoardGeometry.ts'
+import { auditBellGlassOpening } from '../src/rides/descentBellGeometry.ts'
 import { auditPearlLineCabinGeometry } from '../src/rides/pearlLineCabin.ts'
 import { auditPearlRoute } from '../src/rides/pearlRoute.ts'
 import { auditTorrentCarHull } from '../src/rides/torrentCarHull.ts'
@@ -19,6 +20,7 @@ const torrentTrack = auditTorrentTrack()
 const torrentCarHull = auditTorrentCarHull()
 const pearlRoute = auditPearlRoute()
 const oceanSkirts = [256, 384, 448].map((segments) => auditOceanSkirtGeometry(segments))
+const bellGlassOpening = auditBellGlassOpening()
 const benchFacing = [
   { name: 'esplanade-east', at: [5.3, 175], target: [0, 175] },
   { name: 'esplanade-west', at: [-5.3, 175], target: [0, 175] },
@@ -73,6 +75,7 @@ const report = {
   torrentCarHull,
   pearlRoute,
   oceanSkirts,
+  bellGlassOpening,
 }
 
 console.log(JSON.stringify(report, null, 2))
