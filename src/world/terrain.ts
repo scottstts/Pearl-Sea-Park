@@ -154,6 +154,12 @@ export class TerrainSystem implements GameSystem {
       look: [10, -60, -420],
       note: 'Postcard 4 staging — the edge of the world',
     })
+    registerBookmark({
+      name: 'seabed-high',
+      position: [0, -4, -18],
+      look: [0, -26, 72],
+      note: 'High water-column minification check for seabed materials and AO',
+    })
   }
 
   dispose(ctx: GameContext): void {

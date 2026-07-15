@@ -33,7 +33,12 @@ Architecture (spectral-ocean skill, WebGPU/TSL production tier):
 
 Hard-won lessons (do not re-learn these):
 
-- **GTAO dithers on distant grazing geometry (ocean!).** AO is contact-scale: the pipeline fades AO to neutral beyond 60–160 m (`pipeline.ts`). Any "mysterious dither band" seen on far surfaces — check `?pass=ao` FIRST, before touching materials. This cost hours.
+- **GTAO dithers on distant or footprint-underresolved grazing geometry.** AO is
+  contact-scale: the pipeline fades it to neutral beyond 60–160 m and whenever
+  one half-resolution gather texel approaches its 0.25 m world radius
+  (`pipeline.ts`). Distance alone is insufficient for a high camera looking
+  across the seabed. Any "mysterious dither band" — check `?pass=ao` and
+  `?pass=ao-footprint` first, before touching materials. This cost hours.
 - **Ocean never receives screen-space AO.** The water material is reflective/
   transmissive optics rather than indirect diffuse and writes 0 into the
   normal MRT's AO-receiver alpha. This is separate from GTAO's bilateral

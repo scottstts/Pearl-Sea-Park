@@ -4,6 +4,8 @@ import type { Node, PassNode } from 'three/webgpu'
 import {
   Fn,
   If,
+  dFdx,
+  dFdy,
   dot,
   exp,
   exp2,
@@ -34,13 +36,16 @@ import { dreamGrade, gradeParams } from './grade'
 import { ExposureMeter } from './exposureMeter'
 import { recommendedPixelRatio } from './renderer'
 
+const AO_WORLD_RADIUS = 0.25
+
 /**
  * The one owner of the final image (plan §4).
  * Signal order: scene MRT (color/normal/depth, MSAA 4×) → GTAO (half-res,
  * multiplied into HDR) → bloom (HDR, pre-tonemap) → exposure → AgX tonemap +
  * sRGB via renderOutput → dream grade (display-referred).
  *
- * `?pass=` isolation views: ao · bloom · depth · normal · no-post · no-grade.
+ * `?pass=` isolation views: ao · ao-filtered/applied/mask/footprint · bloom ·
+ * depth · normal · no-post · no-grade.
  * S3 composites (aquatic fog, god rays) splice in between AO and bloom.
  */
 export class RenderPipelineSystem implements GameSystem {
@@ -103,6 +108,7 @@ export class RenderPipelineSystem implements GameSystem {
 
     const aoNode = ao(sceneDepth, sceneNormal, camera)
     aoNode.resolutionScale = 0.5
+    aoNode.radius.value = AO_WORLD_RADIUS
     const aoTexture = aoNode.getTextureNode()
     const aoResolution = aoNode.resolution as unknown as Node<'vec2'>
 
@@ -168,14 +174,30 @@ export class RenderPipelineSystem implements GameSystem {
       return result
     })()
 
-    // AO is a contact effect. Fade the reconstructed visibility when its world
-    // radius is sub-pixel, then honor the per-material receiver mask. The ocean
-    // is reflective/transmissive optics, not indirect diffuse, and explicitly
-    // writes zero; applying screen-space cavity shading to it caused the gray
-    // fabric field in grazing views.
+    // AO is a contact effect. Distance alone cannot decide whether its world
+    // radius is resolved: on a grazing seabed, one screen row can span metres
+    // even while view Z is still inside the old 60 m full-strength range. Three
+    // r185 GTAO then quantizes the height field into long false-occlusion rows.
+    // Reconstruct the full-resolution metres-per-pixel footprint, scale it to
+    // the half-resolution gather texel, and fade to neutral before that texel
+    // approaches the 0.25 m world radius. This keeps nearby contact AO when the
+    // submarine is landed and rejects the unreliable signal as it rises.
     const viewZNode = scenePass.getViewZNode()
     const aoDistance = viewZNode.negate()
-    const distanceFilteredAo = mix(filteredAo, float(1), smoothstep(60.0, 160.0, aoDistance))
+    const footprintDepth = sceneDepth.sample(uv()).r.min(0.999999)
+    const footprintView = getViewPosition(uv(), footprintDepth, projectionInverse)
+    const aoGatherFootprint = max(
+      dFdx(footprintView).length(),
+      dFdy(footprintView).length(),
+    ).mul(2.0)
+    const aoFootprintFade = smoothstep(
+      AO_WORLD_RADIUS * 0.25,
+      AO_WORLD_RADIUS,
+      aoGatherFootprint,
+    )
+    const aoDistanceFade = smoothstep(60.0, 160.0, aoDistance)
+    const aoReliabilityFade = max(aoDistanceFade, aoFootprintFade)
+    const distanceFilteredAo = mix(filteredAo, float(1), aoReliabilityFade)
     const aoReceiver = sceneNormal.a.clamp(0, 1)
     const aoAmount = mix(float(1), distanceFilteredAo, aoReceiver)
     const occluded = sceneColor.mul(aoAmount)
@@ -203,6 +225,9 @@ export class RenderPipelineSystem implements GameSystem {
         break
       case 'ao-mask':
         outputNode = vec4(vec3(aoReceiver), 1.0)
+        break
+      case 'ao-footprint':
+        outputNode = vec4(vec3(aoFootprintFade), 1.0)
         break
       case 'bloom':
         outputNode = renderOutput(bloomNode, AgXToneMapping, SRGBColorSpace)

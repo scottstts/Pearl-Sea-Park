@@ -34,6 +34,15 @@ similarity — with two hard robustness rules learned from the blink pass:
   tolerance, so edges stay sharp. MSAA-resolved normals can cancel to zero
   length at silhouettes, so all normals go through an epsilon-guarded
   inverse square root rather than `normalize()` (NaN in WGSL fast math).
+- **AO application is footprint-gated as well as distance-gated.** The gather
+  radius is explicitly 0.25 m. Reconstructed view-position derivatives measure
+  full-resolution metres per pixel, then ×2 gives the half-resolution gather
+  texel footprint. AO fades to neutral across 0.0625→0.25 m/texel, combined
+  with the existing 60→160 m distance fade by `max`. This is required for a
+  high camera looking across the seabed: raw r185 GTAO quantizes grazing
+  height-field depth into long gray rows even while view Z is under 60 m, so a
+  distance-only policy cannot reject the invalid signal. `?pass=ao-footprint`
+  shows the rejection field (white = raw AO is being neutralized).
 
 The normal MRT's spare alpha is the AO-receiver mask (opaque default 1,
 ocean 0), avoiding another 4× MSAA attachment. `?pass=ao` shows raw gather;
@@ -59,7 +68,7 @@ Choices beyond the code:
   loop.
 - **Emissive hierarchy contract:** bloom threshold is 1.0 — materials must express glow through genuinely HDR emissive values (sun sparkle strongest, lamps mid, bioluminescence subtle), never by lowering the threshold.
 - **Type boundary:** @types/three TSL generics (`Node<"vec4">` etc.) churn per release — cross-module node handoffs type as `object` and cast once at the boundary (`asColor` in grade.ts). Do not thread precise TSL generic types through system APIs.
-- `?pass=` views: `ao · ao-filtered · ao-applied · ao-mask · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`; wake diagnostics are `wake-layers · wake-age · wake-flow`, plus the fountain field modes. `?view`/`?pass` skip the enter button (validation mode).
+- `?pass=` views: `ao · ao-filtered · ao-applied · ao-mask · ao-footprint · bloom · depth · normal · exposure · rays · caustics · no-rays · no-post · no-grade`; wake diagnostics are `wake-layers · wake-age · wake-flow`, plus the fountain field modes. `?view=seabed-high` is the fixed high-water-column AO/minification regression camera. `?view`/`?pass` skip the enter button (validation mode).
 - Dynamic resolution = `setPixelRatio(base × quality.renderScale)`; all pass targets follow the drawing-buffer size automatically. The base is capped by DPR 1.7 **and** a 4,000,000-pixel drawing-buffer budget (`recommendedPixelRatio`), recomputed on resize before dynamic scale is applied.
 - Dynamic resolution is driven by the actual animation-frame interval, not CPU
   command-submission time. It is an emergency pressure valve bounded to

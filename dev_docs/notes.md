@@ -1326,3 +1326,18 @@
     for guests, and broad named envelopes for the submarine's building/ride
     query. The guest controller filters those envelopes by collider handle;
     dynamic game pieces are excluded through active collision types.
+- 2026-07-15 lifted-submarine seabed bands:
+  - Pass isolation was decisive: the bands remained in `no-rays`, were strong
+    in raw `ao`, survived `ao-filtered`, appeared in `ao-applied`, and vanished
+    where the AO receiver mask was zero. They did not cross open water. A
+    temporary scale-correct sand-normal rewrite cleaned `normal` but left the
+    bands unchanged, so it was reverted before the real fix.
+  - Three r185's half-resolution GTAO produces false visibility rows when its
+    0.25 m world radius is underresolved on a grazing seabed. The old 60→160 m
+    view-distance fade missed high-camera pixels nearer than 60 m that covered
+    far more world space per gather texel. Applied AO now measures reconstructed
+    view-position derivatives, converts them to half-resolution footprint (×2),
+    and fades raw AO to neutral over 0.0625→0.25 m/texel.
+    `?pass=ao-footprint` proves the rejection field and `?view=seabed-high` is
+    the fixed regression camera. Near-seabed contact AO remains; tiers 0/1/2
+    are clean from the high camera.
