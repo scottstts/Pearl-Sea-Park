@@ -1,6 +1,7 @@
 import { BufferGeometry, Matrix4, Mesh, Object3D } from 'three'
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { MeshStandardNodeMaterial } from 'three/webgpu'
+import { isOpticallyTransparent } from '../materials/glass'
 
 /**
  * Material-slot mesh compiler (procedural-architecture skill): modules emit
@@ -56,8 +57,9 @@ export class SlotWriter {
         merged.computeBoundingBox()
         merged.computeBoundingSphere()
         const mesh = new Mesh(merged, material)
-        // Transparent slots (glass roofs, domes) must not throw plywood shadows.
-        mesh.castShadow = shadows && material.transparent !== true
+        // Alpha and transmission optics (glass roofs, domes) must not throw
+        // opaque plywood shadows.
+        mesh.castShadow = shadows && !isOpticallyTransparent(material)
         mesh.receiveShadow = true
         chunk.add(mesh)
         for (const geometry of geometries) geometry.dispose()

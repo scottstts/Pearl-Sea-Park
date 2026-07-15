@@ -42,13 +42,14 @@
   aligned to the crown silhouette leaves a visible air gap from oblique views.
 - The lathed glass shell clones the shared decorative glass but renders
   `FrontSide` only. Its winding is outward, so the bell remains glazed from
-  exterior views while a seated camera cannot see the shell's backfaces. A
-  constant-alpha DoubleSide shell overlays its open edge across the passenger
-  view; against the changing waterline that reads as a smooth camera-centred
-  pale bubble unrelated to the ocean waves. The shared glass material also
-  opts out of the normal MRT's AO receiver channel: the shell has no depth of
-  its own, so feeding its curved normal to GTAO alongside the ocean/deck depth
-  produces vertical facet-like bands across exterior views.
+  exterior views while a seated camera cannot see the shell's backfaces. The
+  original constant-alpha DoubleSide shell overlaid its open edge across the
+  passenger view; against the changing waterline that read as a smooth
+  camera-centred pale bubble unrelated to the ocean waves. The current physical
+  transmission recipe retains this FrontSide ownership and also opts out of
+  the normal MRT's AO receiver channel: the shell has no depth of its own, so
+  feeding its curved normal to GTAO alongside the ocean/deck depth produces
+  vertical facet-like bands across exterior views.
 - Terrace = the bell's own SlotWriter build (plaza, steps, lamps, landing
   ring); the arrival→atrium path lives in `PARK_PATHS`.
 

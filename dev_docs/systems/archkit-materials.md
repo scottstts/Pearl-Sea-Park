@@ -8,7 +8,17 @@
 - **`world/facilitySigns.ts` (FacilitySignsSystem)** — one rooted Belle Époque marker prototype identifies every guest-facing facility (17, including the `park-entrance` teleport node beside the Descent Bell landing). Three instanced frame slots plus one merged atlas face keep the full wayfinding set to four draws; the atlas grid is count-derived (`ceil(n/4)` rows). Sign placement and approach targets live in `world/parkLayout.ts`; the signs use the terrain height authority and receive matching static colliders, and each doubles as a teleport node (`player/teleport.ts`).
 - **Rotation lesson**: torus prototypes already live in a VERTICAL (XY) plane — arches and dome ribs need only scale+yaw. Composing "fix-up" rotations flattened the ribs invisibly; check silhouettes from inside AND outside.
 - Districts receive `DistrictServices { physics, materials, amenities, seats?, interaction? }` — seats/interaction are absent in `?view=` inspection mode, so register conditionally.
-- Glass is jewelry (sea = air): opacity 0.07, roughness 0.03, envMapIntensity 0.25, depthWrite off. It also writes zero to the normal MRT's AO-receiver alpha: a transparent pane owns no opaque depth, and pairing its near normal with the scene depth makes GTAO shade curved glass as vertical bands. What reads as the "dome color" from inside is mostly the sunlit sea through it — correct, and the amber sun-wash is the fog's sunward lobe.
+- Glass is now a physical dielectric rather than constant-alpha color:
+  transmission 1, IOR 1.52, 5 cm optical thickness, roughness 0.035,
+  clearcoat, subtle cyan Beer-Lambert attenuation, and the shared PMREM sky.
+  Three r185's physical node material captures the opaque viewport in-place,
+  so refraction needs no extra scene render. Keep alpha blending disabled and
+  opacity 1; transmission itself puts the material in the transparent render
+  list and performs the backdrop composition. Glass remains `depthWrite=false`
+  and writes zero to the normal MRT's AO-receiver alpha: pairing a near glass
+  normal with distant opaque depth makes GTAO stripe curved shells. `SlotWriter`
+  must treat both alpha-blended and transmissive materials as non-opaque so
+  glass roofs and domes never cast plywood shadows.
 - `world/parkLayout.ts` owns static anchors, path segments, and facility
   entrances; `world/parkPlan.ts` derives footprint fields from them.
 - Atrium (`world/districts/atrium.ts`) is the hero reference: colonnade ring with entrance gaps, arches, dome, benches with real seats, lamps with PointLights (intensity ~6.5, distance 13 — four of them; keep local light counts modest), plaza collider (`addStaticCylinder`), ticket machine emitting `ticket/punched`.

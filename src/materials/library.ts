@@ -1,5 +1,5 @@
 import { Color, DoubleSide } from 'three'
-import { MeshStandardNodeMaterial } from 'three/webgpu'
+import { MeshPhysicalNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu'
 import {
   abs,
   cameraPosition,
@@ -8,9 +8,7 @@ import {
   float,
   fract,
   mix,
-  mrt,
   normalGeometry,
-  normalView,
   normalWorld,
   normalize,
   positionWorld,
@@ -18,10 +16,10 @@ import {
   smoothstep,
   vec2,
   vec3,
-  vec4,
 } from 'three/tsl'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 import type { SeaMediumSystem } from '../sea/medium'
+import { createClearGlassMaterial } from './glass'
 
 /**
  * The park's material identity (plan §7), created once and shared.
@@ -40,7 +38,7 @@ export class ParkMaterials {
   readonly marble: MeshStandardNodeMaterial
   readonly nacre: MeshStandardNodeMaterial
   readonly iron: MeshStandardNodeMaterial
-  readonly glass: MeshStandardNodeMaterial
+  readonly glass: MeshPhysicalNodeMaterial
   readonly lampGlobe: MeshStandardNodeMaterial
   readonly mosaic: MeshStandardNodeMaterial
   readonly woodDark: MeshStandardNodeMaterial
@@ -183,24 +181,10 @@ export class ParkMaterials {
       })(),
     )
 
-    // ── Glass: decorative panes (the sea is air — glass is jewelry now) ────
-    this.glass = (() => {
-      const m = new MeshStandardNodeMaterial()
-      m.transparent = true
-      m.opacity = 0.07
-      m.roughness = 0.03
-      m.metalness = 0
-      m.color = new Color(0xcfe8e6)
-      m.side = DoubleSide
-      m.depthWrite = false
-      m.envMapIntensity = 0.25
-      // Transparent glass does not own the opaque depth buffer. Letting its
-      // near-surface normal replace the normal MRT pairs that normal with the
-      // distant scene depth, so GTAO turns curved panes into vertical bands.
-      // Glass is transmissive jewelry rather than a diffuse AO receiver.
-      m.mrtNode = mrt({ normal: vec4(normalView, 0) })
-      return m
-    })()
+    // ── Glass: physical transmission over the opaque scene backdrop ────────
+    this.glass = createClearGlassMaterial({
+      tint: new Color(0xcfe8e6),
+    })
 
     // ── Lamp globes: frosted, warmly lit from within ───────────────────────
     // A faint mantle mottle keeps a bulb from reading as flat emissive paint;

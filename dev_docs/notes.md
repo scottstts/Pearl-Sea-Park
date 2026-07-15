@@ -1187,8 +1187,8 @@
   - `refs/submarine.html` is ported verbatim into vehicles/submarineModel.ts
     (contract, atlas, geometry kit, every part) at SUBMARINE_SCALE 1.22.
     Four sanctioned adaptations only: geometry-space noise (moving body),
-    park pane glass + MRT AO-alpha-0 (no transmission backdrop pass), lamp
-    emission recalibrated to park HDR, caustics on all lit materials.
+    physical viewport-transmission glass + MRT AO-alpha-0, lamp emission
+    recalibrated to park HDR, caustics on all lit materials.
     MeshPhysicalNodeMaterial works fine in the pipeline (extends Standard,
     so applyCaustics/mrtNode/fog inherit; clearcoat+sheen render).
   - `select()` over a color()/vec3 pair types as Node<"vec3"|"color"> —
@@ -1436,3 +1436,19 @@
     shadow resolution or changing geometry. A suspected duplicate grid index
     was only overlapping inspection output; source and reference both emit one
     triangle pair, so geometry remained untouched.
+- 2026-07-15 physical glass correction:
+  - The old shared/submarine glass used 7–9% constant-alpha blending because
+    the implementation assumed a separate transmission backdrop render was
+    required. Three r185 WebGPU already captures the completed opaque viewport
+    from the current MRT target for `MeshPhysicalNodeMaterial` transmission;
+    no extra scene pass or pipeline hook is needed.
+  - `materials/glass.ts` is the one clear-glass recipe: transmission 1, IOR
+    1.52 (built-in dielectric Fresnel), 5 cm optical thickness (refraction),
+    subtle cyan volume attenuation, clearcoat, and PMREM reflection. Opacity
+    stays 1 and alpha blending stays off so the framebuffer is not composed a
+    second time.
+  - Optical surfaces still write no depth and set normal-MRT AO receiver alpha
+    to zero. This preserves the Descent Bell barcode fix and lets downstream
+    GTAO/medium effects use the opaque surface behind the pane. Shadow-slot
+    classification now checks physical transmission as well as `.transparent`,
+    so upgrading glass cannot restore opaque roof/dome shadows.

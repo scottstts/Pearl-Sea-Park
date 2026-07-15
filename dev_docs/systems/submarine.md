@@ -20,8 +20,11 @@ envelopes). Validation bookmark: `?view=submarine`.
 - Four deliberate adaptations for the park pipeline (geometry untouched):
   1. Material noise fields sample **positionGeometry, not positionWorld** —
      the vehicle moves, and worldspace patterns crawl (the carousel rule).
-  2. Transmission glass → the park's thin transparent-pane recipe (Descent
-     Bell shell) with the **AO-receiver MRT alpha 0** fix.
+  2. Dome and window glass use the reference's physical dielectric recipe:
+     transmission 1, IOR 1.52, 5 cm optical thickness, subtle cyan volume
+     attenuation, clearcoat, and PMREM reflection. Three r185 captures the
+     opaque viewport for refraction inside the existing scene pass; the glass
+     still writes **AO-receiver MRT alpha 0** and no depth.
   3. Lamp emission recalibrated into the park's HDR hierarchy (reference
      values were tuned for an ACES studio at exposure 1).
   4. Every lit material takes `medium.applyCaustics`. Materials are

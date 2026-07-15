@@ -51,6 +51,7 @@ import {
   vec4,
 } from 'three/tsl'
 import type { SeaMediumSystem } from '../sea/medium'
+import { createClearGlassMaterial } from '../materials/glass'
 
 /**
  * Le Nautile Blanc — the porcelain-and-brass salon submersible, ported
@@ -64,9 +65,8 @@ import type { SeaMediumSystem } from '../sea/medium'
  * - Material noise fields sample positionGeometry, not positionWorld — the
  *   vehicle moves, and worldspace patterns would crawl across the hull
  *   (the carousel/wildlife body-locked patterning rule).
- * - Transmission glass needs a backdrop pass this pipeline does not run;
- *   the dome and windows use the park's thin transparent-pane recipe (the
- *   Descent Bell shell), with the AO-receiver MRT alpha 0 fix.
+ * - Glass uses Three's physical viewport transmission while retaining the
+ *   park's AO-receiver MRT alpha 0 rule for depth-based post effects.
  * - Lamp emission is recalibrated into the park's HDR hierarchy (the
  *   reference values were tuned for an ACES studio at exposure 1).
  * - Every lit material receives caustic light via the medium.
@@ -789,20 +789,12 @@ function buildMaterials(
   brassDark.colorNode = color(PAL.brassDeep)
 
   /* — dome & window glass —
-   * The reference's transmission glass needs a backdrop pass this pipeline
-   * does not run; use the park's thin transparent-pane recipe (the Descent
-   * Bell shell) with the AO-receiver MRT alpha 0 fix — transparent optics
-   * must not feed the opaque AO's depth/normal pair. */
-  const glass = new MeshPhysicalNodeMaterial()
-  glass.transparent = true
-  glass.opacity = 0.09
-  glass.roughness = 0.035
-  glass.metalness = 0
-  glass.color = PAL.glassTint.clone()
-  glass.clearcoat = 1.0
-  glass.clearcoatRoughness = 0.06
-  glass.depthWrite = false
-  glass.mrtNode = mrt({ normal: vec4(normalView, 0) })
+   * The reference's physical recipe: dielectric Fresnel and PMREM reflection
+   * come from IOR, while viewport transmission provides thickness-scaled
+   * refraction and Beer-Lambert tint. It still owns no opaque depth/AO. */
+  const glass = createClearGlassMaterial({
+    tint: PAL.glassTint,
+  })
 
   /* — quilted leather (two orientations by repeat) — */
   const leatherOf = (repeat: number, quilted: boolean): MeshPhysicalNodeMaterial => {

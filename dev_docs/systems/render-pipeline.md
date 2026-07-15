@@ -45,8 +45,19 @@ similarity — with two hard robustness rules learned from the blink pass:
   shows the rejection field (white = raw AO is being neutralized).
 
 The normal MRT's spare alpha is the AO-receiver mask (opaque default 1,
-ocean 0), avoiding another 4× MSAA attachment. `?pass=ao` shows raw gather;
-`ao-filtered`, `ao-applied`, and `ao-mask` isolate each subsequent decision.
+ocean and glass optics 0), avoiding another 4× MSAA attachment. `?pass=ao`
+shows raw gather; `ao-filtered`, `ao-applied`, and `ao-mask` isolate each
+subsequent decision.
+
+Physical glass stays inside the scene pass. Three r185's
+`MeshPhysicalNodeMaterial` copies the completed opaque viewport when its
+transmission path first renders, then samples that mipmapped copy for
+thickness-scaled refraction. The shared glass recipe therefore adds no second
+scene pass and does not alter the final-image signal order. It keeps opacity 1
+and standard alpha blending off (transmission performs the composition), uses
+the existing PMREM for dielectric Fresnel reflection, writes no depth, and
+sets AO-receiver alpha to 0 so downstream depth-based effects continue to see
+the opaque surface behind the pane.
 
 The lens field is authored in the reference fullscreen mesh's Y-up UV space.
 WebGPU `screenUV` is Y-down, so flip Y before evaluating `DropLayer2` and
