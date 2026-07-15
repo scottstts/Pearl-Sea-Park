@@ -127,9 +127,17 @@
 - Entry is one 1.6 s image/sound crossfade: `TICKET_REVEAL_SECONDS` writes the
   ticket CSS transition variable and travels on `park/entered`; the Web Audio
   master ramps from silence over that exact interval. Procedural PCM for whale
-  breath and all five machinery hums is generated during loading and copied
-  into reusable AudioBuffers at entry, so neither the click nor a later
-  schedule/ride event runs a sample-generation loop on the game frame.
+  breath and all six machinery hums (five rides + the submarine screw) is
+  generated during loading and copied into reusable AudioBuffers at entry, so
+  neither the click nor a later schedule/ride event runs a sample-generation
+  loop on the game frame.
+- The submarine screw hum (2026-07-15) is the one machinery voice with a
+  pitch dimension and a medium dimension: `vehicle/submarine-running` carries
+  a continuous 0..1 spin that sweeps its shaft sines/noise band (34–56 Hz
+  base), and its private lowpass follows `sea/waterline-crossed` (260 Hz
+  under, 2.4 kHz above) — the global 1.9 kHz submerged bus filter barely
+  touches a sub-100 Hz hum, so medium contrast for deep voices needs their
+  own filter. Details in systems/submarine.md.
 - S13 updates the Web Audio listener from the camera pose every frame. The
   Kraken Bell is the first true HRTF world source (inverse distance, 90 m
   cutoff); its low body and high strike partials originate at the physical

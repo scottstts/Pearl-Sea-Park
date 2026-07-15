@@ -80,8 +80,19 @@ const PROP_SPIN_UP = 3.0 // 1/s
 const PROP_SPIN_DOWN = 1.1 // slower coast-down than spin-up
 const PROP_WAKE_MIN = 3.0 // below this spin the screw sheds no bubbles
 const WAKE_RATE_MAX = 1_600 // small bubbles/s at full spin underwater
-const FOAM_RATE_MAX = 135 // wave-conforming foam ribbons/s when surfaced
 const PROP_TIP_RADIUS = 0.62 * SUBMARINE_SCALE
+// Surfaced wake foam is splatted into the ocean's persistent field
+// (sea/wakeFoamMap.ts), never drawn as its own geometry. The stern fan
+// opens at the Kelvin cusp angle; the long far V arms are deliberately NOT
+// painted — in real wakes the persistent FOAM is the widening turbulent
+// band behind the hull, while the far arms are wave texture, not bubbles.
+const WAKE_FAN_TAN = Math.tan(Math.asin(1 / 3)) // 19.47° Kelvin cusp
+const WAKE_FAN_STAMPS = [
+  { back: 2.6, radius: 0.85, gain: 1.0 },
+  { back: 5.6, radius: 1.2, gain: 0.78 },
+  { back: 9.2, radius: 1.55, gain: 0.58 },
+] as const
+const WAKE_LEAD_REACH = 3.1 // breaking bow-wave splat ahead of the hull axis
 // A fast screw is an illusion, never a keyframe at the true rate: above
 // ~10 rad/s an 8-blade wheel strobes at render cadence. The mesh rotation
 // is clamped readable, the blur disc fades in over BLUR_START→BLUR_FULL,
@@ -189,7 +200,8 @@ export class SubmarineSystem implements GameSystem {
   private readonly promptAnchor = new Vector3()
   private exitInteractable: Interactable | null = null
   private wakeDebt = 0
-  private foamDebt = 0
+  private humRunning = false
+  private humSpin = 0
 
   // Scratch
   private readonly forward = new Vector3()
@@ -223,9 +235,8 @@ export class SubmarineSystem implements GameSystem {
     markDynamicShadowCasters(model.group)
     ctx.scene.add(model.group)
 
-    const sim = this.sea.sim
-    if (!sim) throw new Error('SubmarineSystem requires SeaSystem to init first')
-    const wake = new SubmarineWake(sim, {
+    if (!this.sea.sim) throw new Error('SubmarineSystem requires SeaSystem to init first')
+    const wake = new SubmarineWake({
       qualityTier: ctx.quality.tier,
       debugPass: ctx.flags.pass,
     })
@@ -575,6 +586,24 @@ export class SubmarineSystem implements GameSystem {
     this.helmAngle += (helmTarget - this.helmAngle) * (1 - Math.exp(-dt * 4))
     model.helmWheel.rotation.z = this.helmAngle
 
+    // Screw voice: spin-hysteresis start/stop, with the shaft rate re-emitted
+    // as it changes so the hum's pitch rides spin-up and coast-down. The
+    // audio engine owns the sound itself (and its own camera-medium muffle);
+    // the hum naturally outlives the throttle by the screw's coast-down.
+    const shaftSpin = Math.abs(this.propSpeed)
+    const spinFraction = shaftSpin / PROP_MAX
+    if (!this.humRunning && shaftSpin > 1.2) {
+      this.humRunning = true
+      this.humSpin = spinFraction
+      ctx.events.emit('vehicle/submarine-running', { running: true, spin: spinFraction })
+    } else if (this.humRunning && shaftSpin < 0.6) {
+      this.humRunning = false
+      ctx.events.emit('vehicle/submarine-running', { running: false, spin: 0 })
+    } else if (this.humRunning && Math.abs(spinFraction - this.humSpin) > 0.015) {
+      this.humSpin = spinFraction
+      ctx.events.emit('vehicle/submarine-running', { running: true, spin: spinFraction })
+    }
+
     // Buoyancy sampling runs only near the surface while under way.
     if (this.buoyancy && this.mode !== 'idle' && this.position.y > -8) {
       const fx = Math.sin(this.yaw)
@@ -623,7 +652,6 @@ export class SubmarineSystem implements GameSystem {
     const spin = Math.abs(this.propSpeed)
     if (spin < PROP_WAKE_MIN) {
       this.wakeDebt = 0
-      this.foamDebt = 0
       return
     }
     const now = ctx.time.elapsed
@@ -639,7 +667,7 @@ export class SubmarineSystem implements GameSystem {
     const drive = new Vector3()
 
     // Mutually exclusive regimes: below the transition only bubbles can
-    // emit/draw; at and above it only the foam pool can emit/draw.
+    // emit/draw; at and above it only ocean-field foam splats accumulate.
     const spinFraction = spin / PROP_MAX
     const surfaceWake = this.surfacedness >= 0.3
     const bubbleGate = surfaceWake
@@ -672,41 +700,50 @@ export class SubmarineSystem implements GameSystem {
       wake.emitBubble(origin, drive, now)
     }
 
-    // ── Surface foam: persistent center churn + Kelvin-angle arms ─────────
-    if (foamGate > 0.01) {
+    // ── Surface foam: splats accumulated into the ocean's wake field ──────
+    // The field is part of the ocean surface itself — the trail persists
+    // when the throttle drops or the craft dives, widens and laces open as
+    // it ages, and re-crossing it can only refresh it (max() deposits).
+    const foam = this.sea.wakeFoam
+    if (foam && foamGate > 0.01) {
       const speedFraction = Math.abs(this.forwardSpeed) / MAX_FORWARD
-      this.foamDebt += FOAM_RATE_MAX
-        * foamGate
-        * (0.3 + 0.7 * speedFraction)
-        * (0.35 + 0.65 * spinFraction)
-        * dt
-      let patches = Math.floor(this.foamDebt)
-      this.foamDebt -= patches
-      patches = Math.min(patches, 5)
-      const armShare = 0.2 + speedFraction * 0.45
-      const strength = 0.2 + speedFraction * 0.8
-      for (let i = 0; i < patches; i++) {
-        const arm = rng.next() < armShare
-        const side = rng.chance(0.5) ? 1 : -1
-        if (arm) {
-          // The shader supplies the exact 19.47° Kelvin direction. CPU
-          // emission only chooses a stern quarter and signed arm.
-          origin
-            .copy(this.scratchB)
-            .addScaledVector(this.right, side * (0.82 + rng.next() * 0.45))
-            .addScaledVector(axis, rng.next() * 0.28)
-          wake.emitFoam(origin, axis, side, strength, now)
-        } else {
-          // Center churn is wider and slower than the divergent arm ribbons.
-          origin
-            .copy(this.scratchB)
-            .addScaledVector(this.right, side * rng.next() * 0.72)
-            .addScaledVector(axis, rng.next() * 0.36)
-          wake.emitFoam(origin, axis, 0, strength, now)
+      // Stern churn: prop-aerated water at the hub. Lives on spin alone, so
+      // holding station under helm still boils the water at the stern and a
+      // pivot turn scribes its swing into the sea.
+      const churn = foamGate * (0.3 + 0.7 * spinFraction) * (0.4 + 0.6 * speedFraction)
+      foam.splat(
+        this.scratchB.x + axis.x * 0.7,
+        this.scratchB.z + axis.z * 0.7,
+        1.35 + speedFraction * 0.6,
+        churn,
+        churn * 0.95,
+      )
+      // With way on, the churn opens into the widening stern fan (Kelvin
+      // cusp angle) and the leading edge sheds a breaking bow-wave collar.
+      const wayOn = smooth01(clamp01((speedFraction - 0.16) / 0.42))
+      if (wayOn > 0.01) {
+        const fan = foamGate * wayOn * (0.35 + 0.65 * speedFraction)
+        for (const stamp of WAKE_FAN_STAMPS) {
+          const lateral = stamp.back * WAKE_FAN_TAN
+          for (let side = -1; side <= 1; side += 2) {
+            foam.splat(
+              this.scratchB.x + axis.x * stamp.back + this.right.x * side * lateral,
+              this.scratchB.z + axis.z * stamp.back + this.right.z * side * lateral,
+              stamp.radius,
+              fan * stamp.gain * 0.35,
+              fan * stamp.gain,
+            )
+          }
         }
+        foam.splat(
+          this.position.x - axis.x * WAKE_LEAD_REACH,
+          this.position.z - axis.z * WAKE_LEAD_REACH,
+          0.9,
+          fan * 0.5,
+          fan * 0.7,
+        )
       }
     }
-
   }
 
   // ── Chase camera ────────────────────────────────────────────────────────
@@ -778,6 +815,10 @@ export class SubmarineSystem implements GameSystem {
   }
 
   dispose(ctx: GameContext): void {
+    if (this.humRunning) {
+      this.humRunning = false
+      ctx.events.emit('vehicle/submarine-running', { running: false, spin: 0 })
+    }
     if (this.model) {
       ctx.scene.remove(this.model.group)
       this.model.dispose()

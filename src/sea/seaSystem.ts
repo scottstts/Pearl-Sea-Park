@@ -6,6 +6,7 @@ import type { GameSystem } from '../runtime/system'
 import { runFftSelfTest } from './fftCompute'
 import { createOceanSurfaceMaterial } from './oceanSurfaceMaterial'
 import { createOceanSkirtGeometry, OCEAN_INNER_HALF_SIZE } from './oceanSkirtGeometry'
+import { WakeFoamMap } from './wakeFoamMap'
 import { WaterlineProbe } from './waterlineProbe'
 import { WaveSim } from './waveSim'
 
@@ -20,6 +21,8 @@ export class SeaSystem implements GameSystem {
   readonly id = 'ocean-surface'
 
   sim: WaveSim | null = null
+  /** Persistent vessel wake foam field — vehicles splat, the surface reads. */
+  wakeFoam: WakeFoamMap | null = null
   private inner: Mesh | null = null
   private outer: Mesh | null = null
   private probe: WaterlineProbe | null = null
@@ -42,6 +45,7 @@ export class SeaSystem implements GameSystem {
     // ViewportTextureNode makes its per-surface samples resolve to the same
     // render-scoped texture instead of copying the 4 MP HDR target twice.
     const sceneBackdrop = viewportTexture()
+    this.wakeFoam = new WakeFoamMap()
     const innerGeometry = new PlaneGeometry(INNER_SIZE, INNER_SIZE, segments, segments)
     innerGeometry.rotateX(-Math.PI / 2)
     const inner = new Mesh(
@@ -51,6 +55,7 @@ export class SeaSystem implements GameSystem {
         edgeFadeHalfSize: INNER_SIZE / 2,
         sceneBackdrop,
         submerged: submergedNode,
+        wakeFoam: this.wakeFoam,
       }),
     )
     inner.frustumCulled = false
@@ -103,6 +108,7 @@ export class SeaSystem implements GameSystem {
     if (!this.sim) return
     this.timeUniform.value = ctx.time.elapsed
     this.sim.update(ctx.renderer, ctx.time.elapsed, dt)
+    this.wakeFoam?.update(ctx.renderer, dt, ctx.time.elapsed)
 
     const step = this.followStep
     const qx = Math.round(ctx.camera.position.x / step) * step
@@ -150,5 +156,7 @@ export class SeaSystem implements GameSystem {
     if (this.outer) ctx.scene.remove(this.outer)
     this.probe?.dispose()
     this.probe = null
+    this.wakeFoam?.dispose()
+    this.wakeFoam = null
   }
 }

@@ -1,9 +1,10 @@
 # The Submarine — Le Nautile Blanc (pilotable vehicle)
 
 Files: `src/vehicles/submarineModel.ts` (model), `src/vehicles/submarine.ts`
-(piloting system), `src/vehicles/submarineWake.ts` (propeller bubbles/foam), and
-`src/physics/vehicleStructureColliders.ts` (vehicle-only building envelopes).
-Validation bookmark: `?view=submarine`.
+(piloting system), `src/vehicles/submarineWake.ts` (underwater propeller
+bubbles), `src/sea/wakeFoamMap.ts` (surface wake foam field, owned by the
+sea), and `src/physics/vehicleStructureColliders.ts` (vehicle-only building
+envelopes). Validation bookmark: `?view=submarine`.
 
 ## Model provenance & scale
 
@@ -150,26 +151,43 @@ settles millimetres into the sand).
   wagon-wheel look. The disc is a **sibling** of the spinning group, its
   pattern rotated only by the slow `ghost` uniform: parented to the shaft
   it would strobe exactly like the blades it replaces.
-- Wake = `SubmarineWake`, with exactly **two mutually exclusive regimes**.
-  A CPU gate switches at `surfacedness >= 0.3`, so old instances from the
-  other regime cannot remain visible after crossing the surface boundary:
-  - **Underwater bubbles only** (3200/5200/7200 instances, ≤1600/s): small
-    bubbles are seeded uniformly across the propeller disc. Each record stores
-    only its origin, downstream drive, and spawn time; the shader adds simple
-    decaying wash drift, buoyant rise, and a slight wobble. Diameters are
-    6–22 mm and biased toward the small end. There is no aeration cloud,
-    cavitation, spray, vortex filament, helical path, or other underwater
-    wake layer.
-  - **Surface foam only** (640/960/1280 ribbons, ≤135/s): tessellated thin
-    planes form broad stern churn and signed Kelvin arms at the cusp
-    half-angle `asin(1/3) = 19.47°`. The craft's world-space motion paints a
-    persistent trail, while every ribbon vertex samples all three ocean
-    displacement vectors — horizontal chop and height — to follow the exact
-    rendered FFT surface. After a short 2.5%-life settle-in, opacity decays
-    continuously as `remainingLife^1.35`; there is no late TTL-style pop. No
-    bubbles or secondary wake layer draw at the surface.
-  - Validation modes remain `?pass=wake-layers`, `wake-age`, and `wake-flow`;
-    they now inspect only the bubble and foam pools.
+- Wake has exactly **two mutually exclusive regimes**, gated on the CPU at
+  `surfacedness >= 0.3`:
+  - **Underwater bubbles only** (`SubmarineWake`, 3200/5200/7200 instances,
+    ≤1600/s): small bubbles are seeded uniformly across the propeller disc.
+    Each record stores only its origin, downstream drive, and spawn time; the
+    shader adds simple decaying wash drift, buoyant rise, and a slight
+    wobble. Diameters are 6–22 mm and biased toward the small end. There is
+    no aeration cloud, cavitation, spray, vortex filament, helical path, or
+    other underwater wake layer. Validation modes `?pass=wake-layers`,
+    `wake-age`, `wake-flow` inspect this pool.
+  - **Surface foam is part of the OCEAN, not a drawn effect** (2026-07-15
+    redesign): the craft splats gaussian deposits into the sea's persistent
+    wake-foam field (`sea/wakeFoamMap.ts`) and the detailed ocean sheet reads
+    them through its own whitecap pipeline (see sea-and-sky.md). Per frame,
+    at most 8 stamps: stern churn at the prop hub (spin-driven, so a pivot
+    turn scribes its arc), a 3×2 stern fan opening at the Kelvin cusp angle
+    `atan(tan(asin(1/3)))` ≈ 19.47°, and a leading-edge bow splat — the fan
+    and bow gate on `wayOn` (speed), churn on spin alone. The long far V
+    arms are deliberately NOT painted: in real wakes the persistent foam is
+    the widening turbulent band (diffusion provides the widening); far arms
+    are wave texture. Consequences that are the point: the trail persists
+    when the throttle drops or the craft dives (no instant regime cull),
+    re-crossing your own wake refreshes it instead of erasing it (max()
+    deposits, no pool recycling), and foam can never float above or dip
+    under the water because it is a shading property of the surface itself.
 - Emission position comes from `propeller.getWorldPosition()` — never
   hand-scaled local offsets through `localToWorld` (the group is scaled;
   pre-scaled locals double-apply).
+- **Screw sound**: `vehicle/submarine-running` events (start/stop with spin
+  hysteresis 1.2/0.6 rad/s, plus continuous `spin` 0..1 re-emits) drive a
+  dedicated hum voice in the audio engine — deeper than the winch hums
+  (34–56 Hz shaft sine + near-octave partial + bandpass noise) with a slow
+  throb on the noise texture only and every pitched element swept by spin,
+  so throttle-up rises and the ~3 s coast-down audibly winds back down. The
+  voice routes through its own lowpass keyed to the camera medium (260 Hz
+  submerged / 2.4 kHz topside): muffled from underwater, clearer with the
+  dome in the air. Loudness rides spin on a dedicated gain node (so the
+  coast-down tapers the voice before the stop even fires), and the stop is a
+  long anchored exponential tail (τ 1.3 s), never a cut — sources halt only
+  once the envelope is far below audibility.

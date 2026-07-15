@@ -30,6 +30,9 @@ export type GameEvents = {
   'ride/carousel-riding': { riding: boolean }
   /** Torrent lap-bar down / raised (rattle + roar while riding). */
   'ride/torrent-riding': { riding: boolean }
+  /** Submarine screw state: `spin` is the shaft rate 0..1, re-emitted as it
+   * changes so the engine hum's pitch rides spin-up and coast-down. */
+  'vehicle/submarine-running': { running: boolean; spin: number }
   /** Authored whale passage phases; audio intentionally begins before sight. */
   'wildlife/whale-cue': { phase: 'approach' | 'visible' | 'depart' | 'end' }
   /** A Midway game awarded one of its two physical counter prizes. */

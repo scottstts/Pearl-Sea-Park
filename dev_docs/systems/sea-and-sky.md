@@ -21,6 +21,21 @@ Architecture (spectral-ocean skill, WebGPU/TSL production tier):
   lobe instead of a thresholded sparkle mask. Foam receives both shared-sky
   ambient and direct sun. The below-surface Snell/TIR path deliberately keeps
   the original resolved FFT normal and scatter response.
+- **Vessel wake foam is a second coverage source in the SAME whitecap path**
+  (`sea/wakeFoamMap.ts`, 2026-07-15): a world-anchored 1024² half-float
+  ping-pong field over the 820 m square around the submarine force field
+  (centre (0, 10)); R = fresh churn (τ 2.4 s), G = lacy residue (τ 8.5 s +
+  neighbour diffusion + linear bleed to exact zero). Vehicles `splat()` up to
+  8 gaussians/frame (uniformArray, ChannelSim impulse pattern); deposits
+  combine by **max(), never add**, so re-crossing a trail refreshes instead
+  of erasing it. The detailed sheet samples it at the undisplaced `vWorldXZ`
+  (same convention as the Jacobian channel — the cascades tile, so a
+  world-space trail can never live inside them) and merges it as
+  `max(jacobianCoverage, residueCurve)` plus a fresh-churn density boost
+  before the shared lace fbm, footprint keep, and foam shading. Because it is
+  a surface property, wake foam rides displacement exactly and cannot float
+  or sink. The compute pass self-gates: it dispatches only within ~35 s of a
+  splat, so an unused sea costs one boot clear and nothing per frame.
 - Cascade 0 has a separate conservative above-water footprint keep (2.5–5.5 m
   per pixel). Apply it to the derivative field *before* the fold denominator
   and use the same interval for cascade-0 vertex displacement and

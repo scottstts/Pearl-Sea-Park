@@ -36,6 +36,12 @@ import { fbm2, valueNoise2 } from '../render/tslNoise'
 import { skyRadiance } from '../sky/skyRadiance'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
 import { OCEAN_FLAT_EDGE_MARGIN } from './oceanSkirtGeometry'
+import {
+  WAKE_FOAM_CENTER_X,
+  WAKE_FOAM_CENTER_Z,
+  WAKE_FOAM_SIZE,
+  type WakeFoamMap,
+} from './wakeFoamMap'
 import type { WaveSim } from './waveSim'
 
 /** Water body palette (linear HDR-ish, tuned for the golden afternoon). */
@@ -53,6 +59,11 @@ export interface OceanMaterialOptions {
   }
   /** Camera-medium authority: 0 above the displaced surface, 1 below it. */
   submerged: Node<'float'>
+  /**
+   * World-anchored vessel wake foam field, merged into the whitecap foam
+   * coverage (detailed sheet only) so wake trails ARE ocean foam.
+   */
+  wakeFoam?: WakeFoamMap | null
   /**
    * Half-size of the detailed mesh: fine cascades fade to zero approaching
    * this edge so the surface exactly matches the cascade-0-only skirt at the
@@ -391,12 +402,31 @@ export function createOceanSurfaceMaterial(
     // Jacobian foam: history-driven coverage × bubbly fbm detail, sun/sky lit.
     // Coverage only where the surface genuinely folded; fades with distance
     // so the fbm detail can never read as far-field shimmer.
-    const coverage = float(1).sub(smoothstep(-0.05, 0.26, vFoam))
+    let coverage: Node<'float'> = float(1).sub(smoothstep(-0.05, 0.26, vFoam))
+    let churn: Node<'float'> = float(0)
+    if (options.wakeFoam) {
+      // Vessel wake joins the SAME whitecap pipeline (coverage → lace →
+      // foamShade): a property of this surface, never an overlay, so it
+      // rides the displaced water exactly. Sampling by the undisplaced
+      // vWorldXZ matches the Jacobian channel, so deposited foam sloshes
+      // with the same horizontal chop as the ocean's own whitecaps.
+      const wakeUv = vWorldXZ
+        .sub(vec2(WAKE_FOAM_CENTER_X, WAKE_FOAM_CENTER_Z))
+        .div(WAKE_FOAM_SIZE)
+        .add(0.5)
+      const wake = options.wakeFoam.foamNode.sample(wakeUv)
+      // Residue behaves exactly like whitecap coverage — the shared lace
+      // multiply opens holes in it as it decays. Fresh churn adds the
+      // near-solid froth core right behind the hull.
+      coverage = max(coverage, smoothstep(0.02, 0.6, wake.g))
+      churn = smoothstep(0.1, 0.75, wake.r)
+    }
     const bubbleA = fbm2(vWorldXZ.mul(0.9).add(vec2(0.13, 0.07).mul(timeUniform)))
     const bubbleB = fbm2(vWorldXZ.mul(1.7).sub(vec2(0.11, 0.05).mul(timeUniform)))
     const foamKeep = float(1).sub(smoothstep(0.25, 0.8, pixelFootprint))
     const foamMask = coverage
       .mul(bubbleA.mul(bubbleB).mul(1.7).add(0.06))
+      .add(churn.mul(bubbleA.mul(0.45).add(0.62)))
       .mul(foamKeep)
       .clamp(0, 1)
     const foamAmbient = skyRadiance(aboveNormal, float(0)).mul(0.22)

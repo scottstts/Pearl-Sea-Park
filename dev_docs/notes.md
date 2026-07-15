@@ -1358,3 +1358,52 @@
     checks all tiers for the 15 m overlap, zero height error, and positive
     winding. Never lower a coverage apron to hide z-fighting; keep it coplanar
     and entirely inside the detailed sheet's mathematically flat border.
+- 2026-07-15 surface wake foam redesign (Scott's spec: part of the ocean, no
+  levitation/dipping, never erased by re-crossing; supersedes the instanced
+  foam-ribbon notes above — the foam pool is DELETED):
+  - Foam that must persist in world space cannot live in the FFT cascades
+    (they tile every 250/17/5 m) and should not live in an instance pool
+    (ring-buffer recycling erases old trail as new foam emits — the exact
+    reported bug). The accepted mechanism is a world-anchored accumulation
+    field: `sea/wakeFoamMap.ts`, 1024² RGBA16F ping-pong over the 820 m
+    force-field square, R = fresh churn (τ 2.4 s) / G = lacy residue
+    (τ 8.5 s + diffusion), gaussian splats via the ChannelSim uniformArray
+    impulse pattern, deposits merged by max() so crossing a trail refreshes
+    it. Decay needs a small LINEAR bleed on top of the exponential so
+    half-float texels reach exact zero — that zero is also what lets the
+    compute pass self-gate (skip entirely ~35 s after the last splat).
+  - Integration point matters more than the field itself: the ocean material
+    merges wake coverage into the EXISTING Jacobian whitecap path (coverage →
+    shared lace fbm → footprint keep → foamShade) rather than adding any new
+    shading. That single choice buys "part of the ocean" for free: same
+    lighting, same LOD hygiene, rides displacement exactly, sloshes with the
+    same horizontal chop (both channels sample by undisplaced vWorldXZ).
+  - Fixed-offset stamps trailing a moving emitter paint lines PARALLEL to the
+    path (each stamp's lateral offset is constant), not a diverging V — you
+    cannot Kelvin-arm a splat trail this way. Don't try: real wake FOAM is
+    the widening turbulent band (residue diffusion provides the widening);
+    the far V arms are wave texture, not foam. A short 3-stamp stern fan at
+    the cusp angle covers the near-field opening honestly.
+  - Trail persistence through regime changes is a feature: diving or cutting
+    the throttle leaves the surface trail to decay naturally instead of a
+    CPU gate culling it (only the bubble pool stays gated by surfacedness).
+- 2026-07-15 submarine screw hum:
+  - New machinery voices follow the startHum family (sine + near-octave
+    partial + seeded bandpass noise on the procedural bus), but the global
+    submerged lowpass (1.9 kHz) is inaudible on sub-100 Hz hums — a voice
+    that must contrast across the waterline needs its OWN medium lowpass
+    (260 Hz / 2.4 kHz here, swept on `sea/waterline-crossed`).
+  - Continuous pitch coupling stays event-driven: re-emit
+    `vehicle/submarine-running` with spin only when it changes >0.015 (start/
+    stop keep 1.2/0.6 rad/s hysteresis), engine sweeps every pitched element
+    with setTargetAtTime. Amplitude throb belongs on the noise texture gain
+    only — on the master gain it reads as tremolo, not machinery.
+  - Fade-outs click if you schedule a bare linearRamp: the ramp measures
+    from the LAST scheduled event, so the value steps at the stop moment
+    (Scott heard it as "a bad recording"). Always cancelScheduledValues +
+    setValueAtTime(current) to anchor, then setTargetAtTime for the tail —
+    stopHum now does this for every hum, and sources stop only ~8τ later.
+    Linear fades also *sound* truncated (loudness is logarithmic); long
+    tails must be exponential. Never share one AudioParam between an
+    envelope schedule and per-frame sweeps — the submarine's spin-tracked
+    loudness lives on its own gain node in series for exactly that reason.

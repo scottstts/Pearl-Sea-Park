@@ -9,7 +9,16 @@ import {
 } from './recordedAmbience'
 
 const PROCEDURAL_SAMPLE_RATE = 48_000
-const HUM_NAMES = ['bell', 'pearl', 'wheel', 'carousel', 'torrent'] as const
+const HUM_NAMES = ['bell', 'pearl', 'wheel', 'carousel', 'torrent', 'submarine'] as const
+
+// The submarine hum's own medium filter: the listener rides the hull, so the
+// screw sounds duller heard through water and clearer with the dome topside.
+const SUBMARINE_MUFFLE_UNDERWATER = 260
+const SUBMARINE_MUFFLE_SURFACED = 2400
+// Shaft pitch: base sine sweeps with spin so throttle-up rises and the
+// coast-down audibly winds the machinery back down before the fade.
+const SUBMARINE_HUM_FLOOR = 34 // Hz at a stopped shaft
+const SUBMARINE_HUM_RANGE = 22 // Hz added at full spin
 
 /**
  * Procedural park audio with a recorded camera-medium ambience layer.
@@ -51,6 +60,14 @@ export class AudioEngineSystem implements GameSystem {
   )
   private whaleBreathBuffer: AudioBuffer | null = null
   private readonly humBuffers = new Map<string, AudioBuffer>()
+  private submarineVoice: {
+    muffle: BiquadFilterNode
+    level: GainNode
+    shaft: OscillatorNode
+    shaftB: OscillatorNode
+    noiseFilter: BiquadFilterNode
+    throb: OscillatorNode
+  } | null = null
 
   async init(ctx: GameContext): Promise<void> {
     this.encodedAmbience = await preloadRecordedAmbience()
@@ -95,6 +112,13 @@ export class AudioEngineSystem implements GameSystem {
           this.context.currentTime + 0.6,
         )
       }
+      if (this.submarineVoice && this.context) {
+        this.submarineVoice.muffle.frequency.setTargetAtTime(
+          submerged ? SUBMARINE_MUFFLE_UNDERWATER : SUBMARINE_MUFFLE_SURFACED,
+          this.context.currentTime,
+          0.3,
+        )
+      }
       if (this.recordedAmbience) {
         this.recordedAmbience.setSubmerged(submerged)
         this.recordedAmbience.playSplash()
@@ -127,6 +151,17 @@ export class AudioEngineSystem implements GameSystem {
     ctx.events.on('ride/torrent-riding', ({ riding }) => {
       if (riding) this.startHum('torrent', 52, 0.06)
       else this.stopHum('torrent')
+    })
+    ctx.events.on('vehicle/submarine-running', ({ running, spin }) => {
+      if (running) {
+        this.startSubmarineHum()
+        this.setSubmarinePitch(spin)
+      } else {
+        // The engine dies on a long exponential tail, never a cut: by stop
+        // time the spin-tracked level has already tapered the voice low.
+        this.stopHum('submarine', 1.3)
+        this.submarineVoice = null
+      }
     })
     ctx.events.on('wildlife/whale-cue', ({ phase }) => {
       if (phase === 'approach') this.playWhaleSong()
@@ -442,13 +477,106 @@ export class AudioEngineSystem implements GameSystem {
     })
   }
 
-  private stopHum(name: string): void {
+  /**
+   * Fade a hum out along an exponential tail and stop its sources only once
+   * the envelope sits far below audibility. The current value is re-anchored
+   * first: a bare ramp measures from the LAST scheduled event, which puts a
+   * step discontinuity — an audible click — right at the stop moment.
+   */
+  private stopHum(name: string, tailSeconds = 0.35): void {
     const context = this.context
     const hum = this.hums.get(name)
     if (!context || !hum) return
     this.hums.delete(name)
-    hum.gain.gain.linearRampToValueAtTime(0.0001, context.currentTime + 0.9)
-    window.setTimeout(() => hum.stop(), 1100)
+    const gain = hum.gain.gain
+    const now = context.currentTime
+    gain.cancelScheduledValues(now)
+    gain.setValueAtTime(gain.value, now)
+    gain.setTargetAtTime(0.0001, now, tailSeconds)
+    window.setTimeout(() => hum.stop(), Math.ceil(tailSeconds * 8000) + 200)
+  }
+
+  /**
+   * The submarine's screw: a deeper, gently throbbing cousin of the winch
+   * hums (the throb rides the noise texture only, so it reads as churning
+   * machinery rather than tremolo). Routed through its own medium lowpass —
+   * the camera hears it duller through water, clearer with the dome topside.
+   * Every pitched element starts at the stopped-shaft floor; the continuous
+   * spin events sweep them, so spin-up rises and coast-down winds back down.
+   */
+  private startSubmarineHum(): void {
+    const context = this.context
+    const proceduralBus = this.proceduralBus
+    if (!context || !proceduralBus || this.hums.has('submarine')) return
+    const gain = context.createGain()
+    gain.gain.setValueAtTime(0.0001, context.currentTime)
+    gain.gain.linearRampToValueAtTime(0.042, context.currentTime + 1.6)
+
+    const muffle = context.createBiquadFilter()
+    muffle.type = 'lowpass'
+    muffle.frequency.value = this.submerged
+      ? SUBMARINE_MUFFLE_UNDERWATER
+      : SUBMARINE_MUFFLE_SURFACED
+    muffle.Q.value = 0.5
+
+    // Loudness rides the shaft rate on its own node — the start/stop
+    // envelope above never shares an AudioParam with per-frame spin sweeps,
+    // so neither schedule can step on the other (steps are clicks).
+    const level = context.createGain()
+    level.gain.value = 0.3
+
+    const shaft = context.createOscillator()
+    shaft.frequency.value = SUBMARINE_HUM_FLOOR
+    const shaftB = context.createOscillator()
+    shaftB.frequency.value = SUBMARINE_HUM_FLOOR * 1.996 // near-octave beat
+    const noise = context.createBufferSource()
+    noise.buffer = this.humBuffers.get('submarine') ?? null
+    noise.loop = true
+    const noiseFilter = context.createBiquadFilter()
+    noiseFilter.type = 'bandpass'
+    noiseFilter.frequency.value = SUBMARINE_HUM_FLOOR * 6.1
+    noiseFilter.Q.value = 4
+    const noiseGain = context.createGain()
+    noiseGain.gain.value = 0.32
+    const throb = context.createOscillator()
+    throb.frequency.value = 2
+    const throbDepth = context.createGain()
+    throbDepth.gain.value = 0.12
+    throb.connect(throbDepth).connect(noiseGain.gain)
+    shaft.connect(gain)
+    shaftB.connect(gain)
+    noise.connect(noiseFilter).connect(noiseGain).connect(gain)
+    gain.connect(level).connect(muffle).connect(proceduralBus)
+    shaft.start()
+    shaftB.start()
+    noise.start()
+    throb.start()
+    this.submarineVoice = { muffle, level, shaft, shaftB, noiseFilter, throb }
+    this.hums.set('submarine', {
+      gain,
+      stop: () => {
+        shaft.stop()
+        shaftB.stop()
+        noise.stop()
+        throb.stop()
+      },
+    })
+  }
+
+  /** Sweep every pitched element — and the loudness — toward the shaft
+   * rate, so a coast-down tapers the voice before the stop tail begins. */
+  private setSubmarinePitch(spin: number): void {
+    const context = this.context
+    const voice = this.submarineVoice
+    if (!context || !voice) return
+    const rate = Math.max(0, Math.min(1, spin))
+    const frequency = SUBMARINE_HUM_FLOOR + SUBMARINE_HUM_RANGE * rate
+    const now = context.currentTime
+    voice.shaft.frequency.setTargetAtTime(frequency, now, 0.12)
+    voice.shaftB.frequency.setTargetAtTime(frequency * 1.996, now, 0.12)
+    voice.noiseFilter.frequency.setTargetAtTime(frequency * 6.1, now, 0.12)
+    voice.throb.frequency.setTargetAtTime(2 + 1.2 * rate, now, 0.2)
+    voice.level.gain.setTargetAtTime(0.3 + 0.7 * rate, now, 0.25)
   }
 
   /** FM bell voice. */
