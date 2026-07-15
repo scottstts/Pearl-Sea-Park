@@ -18,7 +18,7 @@ const facilitySigns = auditFacilitySigns()
 const torrentTrack = auditTorrentTrack()
 const torrentCarHull = auditTorrentCarHull()
 const pearlRoute = auditPearlRoute()
-const oceanSkirt = auditOceanSkirtGeometry()
+const oceanSkirts = [256, 384, 448].map((segments) => auditOceanSkirtGeometry(segments))
 const benchFacing = [
   { name: 'esplanade-east', at: [5.3, 175], target: [0, 175] },
   { name: 'esplanade-west', at: [-5.3, 175], target: [0, 175] },
@@ -72,7 +72,7 @@ const report = {
   torrentTrack,
   torrentCarHull,
   pearlRoute,
-  oceanSkirt,
+  oceanSkirts,
 }
 
 console.log(JSON.stringify(report, null, 2))

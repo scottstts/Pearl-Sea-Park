@@ -35,6 +35,7 @@ import type { Node } from 'three/webgpu'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 import { skyRadiance } from '../sky/skyRadiance'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
+import { OCEAN_FLAT_EDGE_MARGIN } from './oceanSkirtGeometry'
 import type { WaveSim } from './waveSim'
 
 /** Water body palette (linear HDR-ish, tuned for the golden afternoon). */
@@ -107,7 +108,7 @@ export function createOceanSurfaceMaterial(
       ? float(1).sub(
           smoothstep(
             edgeHalf - 170,
-            edgeHalf - 15,
+            edgeHalf - OCEAN_FLAT_EDGE_MARGIN,
             max(positionLocal.x.abs(), positionLocal.z.abs()),
           ),
         )

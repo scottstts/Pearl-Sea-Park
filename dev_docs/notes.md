@@ -1341,3 +1341,20 @@
     `?pass=ao-footprint` proves the rejection field and `?view=seabed-high` is
     the fixed regression camera. Near-seabed contact AO remains; tiers 0/1/2
     are clean from the high camera.
+- 2026-07-15 underwater horizon seam:
+  - The camera-height-sensitive dotted/white line seen from the descending
+    bell and a lifted submarine was the ocean mesh handoff, not another
+    seabed/AO/fog defect. The detailed sheet ended at y=0, while the far skirt
+    began 2 m inside it at y=-0.14; from below this was an open step with no
+    connecting surface, compressed to a sub-pixel line at grazing incidence.
+  - Removing the sink and matching the ±350 m edge removed the dotted gaps but
+    left one solid antialiased line: exact abutment still let partial MSAA edge
+    samples resolve against the bright background. Final seam is a 15 m
+    COPLANAR coverage apron: the skirt begins at ±335 m, exactly where the
+    detailed sheet's displacement keep reaches zero, and renders underneath
+    the flat detailed border. There is no vertical step, shader change, or new
+    draw. It adds only 2,048/3,072/3,584 flat triangles by tier.
+    `?view=ocean-seam` fixes the failure-sensitive camera; `audit:geometry`
+    checks all tiers for the 15 m overlap, zero height error, and positive
+    winding. Never lower a coverage apron to hide z-fighting; keep it coplanar
+    and entirely inside the detailed sheet's mathematically flat border.

@@ -10,7 +10,6 @@ import { WaterlineProbe } from './waterlineProbe'
 import { WaveSim } from './waveSim'
 
 const INNER_SIZE = OCEAN_INNER_HALF_SIZE * 2
-const OUTER_SINK = 0.14
 
 /**
  * The sea: spectral wave sim + inner high-density surface + far skirt ring,
@@ -63,7 +62,7 @@ export class SeaSystem implements GameSystem {
     this.inner = inner
 
     const outer = new Mesh(
-      createOceanSkirtGeometry(),
+      createOceanSkirtGeometry(segments),
       createOceanSurfaceMaterial(sim, timeNode, {
         detailed: false,
         sceneBackdrop,
@@ -82,6 +81,12 @@ export class SeaSystem implements GameSystem {
       position: [0, -14, 0],
       look: [0, -2, -40],
       note: 'Silver Ceiling + Snell window from below',
+    })
+    registerBookmark({
+      name: 'ocean-seam',
+      position: [6, -4, 318],
+      look: [6, -6, -40],
+      note: 'Grazing underwater regression view across the stitched ocean boundary',
     })
 
     if (ctx.flags.debug) {
@@ -103,7 +108,7 @@ export class SeaSystem implements GameSystem {
     const qx = Math.round(ctx.camera.position.x / step) * step
     const qz = Math.round(ctx.camera.position.z / step) * step
     this.inner?.position.set(qx, 0, qz)
-    this.outer?.position.set(qx, -OUTER_SINK, qz)
+    this.outer?.position.set(qx, 0, qz)
   }
 
   lateUpdate(ctx: GameContext): void {

@@ -1,71 +1,84 @@
 import { BufferAttribute, BufferGeometry } from 'three'
 
 export const OCEAN_INNER_HALF_SIZE = 350
-export const OCEAN_SKIRT_HOLE_HALF_SIZE = 348
+/** Inner displacement is exactly zero across this final border width. */
+export const OCEAN_FLAT_EDGE_MARGIN = 15
+/** The flat skirt underlays the detailed sheet only inside its flat border. */
+export const OCEAN_SKIRT_HOLE_HALF_SIZE = OCEAN_INNER_HALF_SIZE - OCEAN_FLAT_EDGE_MARGIN
 export const OCEAN_SKIRT_OUTER_HALF_SIZE = 3_200
 
-interface QuadBounds {
-  minX: number
-  maxX: number
-  minZ: number
-  maxZ: number
+interface BoundaryPoint {
+  x: number
+  z: number
 }
 
-const SKIRT_QUADS: readonly QuadBounds[] = [
-  {
-    minX: -OCEAN_SKIRT_OUTER_HALF_SIZE,
-    maxX: -OCEAN_SKIRT_HOLE_HALF_SIZE,
-    minZ: -OCEAN_SKIRT_OUTER_HALF_SIZE,
-    maxZ: OCEAN_SKIRT_OUTER_HALF_SIZE,
-  },
-  {
-    minX: OCEAN_SKIRT_HOLE_HALF_SIZE,
-    maxX: OCEAN_SKIRT_OUTER_HALF_SIZE,
-    minZ: -OCEAN_SKIRT_OUTER_HALF_SIZE,
-    maxZ: OCEAN_SKIRT_OUTER_HALF_SIZE,
-  },
-  {
-    minX: -OCEAN_SKIRT_HOLE_HALF_SIZE,
-    maxX: OCEAN_SKIRT_HOLE_HALF_SIZE,
-    minZ: -OCEAN_SKIRT_OUTER_HALF_SIZE,
-    maxZ: -OCEAN_SKIRT_HOLE_HALF_SIZE,
-  },
-  {
-    minX: -OCEAN_SKIRT_HOLE_HALF_SIZE,
-    maxX: OCEAN_SKIRT_HOLE_HALF_SIZE,
-    minZ: OCEAN_SKIRT_HOLE_HALF_SIZE,
-    maxZ: OCEAN_SKIRT_OUTER_HALF_SIZE,
-  },
-]
+/**
+ * Point on a square boundary, ordered clockwise as seen from +Y.
+ *
+ * Keeping the same parameter on the inner and outer squares turns the far
+ * skirt into four flat trapezoid strips. Subdividing the inner skirt boundary
+ * at the active quality tier keeps its coplanar coverage apron stable under
+ * the detailed sheet's much denser edge.
+ */
+function squareBoundaryPoint(halfSize: number, sample: number, segments: number): BoundaryPoint {
+  const side = Math.floor(sample / segments)
+  const offset = sample - side * segments
+  const segmentSize = (halfSize * 2) / segments
+  const coordinate = offset * segmentSize - halfSize
+
+  switch (side) {
+    case 0:
+      return { x: -halfSize, z: coordinate }
+    case 1:
+      return { x: coordinate, z: halfSize }
+    case 2:
+      return { x: halfSize, z: -coordinate }
+    default:
+      return { x: -coordinate, z: -halfSize }
+  }
+}
 
 /**
- * Exact square ring for the flat far ocean.
+ * Exact square ring with a coplanar coverage apron for the flat far ocean.
  *
- * The former coarse PlaneGeometry triangle filter put the effective hole edge
- * at the first 133 m grid line outside the requested boundary. Those diagonal
- * triangles intruded about 81 m beneath the still-displaced inner ocean; wave
- * troughs crossed the skirt and drew animated contour/barcode bands. Four
- * explicit rectangles keep the only overlap to the intended 2 m, where the
- * inner surface is already mathematically flat.
+ * The detailed ocean is mathematically flat over its final 15 m. The skirt
+ * occupies that same plane beneath the flat border, so partially covered MSAA
+ * samples at the detailed mesh edge still resolve to ocean instead of the
+ * bright background. Unlike the former lowered overlap, this creates no open
+ * step when viewed from below and no displaced surfaces can cross.
  */
-export function createOceanSkirtGeometry(): BufferGeometry {
-  const positions: number[] = []
+export function createOceanSkirtGeometry(segments = 384): BufferGeometry {
+  if (!Number.isInteger(segments) || segments < 1) {
+    throw new Error(`Ocean skirt segments must be a positive integer: ${segments}`)
+  }
+
+  const boundarySamples = segments * 4
+  const positions = new Float32Array(boundarySamples * 2 * 3)
   const indices: number[] = []
 
-  for (const quad of SKIRT_QUADS) {
-    const first = positions.length / 3
-    // Counter-clockwise as seen from +Y, yielding an upward normal.
-    positions.push(
-      quad.minX, 0, quad.minZ,
-      quad.minX, 0, quad.maxZ,
-      quad.maxX, 0, quad.maxZ,
-      quad.maxX, 0, quad.minZ,
-    )
-    indices.push(first, first + 1, first + 2, first, first + 2, first + 3)
+  for (let sample = 0; sample < boundarySamples; sample++) {
+    const outer = squareBoundaryPoint(OCEAN_SKIRT_OUTER_HALF_SIZE, sample, segments)
+    const inner = squareBoundaryPoint(OCEAN_SKIRT_HOLE_HALF_SIZE, sample, segments)
+    const offset = sample * 6
+    positions[offset] = outer.x
+    positions[offset + 1] = 0
+    positions[offset + 2] = outer.z
+    positions[offset + 3] = inner.x
+    positions[offset + 4] = 0
+    positions[offset + 5] = inner.z
+  }
+
+  for (let sample = 0; sample < boundarySamples; sample++) {
+    const next = (sample + 1) % boundarySamples
+    const outer = sample * 2
+    const inner = outer + 1
+    const outerNext = next * 2
+    const innerNext = outerNext + 1
+    indices.push(outer, outerNext, innerNext, outer, innerNext, inner)
   }
 
   const geometry = new BufferGeometry()
-  geometry.setAttribute('position', new BufferAttribute(new Float32Array(positions), 3))
+  geometry.setAttribute('position', new BufferAttribute(positions, 3))
   geometry.setIndex(indices)
   geometry.computeVertexNormals()
   geometry.computeBoundingBox()
@@ -73,40 +86,46 @@ export function createOceanSkirtGeometry(): BufferGeometry {
   return geometry
 }
 
-export function auditOceanSkirtGeometry(): {
+export function auditOceanSkirtGeometry(segments = 384): {
+  segments: number
   quads: number
   triangles: number
-  intendedOverlapMeters: number
+  coverageOverlapMeters: number
   minimumHoleHalfSize: number
   maximumOuterHalfSize: number
+  coverageBoundaryVertices: number
+  maximumHoleBoundaryError: number
+  maximumBoundaryHeightError: number
   minimumTriangleNormalY: number
 } {
-  const geometry = createOceanSkirtGeometry()
+  const geometry = createOceanSkirtGeometry(segments)
   const position = geometry.getAttribute('position')
   const index = geometry.getIndex()
-  if (!index || position.count % 4 !== 0) throw new Error('Ocean skirt topology is not quads')
+  const boundarySamples = segments * 4
+  if (!index || position.count !== boundarySamples * 2) {
+    throw new Error('Ocean skirt topology does not match its coverage boundary')
+  }
 
-  const holeEdges: number[] = []
+  let minimumHoleHalfSize = Infinity
   let maximumOuterHalfSize = 0
-  for (let first = 0; first < position.count; first += 4) {
-    let minX = Infinity
-    let maxX = -Infinity
-    let minZ = Infinity
-    let maxZ = -Infinity
-    for (let vertex = first; vertex < first + 4; vertex++) {
-      const x = position.getX(vertex)
-      const z = position.getZ(vertex)
-      minX = Math.min(minX, x)
-      maxX = Math.max(maxX, x)
-      minZ = Math.min(minZ, z)
-      maxZ = Math.max(maxZ, z)
-      maximumOuterHalfSize = Math.max(maximumOuterHalfSize, Math.abs(x), Math.abs(z))
-    }
-    if (maxX <= 0) holeEdges.push(-maxX)
-    else if (minX >= 0) holeEdges.push(minX)
-    else if (maxZ <= 0) holeEdges.push(-maxZ)
-    else if (minZ >= 0) holeEdges.push(minZ)
-    else throw new Error('Ocean skirt quad crosses through the central hole')
+  let maximumHoleBoundaryError = 0
+  let maximumBoundaryHeightError = 0
+  for (let sample = 0; sample < boundarySamples; sample++) {
+    const outer = sample * 2
+    const inner = outer + 1
+    const outerHalfSize = Math.max(Math.abs(position.getX(outer)), Math.abs(position.getZ(outer)))
+    const innerHalfSize = Math.max(Math.abs(position.getX(inner)), Math.abs(position.getZ(inner)))
+    minimumHoleHalfSize = Math.min(minimumHoleHalfSize, innerHalfSize)
+    maximumOuterHalfSize = Math.max(maximumOuterHalfSize, outerHalfSize)
+    maximumHoleBoundaryError = Math.max(
+      maximumHoleBoundaryError,
+      Math.abs(innerHalfSize - OCEAN_SKIRT_HOLE_HALF_SIZE),
+    )
+    maximumBoundaryHeightError = Math.max(
+      maximumBoundaryHeightError,
+      Math.abs(position.getY(outer)),
+      Math.abs(position.getY(inner)),
+    )
   }
 
   let minimumTriangleNormalY = Infinity
@@ -121,24 +140,35 @@ export function auditOceanSkirtGeometry(): {
     minimumTriangleNormalY = Math.min(minimumTriangleNormalY, uz * vx - ux * vz)
   }
 
-  const minimumHoleHalfSize = Math.min(...holeEdges)
-  const intendedOverlapMeters = OCEAN_INNER_HALF_SIZE - minimumHoleHalfSize
-  if (minimumHoleHalfSize !== OCEAN_SKIRT_HOLE_HALF_SIZE) {
-    throw new Error(`Ocean skirt intrudes inside its exact hole: ${minimumHoleHalfSize} m`)
+  const coverageOverlapMeters = OCEAN_INNER_HALF_SIZE - minimumHoleHalfSize
+  if (
+    maximumHoleBoundaryError !== 0 ||
+    coverageOverlapMeters !== OCEAN_FLAT_EDGE_MARGIN
+  ) {
+    throw new Error(
+      `Ocean skirt coverage apron is incorrect: ${coverageOverlapMeters} m`,
+    )
   }
-  if (intendedOverlapMeters < 0 || intendedOverlapMeters > 2) {
-    throw new Error(`Ocean skirt overlap is unsafe: ${intendedOverlapMeters} m`)
+  if (maximumOuterHalfSize !== OCEAN_SKIRT_OUTER_HALF_SIZE) {
+    throw new Error(`Ocean skirt outer boundary is incorrect: ${maximumOuterHalfSize} m`)
+  }
+  if (maximumBoundaryHeightError !== 0) {
+    throw new Error(`Ocean skirt boundary is not coplanar: ${maximumBoundaryHeightError} m`)
   }
   if (minimumTriangleNormalY <= 0) {
     throw new Error(`Ocean skirt has downward or degenerate triangles: ${minimumTriangleNormalY}`)
   }
   geometry.dispose()
   return {
-    quads: position.count / 4,
+    segments,
+    quads: index.count / 6,
     triangles: index.count / 3,
-    intendedOverlapMeters,
+    coverageOverlapMeters,
     minimumHoleHalfSize,
     maximumOuterHalfSize,
+    coverageBoundaryVertices: boundarySamples,
+    maximumHoleBoundaryError,
+    maximumBoundaryHeightError,
     minimumTriangleNormalY,
   }
 }
