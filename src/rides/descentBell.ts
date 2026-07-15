@@ -1,6 +1,7 @@
 import {
   BoxGeometry,
   CatmullRomCurve3,
+  Curve,
   CylinderGeometry,
   FrontSide,
   LatheGeometry,
@@ -9,6 +10,7 @@ import {
   PointLight,
   SphereGeometry,
   TorusGeometry,
+  TubeGeometry,
   Vector2,
   Vector3,
 } from 'three'
@@ -29,6 +31,66 @@ const DESCENT_SECONDS = 40
 const DOCK_DELAY = 2.4
 
 type BellState = 'docked-top' | 'descending' | 'docked-bottom' | 'ascending'
+
+function profileTAtY(profile: CatmullRomCurve3, targetY: number): number {
+  let low = 0
+  let high = 1
+  for (let i = 0; i < 24; i++) {
+    const middle = (low + high) * 0.5
+    if (profile.getPoint(middle).y < targetY) low = middle
+    else high = middle
+  }
+  return (low + high) * 0.5
+}
+
+function offsetBellProfile(
+  profile: CatmullRomCurve3,
+  t: number,
+  offset: number,
+  target = new Vector2(),
+): Vector2 {
+  const point = profile.getPoint(t)
+  const tangent = profile.getTangent(t)
+  const tangentLength = Math.max(Math.hypot(tangent.x, tangent.y), Number.EPSILON)
+  return target.set(
+    point.x + (tangent.y / tangentLength) * offset,
+    point.y - (tangent.x / tangentLength) * offset,
+  )
+}
+
+/** A meridian rib held at a constant surface-normal clearance from the glass. */
+class BellCageRibCurve extends Curve<Vector3> {
+  private readonly profile: CatmullRomCurve3
+  private readonly angle: number
+  private readonly startT: number
+  private readonly endT: number
+  private readonly offset: number
+
+  constructor(
+    profile: CatmullRomCurve3,
+    angle: number,
+    startT: number,
+    endT: number,
+    offset: number,
+  ) {
+    super()
+    this.profile = profile
+    this.angle = angle
+    this.startT = startT
+    this.endT = endT
+    this.offset = offset
+  }
+
+  override getPoint(t: number, target = new Vector3()): Vector3 {
+    const profileT = this.startT + (this.endT - this.startT) * t
+    const point = offsetBellProfile(this.profile, profileT, this.offset)
+    return target.set(
+      Math.sin(this.angle) * point.x,
+      point.y,
+      Math.cos(this.angle) * point.x,
+    )
+  }
+}
 
 /**
  * The Descent Bell (plan §9.1): a brass-and-glass diving bell on a cable from
@@ -107,7 +169,7 @@ export class DescentBellSystem implements GameSystem {
     const shellMaterial = lib.glass.clone()
     shellMaterial.side = FrontSide
     this.shellMaterial = shellMaterial
-    const shellProfile = new CatmullRomCurve3([
+    const shellCurve = new CatmullRomCurve3([
       new Vector3(1.22, 0.16, 0),
       new Vector3(1.3, 0.7, 0),
       new Vector3(1.26, 1.5, 0),
@@ -115,22 +177,46 @@ export class DescentBellSystem implements GameSystem {
       new Vector3(0.55, 2.52, 0),
       new Vector3(0.12, 2.66, 0),
     ])
+    const shellProfile = shellCurve
       .getPoints(26)
       .map((p) => new Vector2(p.x, p.y))
     const shell = new Mesh(new LatheGeometry(shellProfile, 48), shellMaterial)
     const floor = new Mesh(new CylinderGeometry(1.22, 1.28, 0.1, 32), lib.brass)
     floor.position.y = 0.1
-    const bottomRing = new Mesh(new TorusGeometry(1.26, 0.07, 10, 40), lib.brass)
+    // Build the external cage from the exact same meridian used by the glass.
+    // The rib centreline sits one rib radius plus a small air gap away along
+    // the profile normal, so its clearance cannot drift as the shell curves.
+    const ribRadius = 0.03
+    const glassClearance = 0.02
+    const cageOffset = ribRadius + glassClearance
+    const ribStartT = profileTAtY(shellCurve, 0.2)
+    const ribEndT = profileTAtY(shellCurve, 2.605)
+    const baseAnchor = offsetBellProfile(shellCurve, ribStartT, cageOffset)
+    const waistT = profileTAtY(shellCurve, 1.1)
+    const waistAnchor = offsetBellProfile(shellCurve, waistT, cageOffset)
+    const crownAnchor = offsetBellProfile(shellCurve, ribEndT, cageOffset)
+
+    // The base collar lightly captures the lower glass edge and meets the car
+    // floor; every rib starts on its centreline instead of beside it.
+    const bottomRing = new Mesh(
+      new TorusGeometry(baseAnchor.x, 0.05, 10, 56),
+      lib.brass,
+    )
     bottomRing.rotation.x = Math.PI / 2
-    bottomRing.position.y = 0.18
+    bottomRing.position.y = baseAnchor.y
     // Hemp fender skirting the landing ring — the bell touches down on rope,
     // not on bare brass, and the warm fibre band grounds the whole silhouette.
     const fender = new Mesh(new TorusGeometry(1.35, 0.065, 9, 44), lib.rope)
     fender.rotation.x = Math.PI / 2
     fender.position.y = 0.1
-    const midRing = new Mesh(new TorusGeometry(1.29, 0.05, 8, 40), lib.brass)
-    midRing.rotation.x = Math.PI / 2
-    midRing.position.y = 1.1
+    // A slim stand-off hoop ties the cage together without sinking into the
+    // shell. Its centreline is sampled from the same offset curve as the ribs.
+    const waistRing = new Mesh(
+      new TorusGeometry(waistAnchor.x, ribRadius, 10, 56),
+      lib.brass,
+    )
+    waistRing.rotation.x = Math.PI / 2
+    waistRing.position.y = waistAnchor.y
     const crownTopRadius = 0.16
     const crownBaseRadius = 0.3
     const crownHeight = 0.35
@@ -141,9 +227,33 @@ export class DescentBellSystem implements GameSystem {
       lib.brass,
     )
     crown.position.y = crownCenterY
+    // This collar bridges the offset ribs into the solid crown. It replaces
+    // the old partially buried ball joints with one deliberate welded socket.
+    const crownFraction = Math.min(
+      1,
+      Math.max(0, (crownAnchor.y - crownBaseY) / crownHeight),
+    )
+    const crownRadiusAtAnchor =
+      crownBaseRadius + (crownTopRadius - crownBaseRadius) * crownFraction
+    const crownCollarRadius = (crownAnchor.x + crownRadiusAtAnchor) * 0.5
+    const crownCollar = new Mesh(
+      new TorusGeometry(crownCollarRadius, 0.045, 10, 40),
+      lib.brass,
+    )
+    crownCollar.rotation.x = Math.PI / 2
+    crownCollar.position.y = crownAnchor.y
     const hook = new Mesh(new TorusGeometry(0.12, 0.035, 8, 18), lib.brass)
     hook.position.y = 3.02
-    this.car.add(shell, floor, fender, bottomRing, midRing, crown, hook)
+    this.car.add(
+      shell,
+      floor,
+      fender,
+      bottomRing,
+      waistRing,
+      crown,
+      crownCollar,
+      hook,
+    )
     // Compass rose inlaid in the cabin floor: a nacre ring, four brass
     // cardinal needles, and a pearl boss — the detail a seated guest looks
     // straight down at through the whole descent.
@@ -163,43 +273,24 @@ export class DescentBellSystem implements GameSystem {
     const roseBoss = new Mesh(new SphereGeometry(0.055, 12, 9), lib.nacre)
     roseBoss.position.y = 0.16
     this.car.add(roseBoss)
-    // Four external cage ribs hugging the glass from the bottom ring to the
-    // crown: three struts each, knuckled with sphere joints, seated on the
-    // ring and reaching the crown base. (The old single tilted staves had
-    // their lean phases transposed and floated free of everything.)
-    const ribGeometry = new CylinderGeometry(1, 1, 1, 10)
-    const ribJointGeometry = new SphereGeometry(0.052, 10, 8)
-    const ribUp = new Vector3(0, 1, 0)
-    // Terminate inside the solid crown rather than merely aiming at its
-    // silhouette. The partially embedded end knuckle then reads as a welded
-    // socket and guarantees overlap from every camera angle.
-    const crownAttachmentInset = 0.04
-    const ribProfile: Array<[number, number]> = [
-      [1.28, 0.24],
-      [1.325, 1.45],
-      [1.05, 2.2],
-      [crownBaseRadius - crownAttachmentInset, crownBaseY + crownAttachmentInset],
-    ]
-    const ribRadii = [0.042, 0.038, 0.032]
+    // Four continuous meridian ribs follow the glass curvature from base to
+    // crown. Circular TubeGeometry needs no visible elbows or joint spheres,
+    // and the shared normal-offset construction keeps all four ribs equally
+    // spaced from the shell at every height.
     for (let i = 0; i < 4; i++) {
       const angle = (i / 4) * Math.PI * 2 + Math.PI / 4
-      const points = ribProfile.map(
-        ([r, y]) => new Vector3(Math.sin(angle) * r, y, Math.cos(angle) * r),
+      const ribCurve = new BellCageRibCurve(
+        shellCurve,
+        angle,
+        ribStartT,
+        ribEndT,
+        cageOffset,
       )
-      for (let s = 0; s < 3; s++) {
-        const direction = new Vector3().subVectors(points[s + 1], points[s])
-        const length = direction.length()
-        const rib = new Mesh(ribGeometry, lib.brass)
-        rib.position.copy(points[s]).add(points[s + 1]).multiplyScalar(0.5)
-        rib.quaternion.setFromUnitVectors(ribUp, direction.normalize())
-        rib.scale.set(ribRadii[s], length, ribRadii[s])
-        this.car.add(rib)
-      }
-      for (const knuckle of [points[1], points[2], points[3]]) {
-        const joint = new Mesh(ribJointGeometry, lib.brass)
-        joint.position.copy(knuckle)
-        this.car.add(joint)
-      }
+      const rib = new Mesh(
+        new TubeGeometry(ribCurve, 64, ribRadius, 10, false),
+        lib.brass,
+      )
+      this.car.add(rib)
     }
     // Interior banquette (door gap faces the park, −z): a sculpted curved
     // seat — dished top, raked backrest with a rolled edge, finished end

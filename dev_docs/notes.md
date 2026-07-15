@@ -1452,3 +1452,14 @@
     GTAO/medium effects use the opaque surface behind the pane. Shadow-slot
     classification now checks physical transmission as well as `.transparent`,
     so upgrading glass cannot restore opaque roof/dome shadows.
+- 2026-07-15 Descent Bell cage redesign:
+  - Physical transmission made the old cage construction error unmissable:
+    three straight cylinder chords approximated each smooth shell meridian,
+    with sphere knuckles hiding the elbows. Chords inevitably pass inside and
+    outside a curved lathe even when every control point appears reasonable.
+  - The accepted cage uses four continuous circular tube sweeps over the same
+    `CatmullRomCurve3` that generates the glass. Its centreline is offset along
+    the profile normal by tube radius + 2 cm, which makes clearance a geometric
+    invariant rather than an authored guess. The base and waist collars use
+    samples from that identical offset curve; a single crown collar bridges
+    the stand-off ribs into the metal crown without buried endpoint knuckles.

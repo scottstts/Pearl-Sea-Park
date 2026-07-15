@@ -36,10 +36,14 @@
   guest can step through the open mouth while the bell is down.
 - Deck freeboard stays ≥ 2.5 m — at deck 1.3 m the FFT crests washed over the
   boards.
-- The four three-segment cage ribs are point-to-point members. Their upper
-  anchors derive from the crown's base radius/height and terminate 4 cm inside
-  the solid crown with a partially embedded brass knuckle; an endpoint merely
-  aligned to the crown silhouette leaves a visible air gap from oblique views.
+- The exterior cage is four continuous `TubeGeometry` meridian ribs derived
+  from the glass shell's own `CatmullRomCurve3`. Each centreline is displaced
+  along the 2D profile normal by the rib radius plus a 2 cm air gap, so the
+  brass cannot alternate between cutting into and floating away from the
+  curved shell. Base and waist collars sample that same offset profile; one
+  crown collar deliberately bridges the rib endpoints into the solid crown.
+  Keep this as one coherent cage — segmented cylinder chords and ball-joint
+  elbows visibly disagree with the smooth lathed glass.
 - The lathed glass shell clones the shared decorative glass but renders
   `FrontSide` only. Its winding is outward, so the bell remains glazed from
   exterior views while a seated camera cannot see the shell's backfaces. The
