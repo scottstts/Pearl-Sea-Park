@@ -1507,3 +1507,14 @@
     heightfields, and broad vehicle-only envelopes.
   - The initial berth moved 3 m east from (6, 311) to (9, 311), preserving its
     north-facing entrance placement while giving the arrival tower more space.
+- 2026-07-15 lifted-submarine shadow depth clipping:
+  - The clean line that progressively erased the submarine's seabed shadow was
+    the 16 m moving-caster map's far plane. Dynamic hierarchy ownership is
+    selected in light-space XY, but an out-of-Z bounded sample returns fully
+    lit; the fine level therefore suppressed the valid 112 m fallback. Its
+    8 m Z-center quantization made the shadow disappear and reappear cyclically
+    during forward travel.
+  - Dynamic maps now use the same 70 m down-sun receiver allowance as static
+    levels. This preserves the 16 m map's 3.125 cm XY texel footprint, both
+    existing shadow passes, bias, snapping, cross-fade, and caster layers; only
+    the orthographic depth envelope expands.

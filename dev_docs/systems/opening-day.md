@@ -44,7 +44,11 @@ edge, so their shadows remain continuous without recapturing the park or
 introducing a new outer transition. Forced spatial invalidation still bypasses
 the static budget. Static-level normal bias scales by world texel size; both
 moving levels retain the original broad map's 0.08 m receiver-offset floor so
-the inner map does not trade wide hull acne for finer shroud acne.
+the inner map does not trade wide hull acne for finer shroud acne. Static and
+moving levels share a 70 m down-sun receiver allowance: hierarchy selection is
+light-space XY-only, so each claimed level must keep high-camera ground
+receivers inside its depth projection rather than returning lit and hiding a
+valid coarser shadow.
 
 `canvas.dataset.shadowClipmaps` exposes desired/committed centers, coverage,
 map/texel sizes, dirty bits, age, update budget, direction delta, scaled bias,

@@ -788,9 +788,13 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       shadow.camera.top = halfWidth
       shadow.camera.bottom = -halfWidth
       shadow.camera.near = this.shadowCameraNear
+      // Dynamic hierarchy weights are selected in light-space XY, so a level
+      // that owns a receiver must also cover the park's camera-to-ground depth.
+      // Match the static levels' allowance or the fine map returns fully lit
+      // past its far plane and suppresses the valid broad-map fallback.
       shadow.camera.far = Math.max(
         this.shadowCameraNear + 1,
-        Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2),
+        Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2 + DEPTH_REACH),
       )
       shadow.camera.layers.set(this.dynamicCasterLayer)
       shadow.camera.updateProjectionMatrix()
