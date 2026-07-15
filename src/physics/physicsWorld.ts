@@ -15,11 +15,14 @@ export class PhysicsSystem implements GameSystem {
   world: RAPIER.World | null = null
   rapier: typeof RAPIER | null = null
   private pendingVerify = false
+  private downwardRay: RAPIER.Ray | null = null
+  private readonly terrainColliderHandles = new Set<number>()
   private readonly vehicleOnlyColliderHandles = new Set<number>()
 
   async init(ctx: GameContext): Promise<void> {
     await initializeRapier()
     this.rapier = RAPIER
+    this.downwardRay = new RAPIER.Ray({ x: 0, y: 0, z: 0 }, { x: 0, y: -1, z: 0 })
     const world = new RAPIER.World({ x: 0, y: -9.81, z: 0 })
     this.world = world
 
@@ -45,7 +48,7 @@ export class PhysicsSystem implements GameSystem {
       }
     }
     const ground = world.createRigidBody(RAPIER.RigidBodyDesc.fixed())
-    world.createCollider(
+    const terrainCollider = world.createCollider(
       RAPIER.ColliderDesc.heightfield(divisions, divisions, heights, {
         x: TERRAIN_EXTENT,
         y: 1,
@@ -53,6 +56,7 @@ export class PhysicsSystem implements GameSystem {
       }),
       ground,
     )
+    this.terrainColliderHandles.add(terrainCollider.handle)
     // Dense basin patch: ~1 m cells matching the visual mesh density. Its
     // half-extent (44) reaches past the coarse grid's sink-slope influence
     // (sinkRadius + one 9.4 m cell), so no invisible pit ring survives.
@@ -68,7 +72,7 @@ export class PhysicsSystem implements GameSystem {
     const basinBody = world.createRigidBody(
       RAPIER.RigidBodyDesc.fixed().setTranslation(BASIN.x, 0, BASIN.z),
     )
-    world.createCollider(
+    const basinCollider = world.createCollider(
       RAPIER.ColliderDesc.heightfield(BASIN.divisions, BASIN.divisions, patchHeights, {
         x: BASIN.half * 2,
         y: 1,
@@ -76,6 +80,7 @@ export class PhysicsSystem implements GameSystem {
       }),
       basinBody,
     )
+    this.terrainColliderHandles.add(basinCollider.handle)
 
     // Guest architecture uses detailed floor/post/rail collision so its
     // interiors stay walkable. Vehicles additionally see broad building and
@@ -171,6 +176,40 @@ export class PhysicsSystem implements GameSystem {
     return this.vehicleOnlyColliderHandles.has(collider.handle)
   }
 
+  /**
+   * Highest real fixed floor below a point. Analytic terrain is deliberately
+   * excluded (callers have the exact terrainHeight authority), as are broad
+   * vehicle-only building envelopes whose bottom faces are not visible floors.
+   */
+  highestStaticSupportY(x: number, originY: number, z: number, maxDistance = 500): number | null {
+    const { world, downwardRay, rapier } = this
+    if (!world || !downwardRay || !rapier) return null
+
+    downwardRay.origin.x = x
+    downwardRay.origin.y = originY
+    downwardRay.origin.z = z
+    let highestY = -Infinity
+    world.intersectionsWithRay(
+      downwardRay,
+      maxDistance,
+      false,
+      (hit) => {
+        // Reject undersides and near-vertical faces. A support surface must
+        // face upward enough to carry the submarine's belly step.
+        if (hit.normal.y >= 0.5) highestY = Math.max(highestY, originY - hit.timeOfImpact)
+        return true
+      },
+      rapier.QueryFilterFlags.ONLY_FIXED | rapier.QueryFilterFlags.EXCLUDE_SENSORS,
+      undefined,
+      undefined,
+      undefined,
+      (candidate) =>
+        !this.terrainColliderHandles.has(candidate.handle) &&
+        !this.vehicleOnlyColliderHandles.has(candidate.handle),
+    )
+    return Number.isFinite(highestY) ? highestY : null
+  }
+
   fixedUpdate(_ctx: GameContext, dt: number): void {
     if (!this.world) return
     this.world.timestep = dt
@@ -184,6 +223,8 @@ export class PhysicsSystem implements GameSystem {
   dispose(): void {
     this.world?.free()
     this.world = null
+    this.downwardRay = null
+    this.terrainColliderHandles.clear()
     this.vehicleOnlyColliderHandles.clear()
   }
 }

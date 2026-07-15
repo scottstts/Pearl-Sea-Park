@@ -170,7 +170,7 @@ export function vehicleStructureColliders(): VehicleStructureCollider[] {
   })
 
   // The arrival platform spans the full water column on piles; its compact
-  // envelope is safely clear of the submarine berth at (6, 311).
+  // envelope is safely clear of the submarine berth at (9, 311).
   const arrival = PARK_PLAN.arrival
   const arrivalFloor = terrainHeight(arrival.x, arrival.z)
   cylinderFromFloor(

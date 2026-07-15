@@ -12,17 +12,13 @@ import { BuoyancyProbe } from '../sea/buoyancyProbe'
 import type { SeaMediumSystem } from '../sea/medium'
 import type { SeaSystem } from '../sea/seaSystem'
 import type { DistrictServices } from '../world/districts/atrium'
-import { terrainHeight } from '../world/terrain'
+import { seabedOrPavedWalkwayHeight } from '../world/pavedWalkways'
 import type { SubmarineModel } from './submarineModel'
 import { buildSubmarineModel, SUBMARINE_REST_HEIGHT, SUBMARINE_SCALE } from './submarineModel'
 import { SubmarineWake } from './submarineWake'
 
-/**
- * Berth: mirrored across the arrival road (x = 0) from the park-entrance
- * sign at (−6, 311) — sign to the west of the threshold, submarine to the
- * east, nose north toward the park like a vessel ready to depart.
- */
-const BERTH = { x: 6, z: 311, yaw: Math.PI } as const
+/** Berth east of the arrival road, with extra clearance from the tower. */
+const BERTH = { x: 9, z: 311, yaw: Math.PI } as const
 
 // ── Handling (fixed 60 Hz dynamics; all speeds m/s, angles rad) ───────────
 const MAX_FORWARD = 9.0
@@ -36,9 +32,20 @@ const VERTICAL_RESPONSE = 2.4
 const ATTITUDE_RESPONSE = 3.0 // cosmetic pitch/bank easing
 
 // The craft may breach to half-surfaced (hull axis at the displaced water
-// surface) and may never push its belly into the seabed. The piloting floor
-// equals the rest pose so boarding never pops the parked hull upward.
+// surface) and may never push its belly into a supporting floor. The piloting
+// floor equals the rest pose so boarding never pops the parked hull upward.
 const GROUND_CLEARANCE = SUBMARINE_REST_HEIGHT
+// The model's lowest member is the belly step centered 0.3 local metres
+// forward of the hull origin. Ground its visible footprint, not the collision
+// capsule/hull center, so it lands on raised paving and structure floors.
+const GROUND_CONTACT_FORWARD = 0.3 * SUBMARINE_SCALE
+const GROUND_CONTACT_HALF_WIDTH = 0.23 * SUBMARINE_SCALE
+const GROUND_CONTACT_HALF_DEPTH = 0.17 * SUBMARINE_SCALE
+const GROUND_CONTACT_SAMPLES = [
+  [-1, -1], [0, -1], [1, -1],
+  [-1, 0], [0, 0], [1, 0],
+  [-1, 1], [0, 1], [1, 1],
+] as const
 
 // ── Surface floating (semi-physics) ───────────────────────────────────────
 // Near the surface the hull is held by a damped buoyancy spring toward the
@@ -59,11 +66,11 @@ const PROBE_BOW = 1.9 * SUBMARINE_SCALE // bow/stern sample reach
 const PROBE_BEAM = 1.2 * SUBMARINE_SCALE // starboard sample reach
 const WAVE_PITCH_MAX = 0.16
 const WAVE_ROLL_MAX = 0.14
-// Stepping out is granted only at rest on the seabed (Scott's ruling): a
+// Stepping out is granted only at rest on the seabed or a real solid floor: a
 // craft abandoned mid-water would hover out of a walking guest's reach, and
 // any unmanned auto-descent could ground the hull on a dome or ride. Under
-// way, E answers with a gentle reminder instead. "On the seabed" means the
-// hull sits at its terrain floor — a perch atop a structure does not count.
+// way, E answers with a gentle reminder instead. Floor support comes from
+// upward-facing fixed Rapier surfaces, never broad vehicle-only envelopes.
 const PARKED_EPSILON = 0.08
 
 // Invisible force field around the park range: a soft inward push over the
@@ -133,8 +140,8 @@ const STEER_CODES = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'Space', 'ShiftLeft
 /**
  * The pilotable submarine (Le Nautile Blanc). Parked beside the park
  * threshold; E boards into a third-person chase view, WASD/Space/Shift
- * steer, and E steps out once the craft is settled on the seabed — under
- * way it answers with a gentle reminder to park first. Collision is
+ * steer, and E steps out once the craft is settled on seabed or a solid floor —
+ * under way it answers with a gentle reminder to park first. Collision is
  * deliberately the player's own capsule (a guest-sized ghost at the hull
  * axis), so the craft passes structures exactly where a guest could walk.
  * When no key is held the vessel holds position and the screw coasts down.
@@ -227,7 +234,7 @@ export class SubmarineSystem implements GameSystem {
     this.rng = ctx.rng.fork('submarine')
     const model = buildSubmarineModel(this.medium)
     this.model = model
-    const berthY = terrainHeight(BERTH.x, BERTH.z) + SUBMARINE_REST_HEIGHT
+    const berthY = this.groundFloorY(BERTH.x, 0, BERTH.z, BERTH.yaw)
     this.position.set(BERTH.x, berthY, BERTH.z)
     this.previousPosition.copy(this.position)
     model.group.rotation.order = 'YXZ'
@@ -337,17 +344,43 @@ export class SubmarineSystem implements GameSystem {
     if (this.services.interaction) this.services.interaction.exclusive = this.exitInteractable
   }
 
-  /** At rest on its terrain floor — a perch atop a structure never counts. */
-  private isParkedOnSeabed(): boolean {
-    const floorY = terrainHeight(this.position.x, this.position.z) + GROUND_CLEARANCE
+  /** At rest on seabed or a real fixed floor beneath the belly step. */
+  private isParkedOnGround(): boolean {
+    const floorY = this.groundFloorY(this.position.x, this.position.y, this.position.z, this.yaw)
     return this.position.y <= floorY + PARKED_EPSILON
+  }
+
+  private groundFloorY(x: number, originY: number, z: number, yaw: number): number {
+    const forwardX = Math.sin(yaw)
+    const forwardZ = Math.cos(yaw)
+    const rightX = Math.cos(yaw)
+    const rightZ = -Math.sin(yaw)
+    let supportY = -Infinity
+    for (const [across, along] of GROUND_CONTACT_SAMPLES) {
+      const localX = across * GROUND_CONTACT_HALF_WIDTH
+      const localZ = GROUND_CONTACT_FORWARD + along * GROUND_CONTACT_HALF_DEPTH
+      const contactX = x + rightX * localX + forwardX * localZ
+      const contactZ = z + rightZ * localX + forwardZ * localZ
+      supportY = Math.max(supportY, this.supportSurfaceY(contactX, originY, contactZ))
+    }
+    return supportY + GROUND_CLEARANCE
+  }
+
+  private supportSurfaceY(x: number, originY: number, z: number): number {
+    const seabedOrWalkwayY = seabedOrPavedWalkwayHeight(x, z)
+    const staticFloorY = this.services.physics.highestStaticSupportY(
+      x,
+      Math.max(originY, seabedOrWalkwayY + GROUND_CLEARANCE),
+      z,
+    )
+    return staticFloorY === null ? seabedOrWalkwayY : Math.max(seabedOrWalkwayY, staticFloorY)
   }
 
   private requestExit(ctx: GameContext): void {
     if (this.mode !== 'piloting' || !this.player) return
     const interaction = this.services.interaction
-    if (!this.isParkedOnSeabed()) {
-      interaction?.notice('Settle on the seabed to step out')
+    if (!this.isParkedOnGround()) {
+      interaction?.notice('Settle on the seabed or a solid floor to step out')
       return
     }
     interaction?.dismissNotice()
@@ -356,12 +389,11 @@ export class SubmarineSystem implements GameSystem {
     this.keys.clear()
     this.blendFromPosition.copy(ctx.camera.position)
     this.blendFromQuaternion.copy(ctx.camera.quaternion)
-    // Step out to starboard onto the sand beside the hull.
+    // Step out to starboard onto the highest real floor beside the hull.
     this.right.set(Math.cos(this.yaw), 0, -Math.sin(this.yaw))
-    const ground = terrainHeight(
-      this.position.x + this.right.x * EXIT_SIDE,
-      this.position.z + this.right.z * EXIT_SIDE,
-    )
+    const exitX = this.position.x + this.right.x * EXIT_SIDE
+    const exitZ = this.position.z + this.right.z * EXIT_SIDE
+    const ground = this.supportSurfaceY(exitX, this.position.y, exitZ)
     this.exitPoint
       .copy(this.position)
       .addScaledVector(this.right, EXIT_SIDE)
@@ -391,7 +423,7 @@ export class SubmarineSystem implements GameSystem {
     this.previousYaw = this.yaw
     if (this.mode !== 'piloting') {
       // Idle and both blend phases hold station; the screw coasts down.
-      // (The hull never moves unmanned — exit requires a seabed park.)
+      // (The hull never moves unmanned — exit requires a valid ground park.)
       this.settleDynamics(dt)
       return
     }
@@ -468,9 +500,14 @@ export class SubmarineSystem implements GameSystem {
       this.position.add(this.scratch)
     }
 
-    // Vertical envelope: seabed floor, and a failsafe ceiling just above the
-    // local wave (the buoyancy spring is the real surface authority).
-    const floorY = terrainHeight(this.position.x, this.position.z) + GROUND_CLEARANCE
+    // Vertical envelope: highest real support beneath the belly-step footprint,
+    // and a failsafe ceiling just above the local wave (buoyancy is authoritative).
+    const floorY = this.groundFloorY(
+      this.position.x,
+      this.position.y,
+      this.position.z,
+      this.yaw,
+    )
     if (this.position.y <= floorY) {
       this.position.y = floorY
       if (this.verticalSpeed < 0) this.verticalSpeed = 0
@@ -553,7 +590,7 @@ export class SubmarineSystem implements GameSystem {
     this.yawRate = approach(this.yawRate, 0, dt, YAW_RESPONSE, YAW_RESPONSE)
     this.verticalSpeed = approach(this.verticalSpeed, 0, dt, VERTICAL_RESPONSE, VERTICAL_RESPONSE)
     this.steerInput = { forward: 0, turn: 0, vertical: 0 }
-    this.surfacednessTarget = 0 // parked hulls rest on the seabed
+    this.surfacednessTarget = 0 // parked hulls rest on a solid support
     this.advanceSharedDynamics(dt)
   }
 
@@ -755,8 +792,8 @@ export class SubmarineSystem implements GameSystem {
     const fx = Math.sin(yaw)
     const fz = Math.cos(yaw)
     outEye.set(center.x - fx * CHASE_BACK, center.y + CHASE_UP, center.z - fz * CHASE_BACK)
-    // Never sink the eye under the sand while skimming the seabed.
-    const camFloor = terrainHeight(outEye.x, outEye.z) + 0.7
+    // Never sink the eye under the ground while skimming seabed or paving.
+    const camFloor = seabedOrPavedWalkwayHeight(outEye.x, outEye.z) + 0.7
     if (outEye.y < camFloor) outEye.y = camFloor
     outLook.set(center.x + fx * LOOK_AHEAD, center.y + LOOK_UP, center.z + fz * LOOK_AHEAD)
   }

@@ -1231,16 +1231,15 @@
     pose in fixedUpdate and lerp with the loop's `alpha` in update(), or
     motion is visibly choppy on non-60 Hz displays. The chase camera then
     follows the RENDER pose, not the physics pose.
-  - Exit is gated on a genuine seabed park (Scott's ruling — supersedes the
-    briefly-implemented settle-on-exit auto-descent, which is REMOVED): E
+  - Exit is gated on a genuine ground park (seabed or a real fixed floor;
+    supersedes the briefly-implemented settle-on-exit auto-descent, which is
+    REMOVED): E
     under way shows a gentle reminder instead, via the new
     `InteractionSystem.notice(text)` transient caption (no key chip, same
     serif voice; `dismissNotice()` retires it when the action succeeds).
     Rationale: an abandoned hull mid-water is unreachable forever, and an
-    unmanned auto-descent could ground it on a dome or ride. "Parked on the
-    seabed" = at the terrain floor — a perch atop a structure (collider
-    holding the capsule above the terrain floor) deliberately does not
-    count. The hull therefore NEVER moves without a pilot.
+    unmanned auto-descent could ground it on a dome or ride. The hull therefore
+    NEVER moves without a pilot.
   - Exit hand-back lands the camera exactly on the walking eye
     (feet + 1.7 = body + EYE_HEIGHT − capsule offset) — same-frame cut is
     invisible; copy the exit math from vehicleSeat/submarine when building
@@ -1496,3 +1495,15 @@
     that the independently sampled glass sections end at the authored cuts,
     never intrude into the 72 cm opening, and preserve the minimum
     camera-clearance height.
+- 2026-07-15 submarine solid-surface parking:
+  - Paved path geometry, thin Rapier boxes, and vehicle ground-height queries
+    share the segments and exact top heights from `world/pavedWalkways.ts`.
+    Keep these authorities unified or a vehicle can visibly bury into a path.
+  - The submarine ground probe samples the full scaled ~0.56 × 0.41 m belly
+    step (centred at local z +0.3), not the hull-axis capsule.
+    `PhysicsSystem.highestStaticSupportY` admits upward-facing real fixed
+    floors (station floors, plazas, terraces, decks) as support and valid
+    parked states. It excludes sensors, moving bodies, coarse terrain
+    heightfields, and broad vehicle-only envelopes.
+  - The initial berth moved 3 m east from (6, 311) to (9, 311), preserving its
+    north-facing entrance placement while giving the arrival tower more space.

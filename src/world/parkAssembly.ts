@@ -41,7 +41,8 @@ import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from './districts/atrium'
-import { MIDWAY_APRON, PARK_PATHS, PARK_PLAN, anchorGround } from './parkPlan'
+import { MIDWAY_APRON, PARK_PLAN, anchorGround } from './parkPlan'
+import { PAVED_WALKWAY_SEGMENTS } from './pavedWalkways'
 import {
   detailCafe,
   detailEsplanade,
@@ -85,37 +86,33 @@ export class ParkAssemblySystem implements GameSystem {
         lights.push(light)
       }
     }
-    // Terrain-following path: short plates, each grounded on its own stretch
-    // of sand. One long plate at a fixed height floats over dips and drapes
-    // the park in kilometre shadows — segmenting is the fix, not shadow tricks.
-    const groundedPath = (ax: number, az: number, bx: number, bz: number, width: number) => {
-      const dx = bx - ax
-      const dz = bz - az
-      const length = Math.hypot(dx, dz)
-      if (length < 0.01) return
-      const segments = Math.max(1, Math.ceil(length / 9))
-      const pad = 0.3 / length // overlap so height steps never open gaps
-      for (let i = 0; i < segments; i++) {
-        const t0 = Math.max(0, i / segments - pad)
-        const t1 = Math.min(1, (i + 1) / segments + pad)
-        const sx = ax + dx * t0
-        const sz = az + dz * t0
-        const ex = ax + dx * t1
-        const ez = az + dz * t1
-        const mx = (sx + ex) / 2
-        const mz = (sz + ez) / 2
-        const y =
-          Math.max(terrainHeight(sx, sz), terrainHeight(mx, mz), terrainHeight(ex, ez)) + 0.02
-        kit.mosaicPath(w, sx, sz, ex, ez, y, width)
-        const half = Math.hypot(ex - sx, ez - sz) / 2
-        physics.addStaticBox(mx, y + 0.08, mz, width / 2, 0.08, half, Math.atan2(ex - sx, ez - sz))
-      }
+    // Terrain-following paths: short plates, each grounded on its own stretch
+    // of sand. Geometry, Rapier, and vehicle floor queries share these exact
+    // segments so a parked submarine rests its belly step on the visible top.
+    for (const segment of PAVED_WALKWAY_SEGMENTS) {
+      kit.mosaicPath(
+        w,
+        segment.sx,
+        segment.sz,
+        segment.ex,
+        segment.ez,
+        segment.baseY,
+        segment.width,
+      )
+      physics.addStaticBox(
+        segment.mx,
+        segment.baseY + 0.08,
+        segment.mz,
+        segment.width / 2,
+        0.08,
+        segment.halfLength,
+        segment.yaw,
+      )
     }
 
     // ── Esplanade: twin colonnade boulevard, atrium → hub ─────────────────
     const esp = PARK_PLAN.esplanade
     const espY = terrainHeight(esp.x, (esp.zFrom + esp.zTo) / 2) + 0.1
-    groundedPath(esp.x, esp.zFrom, esp.x, esp.zTo, esp.width)
     const columnGap = 12
     for (let z = esp.zTo + 6; z <= esp.zFrom - 6; z += columnGap) {
       for (const side of [-1, 1]) {
@@ -323,7 +320,6 @@ export class ParkAssemblySystem implements GameSystem {
     // ── Midway hall shell and its physical games ─────────────────────────
     const mid = PARK_PLAN.midway
     const midY = terrainHeight(mid.x, mid.z) + 0.1
-    groundedPath(mid.x - mid.width / 2, mid.z, mid.x + mid.width / 2, mid.z, mid.depth)
     // Forecourt apron: the designed junction where the hub road arrives,
     // tangent to the hall's south floor edge. Anchored so its plate top
     // sits flush with the grounded path tops (terrain + 0.18).
@@ -442,7 +438,6 @@ export class ParkAssemblySystem implements GameSystem {
     const overlookX = -140
     const overlookZ = -236
     const overlookY = terrainHeight(overlookX, overlookZ) + 0.1
-    groundedPath(overlookX - 30, overlookZ + 2, overlookX + 30, overlookZ + 2, 6)
     for (let i = 0; i < 6; i++) {
       const x1 = overlookX - 30 + i * 10
       kit.balustrade(w, x1, overlookZ - 1, x1 + 10, overlookZ - 1, overlookY)
@@ -451,9 +446,6 @@ export class ParkAssemblySystem implements GameSystem {
     lamp(overlookX - 28, overlookY, overlookZ + 4, true)
     lamp(overlookX + 28, overlookY, overlookZ + 4, true)
     detailOverlook({ kit, writer: w, materials: lib, physics }, overlookX, overlookZ, overlookY)
-
-    // ── Path network (segments defined once in parkPlan) ─────────────────
-    for (const p of PARK_PATHS) groundedPath(p.ax, p.az, p.bx, p.bz, p.width)
 
     group.add(w.compile())
     for (const light of lights) group.add(light)

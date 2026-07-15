@@ -37,11 +37,10 @@ envelopes). Validation bookmark: `?view=submarine`.
 
 ## Berth
 
-Parked at **(6, 311)**, nose north (yaw π): the mirror image of the
-`park-entrance` sign (−6, 311) across the arrival road at x = 0 — sign west
-of the threshold, submarine east, symmetric about the road as Scott
-specified. Rest pose is `terrainHeight + SUBMARINE_REST_HEIGHT` (belly step
-settles millimetres into the sand).
+Parked at **(9, 311)**, nose north (yaw π), east of the arrival road and 3 m
+farther from the arrival tower than its original berth. It remains beside the
+`park-entrance` sign and easy to reach. Rest pose is the supporting solid surface plus
+`SUBMARINE_REST_HEIGHT` (the belly step is the ground contact).
 
 ## Piloting contract
 
@@ -84,9 +83,17 @@ settles millimetres into the sand).
   (so wildlife avoidance, wheel/pearl dock sensors, and ride exits all see
   the pilot where the sub is) and is **excluded from the sub's queries** via
   the controller filter predicate.
-- Vertical envelope: floor at the rest height over `terrainHeight` (the same
-  authority as physics/visuals, so basins and the drop-off cliff all work
-  unmodified). The surface ceiling is not a clamp but **buoyancy** (below).
+- Vertical envelope: floor at the rest height over the highest real support
+  sampled across the scaled model's ~0.56 × 0.41 m lowest belly-step footprint
+  (centred at local z +0.3 m), not beneath the hull-axis capsule.
+  `PhysicsSystem.highestStaticSupportY` raycasts downward
+  through upward-facing fixed colliders, so station floors, plazas, terraces,
+  decks, and future solid floors support the visible step even when the small
+  movement capsule misses them at an edge. Dynamic/kinematic bodies, sensors,
+  coarse terrain heightfields, and broad vehicle-only building envelopes are
+  excluded. Exact seabed `terrainHeight` is the fallback; `pavedWalkways.ts`
+  supplies exact plate tops so paving remains aligned with its render mesh.
+  The surface ceiling is not a clamp but **buoyancy** (below).
 - **Surface floating (semi-physics)**: `sea/buoyancyProbe.ts` samples the
   TRUE displaced wave height at three hull points (bow, stern, starboard
   beam) on the GPU — same cascades + fixed-point choppy correction as the
@@ -118,12 +125,10 @@ settles millimetres into the sand).
 
 ## Parked state & exit gating
 
-- **Exit only at a seabed park** (Scott's ruling, 2026-07-14): E steps out
-  only when the hull rests at its terrain floor (`terrainHeight +
-  GROUND_CLEARANCE`, ε 0.08). Under way — mid-water, surfaced, or perched on
-  a structure (whose collider holds the capsule above the terrain floor) —
-  E answers with a gentle serif reminder ("Settle on the seabed to step
-  out") via the new `InteractionSystem.notice()`. This guarantees the craft
+- **Exit only at a valid ground park**: E steps out only when the belly step
+  rests at the detected seabed or real fixed floor (`supportHeight +
+  GROUND_CLEARANCE`, ε 0.08). Mid-water or surfaced, E answers with a gentle
+  serif reminder via `InteractionSystem.notice()`. This guarantees the craft
   is always walk-up re-enterable and never moves unmanned; the earlier
   settle-on-exit auto-descent is REMOVED — do not resurrect it (an unmanned
   descent could ground the hull on a dome or ride).

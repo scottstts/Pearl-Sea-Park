@@ -21,11 +21,12 @@
 
 ## Paths follow terrain
 
-- `ParkAssemblySystem.groundedPath` splits every path into ≤9 m plates, each at
-  its own local terrain height (+0.02), with 0.3 m overlaps. **Never** lay one
-  long plate at a fixed height: over dipping sand it floats and its sun shadow
-  drapes the park in straight kilometre-wide bands (this was the mystery
-  "giant diagonal shadow" — not a shadow-map artifact).
+- `pavedWalkways.ts` splits every path into ≤9 m plates, each at its own local
+  terrain height (+0.02), with 0.3 m overlaps. Geometry, Rapier, and submarine
+  grounding consume those exact shared segments. **Never** lay one long plate
+  at a fixed height: over dipping sand it floats and its sun shadow drapes the
+  park in straight kilometre-wide bands (this was the mystery "giant diagonal
+  shadow" — not a shadow-map artifact).
 - Each plate gets a matching thin static box collider, so walking on/off paths
   is a real 0.2 m step the character controller absorbs (plazas already had
   cylinder colliders).

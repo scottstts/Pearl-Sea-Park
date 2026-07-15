@@ -1,7 +1,13 @@
 import { terrainHeight } from './terrain'
 import { MIDWAY_APRON, PARK_PATHS, PARK_PLAN } from './parkLayout'
-export { FACILITY_ENTRANCE_SIGNS, MIDWAY_APRON, PARK_PATHS, PARK_PLAN } from './parkLayout'
-export type { FacilityEntranceSign } from './parkLayout'
+export {
+  FACILITY_ENTRANCE_SIGNS,
+  MIDWAY_APRON,
+  PARK_PATHS,
+  PARK_PLAN,
+  PAVED_WALKWAYS,
+} from './parkLayout'
+export type { FacilityEntranceSign, ParkWalkway } from './parkLayout'
 
 /** Ground height at a plan anchor. */
 export function anchorGround(anchor: { x: number; z: number }): number {

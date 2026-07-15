@@ -22,14 +22,16 @@ export const PARK_PLAN = {
   cafe: { x: 46, z: 112 },
 } as const
 
-/** All authored walking links; paths, keep-outs, and sign clearance share it. */
-export const PARK_PATHS: readonly {
+export interface ParkWalkway {
   ax: number
   az: number
   bx: number
   bz: number
   width: number
-}[] = [
+}
+
+/** All authored walking links; paths, keep-outs, and sign clearance share it. */
+export const PARK_PATHS: readonly ParkWalkway[] = [
   { ax: PARK_PLAN.arrival.x, az: PARK_PLAN.arrival.z - 6, bx: PARK_PLAN.atrium.x, bz: PARK_PLAN.atrium.z + 21, width: 5 },
   { ax: PARK_PLAN.tidalCourt.x, az: PARK_PLAN.tidalCourt.z, bx: PARK_PLAN.wheel.x - 27, bz: PARK_PLAN.wheel.z, width: 8 },
   { ax: PARK_PLAN.midway.x, az: PARK_PLAN.midway.z + 12, bx: PARK_PLAN.carousel.x, bz: PARK_PLAN.carousel.z - 13, width: 6 },
@@ -46,6 +48,26 @@ export const PARK_PATHS: readonly {
   // Cafe → midway-road connector, meeting the road at its waypoint bend.
   { ax: PARK_PLAN.cafe.x, az: PARK_PLAN.cafe.z, bx: 40, bz: 124, width: 4 },
   { ax: -140, az: -232, bx: PARK_PLAN.menagerie.x, bz: PARK_PLAN.menagerie.z, width: 6 },
+]
+
+/** Every terrain-following paved plate, including floors authored as wide paths. */
+export const PAVED_WALKWAYS: readonly ParkWalkway[] = [
+  {
+    ax: PARK_PLAN.esplanade.x,
+    az: PARK_PLAN.esplanade.zFrom,
+    bx: PARK_PLAN.esplanade.x,
+    bz: PARK_PLAN.esplanade.zTo,
+    width: PARK_PLAN.esplanade.width,
+  },
+  {
+    ax: PARK_PLAN.midway.x - PARK_PLAN.midway.width / 2,
+    az: PARK_PLAN.midway.z,
+    bx: PARK_PLAN.midway.x + PARK_PLAN.midway.width / 2,
+    bz: PARK_PLAN.midway.z,
+    width: PARK_PLAN.midway.depth,
+  },
+  { ax: -170, az: -234, bx: -110, bz: -234, width: 6 },
+  ...PARK_PATHS,
 ]
 
 /** Forecourt apron where the hub road meets the Midway hall —
