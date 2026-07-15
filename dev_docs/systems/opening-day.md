@@ -29,7 +29,7 @@ is scheduled ahead on one HRTF bus while the show event is active.
 
 `render/cachedShadowClipmaps.ts` replaces the old single 180 m camera-following
 box with four ordinary static-world shadow maps covering 28, 84, 252, and
-650 m half-widths, plus one 112 m moving-caster map. The clipmap owner is
+650 m half-widths, plus 16 m and 112 m moving-caster maps. The clipmap owner is
 frame-scoped, so multiple render passes in one application frame reuse the
 same committed maps. Static levels publish committed centers, snap X/Y to
 their actual texel footprints, quantize Z, cross-fade inside a guard band, and
@@ -38,9 +38,13 @@ drift consumes half the guard margin; a one-texel desired-center change is not
 an invalidation. With the fixed sun they have no age expiry: the old staggered
 180-frame expiry forced a broad full-world render every 45–90 frames. Rides,
 wildlife, and physics props occupy a dedicated camera-visible caster layer
-rendered every frame into the small fifth map, so their shadows remain
-continuous without recapturing the park. Forced spatial invalidation still
-bypasses the static budget. Normal bias scales by world texel size.
+rendered every frame into the two live maps. The tight map owns nearby moving
+shadows and cross-fades to the unchanged broad-map result before its guarded
+edge, so their shadows remain continuous without recapturing the park or
+introducing a new outer transition. Forced spatial invalidation still bypasses
+the static budget. Static-level normal bias scales by world texel size; both
+moving levels retain the original broad map's 0.08 m receiver-offset floor so
+the inner map does not trade wide hull acne for finer shroud acne.
 
 `canvas.dataset.shadowClipmaps` exposes desired/committed centers, coverage,
 map/texel sizes, dirty bits, age, update budget, direction delta, scaled bias,

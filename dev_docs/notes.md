@@ -1407,3 +1407,32 @@
     tails must be exponential. Never share one AudioParam between an
     envelope schedule and per-frame sweeps — the submarine's spin-tracked
     loudness lives on its own gain node in series for exactly that reason.
+- 2026-07-15 submarine hull shadow segmentation:
+  - The hull builder was already equivalent to `refs/submarine.html`: its
+    indexed grid shares vertices and writes analytic smooth normals. The visible
+    56-ring pattern came from the 112 m moving-caster shadow map, whose 1024²
+    projection is 21.875 cm/texel; it grouped several ~5 cm hull rings into
+    broad self-shadow steps even though the material shading was smooth.
+  - Do not "fix" this by disabling `receiveShadow` on the hull or by rebuilding
+    its normals: both hide the symptom by removing valid lighting. Moving
+    casters now use a 16 m / 1024² inner map (3.125 cm/texel) that blends to the
+    original 112 m map between ~11.8 and 14.1 m from its snapped light-space
+    center. The chase eye is 7 m behind the hull, keeping the whole submarine
+    inside the fully weighted inner region.
+  - Containment is the regression contract: static clipmaps are untouched;
+    the original broad dynamic map keeps its resolution, extent, depth range,
+    bias scaling, and bounded outside behavior; and it remains the exact shader
+    fallback beyond the inner blend. Both dynamic comparison textures are
+    sampled unconditionally, avoiding derivative/control-flow seams. Debug
+    snapshots expose per-level coverage, texel width, bias, center, and render
+    count; total shadow texture count is now six.
+  - First visual verification showed the 16 m map narrowed and localized the
+    bands, proving shadow quantization was involved, but did not eliminate
+    self-acne. It also exposed new fine bands on the porcelain shroud. The cause
+    was the inner map's normal bias dropping to 0.02 m while the pre-change
+    112 m moving map used 0.08 m. The hierarchy now keeps that existing 0.08 m
+    receiver-offset floor on its inner level while retaining the 7× finer texel
+    footprint. This restores the old acne protection rather than adding more
+    shadow resolution or changing geometry. A suspected duplicate grid index
+    was only overlapping inspection output; source and reference both emit one
+    triangle pair, so geometry remained untouched.

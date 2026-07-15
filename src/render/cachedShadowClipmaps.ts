@@ -87,6 +87,17 @@ interface InternalShadowNode extends ShadowNode {
   updateShadow(frame: NodeFrame): void
 }
 
+interface DynamicCasterLevel {
+  halfWidth: number
+  mapSize: number
+  light: ClipmapLight
+  shadowNode: BoundedShadowNode
+  center: Vector3
+  texelWidth: number
+  normalBias: number
+  renderCount: number
+}
+
 export interface ShadowClipmapOptions {
   camera: Object3D
   levelMapSizes: readonly number[]
@@ -106,7 +117,13 @@ export interface ShadowClipmapOptions {
   dynamicRefreshFrames?: number
   /** Object layer isolated into a cheap continuously refreshed shadow map. */
   dynamicCasterLayer?: number
+  /** Finest-to-coarsest half-widths for the continuously refreshed hierarchy. */
+  dynamicCasterHalfWidths?: readonly number[]
+  /** Per-level map sizes paired with `dynamicCasterHalfWidths`. */
+  dynamicCasterMapSizes?: readonly number[]
+  /** @deprecated Use `dynamicCasterHalfWidths`. */
   dynamicCasterHalfWidth?: number
+  /** @deprecated Use `dynamicCasterMapSizes`. */
   dynamicCasterMapSize?: number
 }
 
@@ -129,6 +146,16 @@ export interface ShadowClipmapSnapshot {
     texelWidth: number
     committed: [number, number, number]
     renderCount: number
+    levels: Array<{
+      index: number
+      renderedHalfWidth: number
+      sampledHalfWidth: number
+      mapSize: number
+      texelWidth: number
+      normalBias: number
+      committed: [number, number, number]
+      renderCount: number
+    }>
   }
   levels: Array<{
     index: number
@@ -188,7 +215,11 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   readonly maxCacheAge: number
   readonly dynamicRefreshFrames: number
   readonly dynamicCasterLayer: number | null
+  readonly dynamicCasterHalfWidths: readonly number[]
+  readonly dynamicCasterMapSizes: readonly number[]
+  /** Outermost level, retained for snapshot/API compatibility. */
   readonly dynamicCasterHalfWidth: number
+  /** Outermost level, retained for snapshot/API compatibility. */
   readonly dynamicCasterMapSize: number
 
   private readonly levelMapSizes: readonly number[]
@@ -201,12 +232,10 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   private readonly lastDirection = new Vector3()
   private readonly lastCameraLight = new Vector3(Number.NaN, Number.NaN, Number.NaN)
   private readonly velocityLight = new Vector3()
-  private readonly dynamicCenter = new Vector3(Number.NaN, Number.NaN, Number.NaN)
+  private readonly dynamicLevelData: Vector4[] = []
+  private readonly dynamicCasterLevels: DynamicCasterLevel[] = []
   private readonly directionCos: number
-  private dynamicLight: ClipmapLight | null = null
-  private dynamicShadowNode: BoundedShadowNode | null = null
   private dynamicRenderCount = 0
-  private dynamicTexelWidth = 0
   private baseBias = 0
   private baseNormalBias = 0
   private firstUpdate = true
@@ -243,14 +272,24 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     this.maxCacheAge = Math.max(0, Math.round(options.maxCacheAge ?? 180))
     this.dynamicRefreshFrames = Math.max(1, Math.round(options.dynamicRefreshFrames ?? 2))
     this.dynamicCasterLayer = options.dynamicCasterLayer ?? null
-    this.dynamicCasterHalfWidth = Math.max(
-      firstRadius,
-      options.dynamicCasterHalfWidth ?? firstRadius * 4,
-    )
-    this.dynamicCasterMapSize = Math.max(
-      128,
-      Math.round(options.dynamicCasterMapSize ?? this.levelMapSizes[0]),
-    )
+    const requestedHalfWidths = options.dynamicCasterHalfWidths
+      ?? [options.dynamicCasterHalfWidth ?? firstRadius * 4]
+    const requestedMapSizes = options.dynamicCasterMapSizes
+      ?? [options.dynamicCasterMapSize ?? this.levelMapSizes[0]]
+    const dynamicHalfWidths: number[] = []
+    const dynamicMapSizes: number[] = []
+    for (let index = 0; index < Math.max(1, requestedHalfWidths.length); index++) {
+      const previous = dynamicHalfWidths[index - 1] ?? 0
+      dynamicHalfWidths.push(Math.max(previous + 1e-3, requestedHalfWidths[index] ?? previous + 1))
+      const requestedMapSize = requestedMapSizes[index]
+        ?? requestedMapSizes[requestedMapSizes.length - 1]
+        ?? this.levelMapSizes[0]
+      dynamicMapSizes.push(Math.max(128, Math.round(requestedMapSize)))
+    }
+    this.dynamicCasterHalfWidths = dynamicHalfWidths
+    this.dynamicCasterMapSizes = dynamicMapSizes
+    this.dynamicCasterHalfWidth = dynamicHalfWidths[dynamicHalfWidths.length - 1]
+    this.dynamicCasterMapSize = dynamicMapSizes[dynamicMapSizes.length - 1]
     this.directionCos = Math.cos(options.directionEpsilon ?? 0.002)
     // These world-space clipmaps are camera-independent once rendered, so
     // every render pass in one app frame must reuse the committed maps.
@@ -308,6 +347,11 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
     const levelData = reference('levelData', 'vec4', this)
     levelData.setName('shadowClipmapLevels')
     const levelDataArray = levelData as unknown as { element(index: number): Node<'vec4'> }
+    const dynamicLevelData = reference('dynamicLevelData', 'vec4', this)
+    dynamicLevelData.setName('dynamicShadowClipmapLevels')
+    const dynamicLevelDataArray = dynamicLevelData as unknown as {
+      element(index: number): Node<'vec4'>
+    }
     const worldToLight = uniform(this.worldToLight)
       .setGroup(renderGroup)
       .setName('shadowClipmapWorldToLight')
@@ -335,10 +379,36 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
         remaining.mulAssign(float(1).sub(fade))
       }
       const staticShadow = accumulated.add(vec4(remaining))
-      if (this.dynamicShadowNode) {
+      if (this.dynamicCasterLevels.length > 0) {
+        const dynamicAccumulated = vec4(0).toVar()
+        const dynamicRemaining = float(1).toVar()
+        const lastDynamicIndex = this.dynamicCasterLevels.length - 1
+        for (let index = 0; index < this.dynamicCasterLevels.length; index++) {
+          const level = vec4().toVar(`dynamicShadowClipmapLevel${index}`)
+          level.assign(dynamicLevelDataArray.element(index))
+          const distance = max(
+            abs(lightPosition.x.sub(level.x)),
+            abs(lightPosition.y.sub(level.y)),
+          )
+          // Inner levels fade completely into their coarser successor before
+          // reaching the projection edge. The outermost level remains the
+          // exact pre-hierarchy broad-map fallback, including outside its
+          // bounded projection where it returns fully lit.
+          const fade = index === lastDynamicIndex
+            ? float(1)
+            : float(1).sub(
+                smoothstep(level.z.mul(1 - this.blendRatio), level.z, distance),
+              )
+          const weight = fade.mul(dynamicRemaining)
+          const shadowSample = this.dynamicCasterLevels[index]
+            .shadowNode as unknown as Node<'float'>
+          dynamicAccumulated.addAssign(shadowSample.mul(weight))
+          dynamicRemaining.mulAssign(float(1).sub(fade))
+        }
+        const dynamicShadow = dynamicAccumulated.add(vec4(dynamicRemaining))
         // One sun, two caster sets: the union is the darker visibility, not
         // multiplication (which would double-darken overlapping penumbrae).
-        return min(staticShadow, this.dynamicShadowNode as unknown as Node<'float'>)
+        return min(staticShadow, dynamicShadow)
       }
       return staticShadow
     })()
@@ -360,9 +430,10 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       this.light.parent.add(levelLight.target)
       this.light.parent.add(levelLight)
     }
-    if (this.dynamicLight && !this.dynamicLight.parent) {
-      this.light.parent.add(this.dynamicLight.target)
-      this.light.parent.add(this.dynamicLight)
+    for (const level of this.dynamicCasterLevels) {
+      if (level.light.parent) continue
+      this.light.parent.add(level.light.target)
+      this.light.parent.add(level.light)
     }
 
     LIGHT_DIRECTION.subVectors(this.light.target.position, this.light.position).normalize()
@@ -560,8 +631,9 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   }
 
   debugSnapshot(): ShadowClipmapSnapshot {
+    const outerDynamicLevel = this.dynamicCasterLevels[this.dynamicCasterLevels.length - 1]
     return {
-      textureCount: this.levels + (this.dynamicShadowNode ? 1 : 0),
+      textureCount: this.levels + this.dynamicCasterLevels.length,
       staticCasterBundle: this.staticCasterScene
         ? { casterCount: this.staticCasterCount }
         : null,
@@ -580,9 +652,25 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
             layer: this.dynamicCasterLayer,
             halfWidth: this.dynamicCasterHalfWidth,
             mapSize: this.dynamicCasterMapSize,
-            texelWidth: this.dynamicTexelWidth,
-            committed: [this.dynamicCenter.x, this.dynamicCenter.y, this.dynamicCenter.z],
+            texelWidth: outerDynamicLevel?.texelWidth ?? 0,
+            committed: [
+              outerDynamicLevel?.center.x ?? Number.NaN,
+              outerDynamicLevel?.center.y ?? Number.NaN,
+              outerDynamicLevel?.center.z ?? Number.NaN,
+            ],
             renderCount: this.dynamicRenderCount,
+            levels: this.dynamicCasterLevels.map((level, index) => ({
+              index,
+              renderedHalfWidth: level.halfWidth,
+              sampledHalfWidth: index === this.dynamicCasterLevels.length - 1
+                ? level.halfWidth
+                : level.halfWidth * (1 - this.guardBand),
+              mapSize: level.mapSize,
+              texelWidth: level.texelWidth,
+              normalBias: level.normalBias,
+              committed: [level.center.x, level.center.y, level.center.z],
+              renderCount: level.renderCount,
+            })),
           },
       levels: this.levelStates.map((state, index) => ({
         index,
@@ -611,10 +699,14 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
       levelLight.parent?.remove(levelLight)
       levelLight.target.parent?.remove(levelLight.target)
     }
-    this.dynamicShadowNode?.dispose()
-    this.dynamicLight?.shadow.dispose()
-    this.dynamicLight?.parent?.remove(this.dynamicLight)
-    this.dynamicLight?.target.parent?.remove(this.dynamicLight.target)
+    for (const level of this.dynamicCasterLevels) {
+      level.shadowNode.dispose()
+      level.light.shadow.dispose()
+      level.light.parent?.remove(level.light)
+      level.light.target.parent?.remove(level.light.target)
+    }
+    this.dynamicCasterLevels.length = 0
+    this.dynamicLevelData.length = 0
     this.staticCasterScene?.clear()
     this.staticCasterScene = null
     this.staticCasterCount = 0
@@ -684,64 +776,101 @@ export class CachedShadowClipmapNode extends ShadowBaseNode {
   }
 
   private initDynamicCasterShadow(): void {
-    if (this.dynamicCasterLayer === null || this.dynamicLight) return
-    const target = new Object3D()
-    const shadow = this.light.shadow.clone()
-    const halfWidth = this.dynamicCasterHalfWidth
-    shadow.mapSize.set(this.dynamicCasterMapSize, this.dynamicCasterMapSize)
-    shadow.camera.left = -halfWidth
-    shadow.camera.right = halfWidth
-    shadow.camera.top = halfWidth
-    shadow.camera.bottom = -halfWidth
-    shadow.camera.near = this.shadowCameraNear
-    shadow.camera.far = Math.max(
-      this.shadowCameraNear + 1,
-      Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2),
-    )
-    shadow.camera.layers.set(this.dynamicCasterLayer)
-    shadow.camera.updateProjectionMatrix()
-    shadow.autoUpdate = false
-    shadow.needsUpdate = false
-    const light = Object.assign(new Object3D(), {
-      target,
-      castShadow: true as const,
-      shadow,
-    }) as ClipmapLight
-    this.dynamicLight = light
-    this.dynamicShadowNode = new BoundedShadowNode(light, shadow)
+    if (this.dynamicCasterLayer === null || this.dynamicCasterLevels.length > 0) return
+    for (let index = 0; index < this.dynamicCasterHalfWidths.length; index++) {
+      const target = new Object3D()
+      const shadow = this.light.shadow.clone()
+      const halfWidth = this.dynamicCasterHalfWidths[index]
+      const mapSize = this.dynamicCasterMapSizes[index]
+      shadow.mapSize.set(mapSize, mapSize)
+      shadow.camera.left = -halfWidth
+      shadow.camera.right = halfWidth
+      shadow.camera.top = halfWidth
+      shadow.camera.bottom = -halfWidth
+      shadow.camera.near = this.shadowCameraNear
+      shadow.camera.far = Math.max(
+        this.shadowCameraNear + 1,
+        Math.min(this.shadowCameraFar, this.lightMargin + halfWidth * 2),
+      )
+      shadow.camera.layers.set(this.dynamicCasterLayer)
+      shadow.camera.updateProjectionMatrix()
+      shadow.autoUpdate = false
+      shadow.needsUpdate = false
+      const light = Object.assign(new Object3D(), {
+        target,
+        castShadow: true as const,
+        shadow,
+      }) as ClipmapLight
+      this.dynamicCasterLevels.push({
+        halfWidth,
+        mapSize,
+        light,
+        shadowNode: new BoundedShadowNode(light, shadow),
+        center: new Vector3(Number.NaN, Number.NaN, Number.NaN),
+        texelWidth: 0,
+        normalBias: 0,
+        renderCount: 0,
+      })
+      this.dynamicLevelData.push(new Vector4(1e9, 1e9, 1e-6, 0))
+    }
   }
 
   private updateDynamicCasterShadow(frame: NodeFrame): void {
-    const levelLight = this.dynamicLight
-    const shadowNode = this.dynamicShadowNode as InternalShadowNode | null
-    if (!levelLight || !shadowNode) return
-    const shadow = levelLight.shadow
-    const halfWidth = this.dynamicCasterHalfWidth
-    const texelWidth = (halfWidth * 2) / this.dynamicCasterMapSize
-    this.dynamicTexelWidth = texelWidth
-    this.dynamicCenter.set(
-      Math.round(CAMERA_LIGHT.x / texelWidth) * texelWidth,
-      Math.round(CAMERA_LIGHT.y / texelWidth) * texelWidth,
-      Math.round(CAMERA_LIGHT.z / (halfWidth * 0.5)) * (halfWidth * 0.5),
+    const staticFinestTexel = Math.max(1e-6, this.levelStates[0].texelWidth)
+    const outermostIndex = this.dynamicCasterLevels.length - 1
+    const fallbackLevel = this.dynamicCasterLevels[outermostIndex]
+    const fallbackTexelWidth = fallbackLevel
+      ? (fallbackLevel.halfWidth * 2) / fallbackLevel.mapSize
+      : staticFinestTexel
+    // Before the hierarchy existed, every moving receiver used the broad
+    // fallback map's normal offset. Preserve that proven acne-free floor on
+    // tighter inner levels; reducing it alongside texel width exposed the
+    // submarine shroud's individual polygons as self-shadow bands.
+    const fallbackNormalBias = this.baseNormalBias * (
+      fallbackTexelWidth / staticFinestTexel
     )
-    shadow.bias = this.baseBias
-    shadow.normalBias = this.baseNormalBias * (
-      texelWidth / Math.max(1e-6, this.levelStates[0].texelWidth)
-    )
-    LEVEL_CENTER.set(
-      this.dynamicCenter.x,
-      this.dynamicCenter.y,
-      this.dynamicCenter.z + halfWidth + this.lightMargin,
-    ).applyMatrix4(LIGHT_ORIENTATION)
-    levelLight.position.copy(LEVEL_CENTER)
-    levelLight.target.position.copy(LEVEL_CENTER).add(LIGHT_DIRECTION)
-    levelLight.updateMatrixWorld(true)
-    levelLight.target.updateMatrixWorld(true)
-    shadow.needsUpdate = true
-    if (shadowNode.shadowMap) {
-      shadowNode.updateShadow(frame)
-      shadow.needsUpdate = false
-      this.dynamicRenderCount++
+    for (let index = 0; index < this.dynamicCasterLevels.length; index++) {
+      const level = this.dynamicCasterLevels[index]
+      const { halfWidth, mapSize, light: levelLight } = level
+      const shadowNode = level.shadowNode as unknown as InternalShadowNode
+      const shadow = levelLight.shadow
+      const texelWidth = (halfWidth * 2) / mapSize
+      level.texelWidth = texelWidth
+      level.center.set(
+        Math.round(CAMERA_LIGHT.x / texelWidth) * texelWidth,
+        Math.round(CAMERA_LIGHT.y / texelWidth) * texelWidth,
+        Math.round(CAMERA_LIGHT.z / (halfWidth * 0.5)) * (halfWidth * 0.5),
+      )
+      this.dynamicLevelData[index].set(
+        level.center.x,
+        level.center.y,
+        index === outermostIndex ? halfWidth : halfWidth * (1 - this.guardBand),
+        0,
+      )
+      shadow.bias = this.baseBias
+      // Coarser levels still scale by their own world texel. Inner levels do
+      // not fall below the old broad-map receiver offset.
+      shadow.normalBias = Math.max(
+        fallbackNormalBias,
+        this.baseNormalBias * (texelWidth / staticFinestTexel),
+      )
+      level.normalBias = shadow.normalBias
+      LEVEL_CENTER.set(
+        level.center.x,
+        level.center.y,
+        level.center.z + halfWidth + this.lightMargin,
+      ).applyMatrix4(LIGHT_ORIENTATION)
+      levelLight.position.copy(LEVEL_CENTER)
+      levelLight.target.position.copy(LEVEL_CENTER).add(LIGHT_DIRECTION)
+      levelLight.updateMatrixWorld(true)
+      levelLight.target.updateMatrixWorld(true)
+      shadow.needsUpdate = true
+      if (shadowNode.shadowMap) {
+        shadowNode.updateShadow(frame)
+        shadow.needsUpdate = false
+        level.renderCount++
+        this.dynamicRenderCount++
+      }
     }
   }
 }

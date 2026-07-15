@@ -59,8 +59,15 @@ export class SkySystem implements GameSystem {
       updateBudget: 1,
       maxCacheAge: 0,
       dynamicCasterLayer: DYNAMIC_SHADOW_LAYER,
-      dynamicCasterHalfWidth: 112,
-      dynamicCasterMapSize: quality.params.shadowMapSizes[0],
+      // A tight inner map prevents the broad moving-caster map from
+      // quantizing the submarine's smooth hull into visible shadow bands.
+      // The unchanged 112 m map remains the exact fallback outside the
+      // guarded inner region, with a visibility cross-fade at the handoff.
+      dynamicCasterHalfWidths: [16, 112],
+      dynamicCasterMapSizes: [
+        quality.params.shadowMapSizes[0],
+        quality.params.shadowMapSizes[0],
+      ],
     }).attach()
     if (ctx.flags.debug) this.debugCanvas = renderer.domElement
 

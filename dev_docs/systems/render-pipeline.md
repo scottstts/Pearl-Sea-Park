@@ -92,8 +92,20 @@ Choices beyond the code:
   these proxies because the bundle draw list is immutable and the live shadow
   camera supplies clipping. Initial paused/loading render records one bundle
   per clipmap target. Moving rides, wildlife, and props remain excluded and
-  render through the existing live dynamic-caster map. The performance dataset
-  reports static caster count, refresh count, and last/max CPU refresh time.
+  render through a two-level live dynamic-caster hierarchy: a 16 m / 1024²
+  inner map (3.125 cm/texel) and the original 112 m / 1024² broad map
+  (21.875 cm/texel). Both levels sample unconditionally. The inner level
+  cross-fades to the broad result inside its guard band; the outer level is
+  still the exact fallback everywhere outside that handoff, so no new outer
+  boundary or moving-shadow coverage change is introduced. This prevents the
+  broad map from grouping the submarine hull's correctly smoothed normals into
+  visible self-shadow bands at chase-camera distance. Each level keeps a
+  snapped committed center. The dynamic hierarchy also preserves the original
+  broad map's 0.08 m normal-bias floor on the tighter map: scaling that inner
+  offset down to 0.02 m narrowed the hull bands but exposed finer self-acne on
+  the shroud. Cached static levels retain ordinary texel-scaled normal bias.
+  The debug dataset reports both moving levels plus static caster count,
+  refresh count, and last/max CPU refresh time.
 - **NodeFrame is a singleton whose `scene` every nested render reassigns.**
   The clipmap update pins the live scene before any bundle-scene level render
   and hands the dynamic-caster pass an explicit frame wrapper. Without the
