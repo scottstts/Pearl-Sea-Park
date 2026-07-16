@@ -357,6 +357,102 @@ canvas#scene {
   vertical-align: 1px;
 }
 
+/* ── Minimal in-play HUD ───────────────────────────────── */
+
+.fps-counter,
+.control-hints {
+  position: fixed;
+  right: max(1.25rem, env(safe-area-inset-right));
+  color: var(--foam);
+  text-shadow: 0 1px 14px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  user-select: none;
+  z-index: 40;
+}
+
+.fps-counter {
+  top: max(1.25rem, env(safe-area-inset-top));
+  font-size: 0.76rem;
+  font-style: italic;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.12em;
+  opacity: 0;
+  transform: translateY(-4px);
+  transition:
+    opacity 0.35s ease,
+    transform 0.35s ease;
+}
+
+.game-hud.is-entered .fps-counter {
+  opacity: 0.72;
+  transform: translateY(0);
+}
+
+.control-hints {
+  bottom: max(1.4rem, env(safe-area-inset-bottom));
+  display: grid;
+  justify-items: end;
+  gap: 0.48rem;
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.control-hints.is-visible {
+  opacity: 0.84;
+  transform: translateY(0);
+}
+
+.control-hint {
+  display: grid;
+  grid-template-columns: minmax(5.2rem, auto) auto;
+  align-items: center;
+  gap: 0.62rem;
+  font-size: 0.86rem;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+}
+
+.control-hint-key {
+  justify-self: end;
+  padding: 0.1rem 0.42rem;
+  border: 1px solid color-mix(in srgb, var(--foam) 55%, transparent);
+  border-radius: 3px;
+  font-size: 0.68rem;
+  font-style: normal;
+  letter-spacing: 0.12em;
+  white-space: pre;
+}
+
+.control-hint-label {
+  min-width: 4.8rem;
+  font-style: italic;
+}
+
+@media (max-width: 560px) {
+  .fps-counter,
+  .control-hints {
+    right: max(0.9rem, env(safe-area-inset-right));
+  }
+
+  .fps-counter {
+    top: max(0.9rem, env(safe-area-inset-top));
+  }
+
+  .control-hints {
+    bottom: max(1rem, env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fps-counter,
+  .control-hints {
+    transition: none;
+  }
+}
+
 /* ── Pause card ────────────────────────────────────────── */
 
 .pause {

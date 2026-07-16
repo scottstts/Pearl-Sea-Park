@@ -218,6 +218,11 @@ export class SubmarineSystem implements GameSystem {
   private readonly scratchMatrix = new Matrix4()
   private readonly scratchQuaternion = new Quaternion()
 
+  /** The helm owns movement input through boarding and active piloting. */
+  get isAboard(): boolean {
+    return this.mode === 'entering' || this.mode === 'piloting'
+  }
+
   constructor(
     services: DistrictServices,
     player: PlayerSystem | null,

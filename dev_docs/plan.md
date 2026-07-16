@@ -173,7 +173,8 @@ The crowd. Skill: WebGPU compute via TSL throughout.
 ## 13. UI
 
 - **Ticket screen** (entry): park marquee typography over a live blurred view, "click to enter" = pointer lock; doubles as the WebGPU-unsupported notice and the generation/loading progress (park assembles behind it).
-- **Contextual prompts** only, single line, serif, fading — no HUD, no minimap, no objective text, ever.
+- **Minimal in-play UI** only: the single-line serif contextual prompt, cardless
+  corner movement hints, and a compact FPS readout. No minimap or objective text.
 - **Pause card** (Esc): resume, quality tier, volume. Styled as the back of the golden ticket.
 
 ## 14. Performance plan

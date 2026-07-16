@@ -37,8 +37,9 @@ import { SeaSystem } from './sea/seaSystem'
 import { SkySystem } from './sky/skySystem'
 import { BubbleFountainSystem } from './shows/bubbleFountain'
 import { ScheduleBoardSystem } from './shows/scheduleBoard'
-import { createTicketScreen, TICKET_REVEAL_SECONDS } from './ui/ticketScreen'
+import { GameHudSystem } from './ui/gameHud'
 import { PauseCardSystem } from './ui/pauseCard'
+import { createTicketScreen, TICKET_REVEAL_SECONDS } from './ui/ticketScreen'
 import { ArrivalSystem } from './world/arrival'
 import { DevOrbitSystem } from './world/devOrbit'
 import type { DistrictServices } from './world/districts/atrium'
@@ -121,6 +122,7 @@ async function boot(): Promise<void> {
   const registry = new SystemRegistry()
   const pipeline = new RenderPipelineSystem()
   let sky: SkySystem | null = null
+  let gameHud: GameHudSystem | null = null
   if (flags.debug) registry.add(new DebugOverlaySystem())
   if (flags.view === 'gallery') {
     registry.add(new TestGallerySystem())
@@ -157,7 +159,8 @@ async function boot(): Promise<void> {
       registry.add(new TeleportSystem(player, services.interaction, terrainHeight))
     }
     registry.add(new DescentBellSystem(services, player))
-    registry.add(new SubmarineSystem(services, player, medium, sea))
+    const submarine = registry.add(new SubmarineSystem(services, player, medium, sea))
+    if (player) gameHud = registry.add(new GameHudSystem(player, sea, submarine))
     registry.add(new PearlLineSystem(services, player))
     registry.add(new GreatWheelSystem(services, player))
     registry.add(new TorrentSystem(services, player))
@@ -231,6 +234,7 @@ async function boot(): Promise<void> {
   const performanceMonitor = new FramePerformanceMonitor(renderer)
   loop.onFrameEnd = (timing) => {
     performanceMonitor.sample(timing, ctx.time.frame)
+    gameHud?.sampleFrame(timing.frameIntervalMs)
     performanceMonitor.noteFrame(
       timing,
       ctx.time.elapsed,

@@ -7,7 +7,8 @@ Core principles:
 - WebGPU + TSL first-class: no WebGL fallback; shader work is NodeMaterial/TSL-driven.
 - Scale correctness: use correct scale to be maximum realistic.
 - Realistic-feeling physics: fully physics base interactions and graphics, no cheap graphics. Try to achieve AAA game level graphics
-- Minimal UI: no HUD/stat overlays; only contextual action prompts when needed.
+- Minimal UI: contextual action prompts plus the approved cardless, state-based
+  movement hints and compact FPS readout; no other HUD/stat overlays.
 
 Here's a reference value for DPR and maxPixels setting for a balanced performance and graphics.
 Treat this as recommended and a rough range. You can use this for now:

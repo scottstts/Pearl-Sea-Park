@@ -1518,3 +1518,11 @@
     levels. This preserves the 16 m map's 3.125 cm XY texel footprint, both
     existing shadow passes, bias, snapping, cross-fade, and caster layers; only
     the orthographic depth envelope expands.
+- 2026-07-16 minimal HUD exception:
+  - The approved in-play UI now includes cardless corner control hints and an
+    FPS number alongside contextual action prompts. Control ownership is the
+    hint authority: on-foot above/below-water state selects arrival/park hints,
+    borrowed ride control hides them, and `SubmarineSystem.isAboard` selects
+    helm hints. Do not infer ride names or camera positions in the UI.
+  - FPS is presentation cadence from `GameLoop.onFrameEnd`, smoothed before a
+    restrained 400 ms DOM update; it is not CPU time or a second stats panel.
