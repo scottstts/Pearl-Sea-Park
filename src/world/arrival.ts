@@ -18,11 +18,13 @@ import { atan, float, fract, hash, mix, positionWorld, sin, smoothstep, step, ve
 import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
+import { isOpticallyTransparent } from '../materials/glass'
 import type { MaterialsSystem } from '../materials/materialsSystem'
 import { fbm2 } from '../render/tslNoise'
 import type { PhysicsSystem } from '../physics/physicsWorld'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
+import type { SeaSystem } from '../sea/seaSystem'
 import { terrainHeight } from './terrain'
 
 export const ARRIVAL_POSITION = { x: 0, z: 320 }
@@ -51,10 +53,17 @@ export class ArrivalSystem implements GameSystem {
   private readonly group = new Object3D()
   private readonly physics: PhysicsSystem | null
   private readonly materials: MaterialsSystem
+  private readonly sea: SeaSystem
+  private unregisterInterfaceStructure: (() => void) | null = null
 
-  constructor(physics: PhysicsSystem | null, materials: MaterialsSystem) {
+  constructor(
+    physics: PhysicsSystem | null,
+    materials: MaterialsSystem,
+    sea: SeaSystem,
+  ) {
     this.physics = physics
     this.materials = materials
+    this.sea = sea
   }
 
   init(ctx: GameContext): void {
@@ -580,13 +589,38 @@ export class ArrivalSystem implements GameSystem {
     }
 
     this.group.add(w.compile())
+    const opticalMeshes: Mesh[] = []
     this.group.traverse((node) => {
-      if ((node as Mesh).isMesh) {
-        node.castShadow = true
-        node.receiveShadow = true
+      if (!(node instanceof Mesh)) return
+      node.castShadow = true
+      node.receiveShadow = true
+      if (
+        !Array.isArray(node.material) &&
+        node.material instanceof MeshStandardNodeMaterial &&
+        !isOpticallyTransparent(node.material)
+      ) {
+        opticalMeshes.push(node)
       }
     })
     ctx.scene.add(this.group)
+
+    // A scene-scale target cannot be recovered from the underwater camera's
+    // one visible depth layer when the direct pavilion lies offscreen. Render
+    // it forward through the interface instead. The 1.2 m source-edge bound
+    // is the crucial difference from the rejected whole-pavilion attempt:
+    // large deck/pile triangles can no longer interpolate a nonlinear Snell
+    // warp into crystal facets. Scene-scale imagery uses the stable mean
+    // surface; local FFT crossings remain the job of the small Bell layer.
+    this.unregisterInterfaceStructure = this.sea.registerInterfaceStructure({
+      name: 'Arrival pavilion',
+      root: this.group,
+      meshes: opticalMeshes,
+      minimumLocalY: -0.1,
+      maxEdgeLength: 1.2,
+      stableMeanSurface: true,
+      underwaterOnly: true,
+      maxCameraDistance: 240,
+    })
 
     registerBookmark({
       name: 'arrival',
@@ -600,9 +634,17 @@ export class ArrivalSystem implements GameSystem {
       look: [x, -22, z - 72],
       note: 'Postcard 1 — waterline crossing with the park glowing below',
     })
+    registerBookmark({
+      name: 'arrival-snell-rim',
+      position: [x, -14, z - 130],
+      look: [x, 74, z - 30],
+      note: 'Distant Arrival pavilion compressed against the Snell rim',
+    })
   }
 
   dispose(ctx: GameContext): void {
+    this.unregisterInterfaceStructure?.()
+    this.unregisterInterfaceStructure = null
     ctx.scene.remove(this.group)
   }
 }

@@ -22,6 +22,7 @@ import type { PlayerSystem } from '../player/player'
 import { markDynamicShadowCasters } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
+import type { SeaSystem } from '../sea/seaSystem'
 import { ARRIVAL_POSITION, CABLE_TOP_Y, DECK_TOP_Y } from '../world/arrival'
 import type { DistrictServices } from '../world/districts/atrium'
 import { terrainHeight } from '../world/terrain'
@@ -89,7 +90,9 @@ export class DescentBellSystem implements GameSystem {
 
   private readonly services: DistrictServices
   private readonly player: PlayerSystem | null
+  private readonly sea: SeaSystem
   private rig: VehicleSeatRig | null = null
+  private unregisterWaterInterfaceFrame: (() => void) | null = null
 
   private readonly group = new Object3D()
   private readonly car = new Object3D()
@@ -105,9 +108,14 @@ export class DescentBellSystem implements GameSystem {
   private cableTopY = 0
   private terraceY = 0
 
-  constructor(services: DistrictServices, player: PlayerSystem | null) {
+  constructor(
+    services: DistrictServices,
+    player: PlayerSystem | null,
+    sea: SeaSystem,
+  ) {
     this.services = services
     this.player = player
+    this.sea = sea
   }
 
   init(ctx: GameContext): void {
@@ -254,6 +262,14 @@ export class DescentBellSystem implements GameSystem {
     crownCollar.position.y = crownAnchor.y
     const hook = new Mesh(new TorusGeometry(0.12, 0.035, 8, 18), lib.brass)
     hook.position.y = 3.02
+    const waterInterfaceFrame: Mesh[] = [
+      bottomRing,
+      lowerOpeningRing,
+      upperOpeningRing,
+      crown,
+      crownCollar,
+      hook,
+    ]
     this.car.add(
       lowerShell,
       upperShell,
@@ -303,6 +319,7 @@ export class DescentBellSystem implements GameSystem {
         lib.brass,
       )
       this.car.add(rib)
+      waterInterfaceFrame.push(rib)
     }
     // Interior banquette (door gap faces the park, −z): a sculpted curved
     // seat — dished top, raked backrest with a rolled edge, finished end
@@ -375,6 +392,10 @@ export class DescentBellSystem implements GameSystem {
     })
     markDynamicShadowCasters(this.car)
     markDynamicShadowCasters(cable)
+    this.unregisterWaterInterfaceFrame = this.sea.registerInterfaceStructure({
+      root: this.car,
+      meshes: waterInterfaceFrame,
+    })
     ctx.scene.add(this.group)
     this.updateCable()
 
@@ -501,6 +522,8 @@ export class DescentBellSystem implements GameSystem {
   }
 
   dispose(ctx: GameContext): void {
+    this.unregisterWaterInterfaceFrame?.()
+    this.unregisterWaterInterfaceFrame = null
     ctx.scene.remove(this.group)
     this.shellMaterial?.dispose()
     this.shellMaterial = null

@@ -41,6 +41,7 @@ import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { DistrictServices } from './districts/atrium'
+import { ARRIVAL_POSITION } from './arrival'
 import { MIDWAY_APRON, PARK_PLAN, anchorGround } from './parkPlan'
 import { PAVED_WALKWAY_SEGMENTS } from './pavedWalkways'
 import {
@@ -469,6 +470,12 @@ export class ParkAssemblySystem implements GameSystem {
       position: [obs.x, obsY + 1.55, obs.z + 0.5],
       look: [obs.x, 8, obs.z - 2],
       note: "Postcard 7 — Snell's window through the Observatory oculus",
+    })
+    registerBookmark({
+      name: 'arrival-snell-observatory',
+      position: [obs.x + 25, obsY + 1.55, obs.z - 35],
+      look: [ARRIVAL_POSITION.x, 35, ARRIVAL_POSITION.z],
+      note: 'Arrival pavilion at the Snell rim from the Observatory',
     })
   }
 

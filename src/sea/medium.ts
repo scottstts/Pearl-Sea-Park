@@ -39,12 +39,17 @@ import { applyMarineAerialPerspective } from '../sky/marineAerialPerspective'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
 import { CausticsPass, causticWorldSample } from './caustics'
 import { currentFlow } from './current'
+import {
+  AQUATIC_AMBIENT_DOWN,
+  AQUATIC_AMBIENT_UP,
+  AQUATIC_EXTINCTION,
+} from './opticalConstants'
 import type { SeaSystem } from './seaSystem'
 
 /** Aquatic extinction — the dream-clarity lever (plan §0): ~250 m visibility. */
-const SIGMA = vec3(0.026, 0.0085, 0.005)
-const AMBIENT_DOWN = vec3(0.01, 0.075, 0.14)
-const AMBIENT_UP = vec3(0.1, 0.32, 0.37)
+const SIGMA = vec3(...AQUATIC_EXTINCTION)
+const AMBIENT_DOWN = vec3(...AQUATIC_AMBIENT_DOWN)
+const AMBIENT_UP = vec3(...AQUATIC_AMBIENT_UP)
 // NOTE: a "near-surface scattering layer" was tried here twice to mask the
 // horizon gap and REMOVED. For any camera below such a slab, up-grazing rays
 // integrate along it while down-grazing rays exit it — a brightness step

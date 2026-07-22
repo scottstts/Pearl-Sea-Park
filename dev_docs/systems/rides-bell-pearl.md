@@ -45,6 +45,30 @@
   collar deliberately bridges the rib endpoints into the solid crown.
   Keep this as one coherent cage — segmented cylinder chords and ball-joint
   elbows visibly disagree with the smooth lathed glass.
+- That external cage is also the Bell's complete ocean-interface registration:
+  the four ribs, bottom/opening/crown collars, crown, and hook are merged into
+  one optical proxy draw. The floor, glass, fender, interior brass trim,
+  and cable are intentionally excluded. The complete Arrival pavilion now
+  shares the bounded target only from underwater, with an air-side clip, 1.2 m
+  source tessellation, and a stable mean interface; it is not fed through the
+  rejected general two-depth viewport path. While the Bell cage crosses the
+  live FFT surface, its proxy supplies the otherwise hidden opposite-medium
+  half to Snell transmission. Each cage vertex solves its apparent optical path
+  through a live-FFT tangent interface (three heightfield crossing refinements,
+  then two six-step Fermat bisections) before rasterization. The pavilion uses
+  the cheaper single mean-plane solve because scene-scale per-vertex wave
+  normals are unresolved at the Snell rim. The shared target is shadowless and
+  half CSS resolution (1024 px maximum edge); the Bell is near-camera gated,
+  while the underwater-only pavilion fades over 204–240 m. The ocean samples
+  one already-refracted color/depth pixel instead of searching the screen. This
+  is the cost/quality boundary—keep the
+  registration frame-only unless an observed artifact justifies widening it.
+- The Arrival pavilion is the one demonstrated scene-scale exception. Its
+  direct air-side image can be outside the underwater viewport, so the canopy,
+  frame, deck, and pile tops must be present in the forward target. Transparent
+  optics and source geometry below y=-0.1 m stay out. Never remove its source
+  clipping/tessellation or switch it back to live per-vertex FFT normals; both
+  changes recreate the distance-amplified facets and temporal scrambling.
 - Bell boarding retains the shared rig's original 1.2 s straight camera blend.
   The shell is two independent lathed glass sections with a 360-degree opening
   from local y = 1.20 to 1.92, so the camera enters through empty space from

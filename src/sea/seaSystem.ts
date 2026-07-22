@@ -1,10 +1,17 @@
 import { Mesh, PlaneGeometry } from 'three'
-import { uniform, viewportTexture } from 'three/tsl'
+import { uniform, viewportDepthTexture, viewportMipTexture } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { runFftSelfTest } from './fftCompute'
-import { createOceanSurfaceMaterial } from './oceanSurfaceMaterial'
+import {
+  createOceanSurfaceMaterial,
+  oceanOpticsDebugMode,
+} from './oceanSurfaceMaterial'
+import {
+  InterfaceStructureLayer,
+  type InterfaceStructureRegistration,
+} from './interfaceStructureLayer'
 import { createOceanSkirtGeometry, OCEAN_INNER_HALF_SIZE } from './oceanSkirtGeometry'
 import { WakeFoamMap } from './wakeFoamMap'
 import { WaterlineProbe } from './waterlineProbe'
@@ -26,6 +33,7 @@ export class SeaSystem implements GameSystem {
   private inner: Mesh | null = null
   private outer: Mesh | null = null
   private probe: WaterlineProbe | null = null
+  private interfaceStructures: InterfaceStructureLayer | null = null
   private readonly timeUniform = uniform(0)
   private submerged = false
   private followStep = 1
@@ -41,10 +49,19 @@ export class SeaSystem implements GameSystem {
 
     const timeNode = this.timeUniform as unknown as import('three/webgpu').Node<'float'>
     const submergedNode = this.probe.visualSubmergedNode
-    // Both ocean sheets sample one framebuffer copy. A shared base
-    // ViewportTextureNode makes its per-surface samples resolve to the same
-    // render-scoped texture instead of copying the 4 MP HDR target twice.
-    const sceneBackdrop = viewportTexture()
+    // Both ocean sheets sample one framebuffer copy. Shared viewport color and
+    // depth nodes make every per-surface lookup resolve to the same
+    // render-scoped textures instead of copying the 4 MP HDR/depth targets for
+    // every reflected/refracted lookup or once per ocean sheet.
+    // Snell's window strongly minifies above-water imagery near its rim.
+    // Generate one mip chain for the already-required opaque snapshot so
+    // thin architecture can be footprint-filtered instead of point-aliased.
+    const sceneBackdrop = viewportMipTexture() as unknown as Parameters<
+      typeof createOceanSurfaceMaterial
+    >[2]['sceneBackdrop']
+    const sceneDepth = viewportDepthTexture()
+    const debugMode = oceanOpticsDebugMode(ctx.flags.pass)
+    this.interfaceStructures = new InterfaceStructureLayer(sim, submergedNode)
     this.wakeFoam = new WakeFoamMap()
     const innerGeometry = new PlaneGeometry(INNER_SIZE, INNER_SIZE, segments, segments)
     innerGeometry.rotateX(-Math.PI / 2)
@@ -54,8 +71,11 @@ export class SeaSystem implements GameSystem {
         detailed: true,
         edgeFadeHalfSize: INNER_SIZE / 2,
         sceneBackdrop,
+        sceneDepth,
+        interfaceStructures: this.interfaceStructures.nodes,
         submerged: submergedNode,
         wakeFoam: this.wakeFoam,
+        debugMode,
       }),
     )
     inner.frustumCulled = false
@@ -71,7 +91,10 @@ export class SeaSystem implements GameSystem {
       createOceanSurfaceMaterial(sim, timeNode, {
         detailed: false,
         sceneBackdrop,
+        sceneDepth,
+        interfaceStructures: this.interfaceStructures.nodes,
         submerged: submergedNode,
+        debugMode,
       }),
     )
     outer.frustumCulled = false
@@ -127,6 +150,13 @@ export class SeaSystem implements GameSystem {
       ctx.camera.position.z,
       ctx.camera.position.y,
     )
+    this.interfaceStructures?.update(ctx)
+
+    if (ctx.flags.debug && ctx.time.frame % 60 === 0) {
+      ctx.renderer.domElement.dataset.waterInterfaceLayer = JSON.stringify(
+        this.interfaceStructures?.debugSnapshot() ?? null,
+      )
+    }
 
     // Events/audio still use the asynchronous CPU height. Their latency must
     // never gate the ocean material or whole-frame underwater composite.
@@ -151,6 +181,16 @@ export class SeaSystem implements GameSystem {
     return this.probe?.visualSubmergedNode ?? null
   }
 
+  /** Register a bounded opaque assembly with an observed interface continuity need. */
+  registerInterfaceStructure(
+    registration: InterfaceStructureRegistration,
+  ): () => void {
+    if (!this.interfaceStructures) {
+      throw new Error('SeaSystem must initialize before interface structures register')
+    }
+    return this.interfaceStructures.register(registration)
+  }
+
   dispose(ctx: GameContext): void {
     if (this.inner) ctx.scene.remove(this.inner)
     if (this.outer) ctx.scene.remove(this.outer)
@@ -158,5 +198,8 @@ export class SeaSystem implements GameSystem {
     this.probe = null
     this.wakeFoam?.dispose()
     this.wakeFoam = null
+    this.interfaceStructures?.dispose()
+    this.interfaceStructures = null
+    delete ctx.renderer.domElement.dataset.waterInterfaceLayer
   }
 }

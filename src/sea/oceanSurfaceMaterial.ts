@@ -9,9 +9,11 @@ import {
   cameraViewMatrix,
   cameraWorldMatrix,
   dot,
+  exp,
   float,
   getScreenPosition,
   getViewPosition,
+  log2,
   max,
   mix,
   modelWorldMatrix,
@@ -22,19 +24,27 @@ import {
   pow,
   reflect,
   refract,
+  screenSize,
+  screenUV,
   smoothstep,
   step,
   varying,
   vec2,
   vec3,
   vec4,
-  viewportDepthTexture,
-  viewportSafeUV,
 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 import { skyRadiance } from '../sky/skyRadiance'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
+import {
+  AIR_IOR,
+  AQUATIC_AMBIENT_DOWN,
+  AQUATIC_AMBIENT_UP,
+  AQUATIC_EXTINCTION,
+  WATER_IOR,
+} from './opticalConstants'
+import type { InterfaceStructureNodes } from './interfaceStructureLayer'
 import { OCEAN_FLAT_EDGE_MARGIN } from './oceanSkirtGeometry'
 import {
   WAKE_FOAM_CENTER_X,
@@ -49,13 +59,23 @@ const DEEP = vec3(0.005, 0.045, 0.09)
 const SHALLOW = vec3(0.014, 0.13, 0.17)
 const SSS_TINT = vec3(0.035, 0.2, 0.22)
 
+type MipColorSample = Node<'vec4'> & {
+  level: (levelNode: Node<'float'>) => Node<'vec4'>
+}
+
 export interface OceanMaterialOptions {
   /** Full three-cascade sampling + foam; false = far skirt (cascade 0 only). */
   detailed: boolean
-  /** One shared opaque-frame copy, sampled at each surface's refracted UV. */
+  /** One shared opaque-frame copy, sampled at reflected/refracted UVs. */
   sceneBackdrop: {
+    sample: (uv: Node<'vec2'>) => MipColorSample
+  }
+  /** Shared opaque-frame depth copy paired with `sceneBackdrop`. */
+  sceneDepth: {
     sample: (uv: Node<'vec2'>) => Node<'vec4'>
   }
+  /** Opposite-medium opaque structures forward-refracted into screen space. */
+  interfaceStructures?: InterfaceStructureNodes
   /** Camera-medium authority: 0 above the displaced surface, 1 below it. */
   submerged: Node<'float'>
   /**
@@ -69,14 +89,42 @@ export interface OceanMaterialOptions {
    * seam. Zero disables the fade (skirt).
    */
   edgeFadeHalfSize?: number
+  /** Compile-time isolation view used by fixed visual-validation captures. */
+  debugMode?: OceanOpticsDebugMode
+}
+
+export type OceanOpticsDebugMode =
+  | 'final'
+  | 'fresnel'
+  | 'reflection'
+  | 'transmission'
+  | 'interface'
+  | 'validity'
+
+export function oceanOpticsDebugMode(pass: string): OceanOpticsDebugMode {
+  switch (pass) {
+    case 'water-fresnel':
+      return 'fresnel'
+    case 'water-reflection':
+      return 'reflection'
+    case 'water-transmission':
+      return 'transmission'
+    case 'water-interface':
+      return 'interface'
+    case 'water-validity':
+      return 'validity'
+    default:
+      return 'final'
+  }
 }
 
 /**
  * The ocean surface, shaded per the spectral-ocean optics contract:
  * fold-aware normals from summed cascade derivatives, side-aware Fresnel,
- * shared skyRadiance for reflection, crest subsurface scatter, Jacobian foam
- * with history, and — from below — the true Snell's window with total
- * internal reflection outside it.
+ * shared skyRadiance plus validated scene reflection, two-sided scene
+ * transmission, crest subsurface scatter, Jacobian foam with history, and —
+ * from below — the true Snell's window with total internal reflection outside
+ * it.
  */
 export function createOceanSurfaceMaterial(
   sim: WaveSim,
@@ -191,13 +239,23 @@ export function createOceanSurfaceMaterial(
   const keepCascade2 = float(1).sub(smoothstep(0.1, 0.4, pixelFootprint))
   const cascadeKeeps = [float(1), keepCascade1, keepCascade2]
 
-  const derivative0 = sim.derivativeNodes[0]
-    .sample(vWorldXZ.div(patch[0]))
-    .mul(vEdgeKeep)
+  // Bind each raw cascade sample once. The visible-water normal and the more
+  // aggressively filtered Snell transmission normal below reuse these fetches,
+  // so optical stability adds arithmetic rather than texture IO.
+  const derivativeSamples: Node<'vec4'>[] = []
+  for (let i = 0; i < cascadeCount; i++) {
+    derivativeSamples.push(
+      sim.derivativeNodes[i]
+        .sample(vWorldXZ.div(patch[i]))
+        .mul(vEdgeKeep)
+        .toVar() as unknown as Node<'vec4'>,
+    )
+  }
+  const derivative0 = derivativeSamples[0]
   let derivatives: Node<'vec4'> = derivative0
   for (let i = 1; i < cascadeCount; i++) {
     derivatives = derivatives.add(
-      sim.derivativeNodes[i].sample(vWorldXZ.div(patch[i])).mul(vEdgeKeep).mul(cascadeKeeps[i]),
+      derivativeSamples[i].mul(cascadeKeeps[i]),
     )
   }
   const aboveDerivatives = derivatives.sub(
@@ -225,74 +283,57 @@ export function createOceanSurfaceMaterial(
   const distanceFade = smoothstep(5.0, 16.0, pixelFootprint)
   const normal = normalize(mix(rawNormal, vec3(0, sideSign, 0), distanceFade))
 
+  // Water -> air expands angles, with an unbounded derivative at the critical
+  // angle. A wave band that is spatially resolved on the water can therefore
+  // still become subpixel in the transmitted image. Estimate that Snell
+  // Jacobian from the regular normal, square it for the 2-D source footprint,
+  // and reapply the established cascade LOD thresholds. This finite-pixel
+  // microfacet average stabilizes transmission without flattening the visible
+  // silver-ceiling reflection.
+  const preliminaryBelowNoV = max(dot(viewDir, normal), 0.001)
+  const waterToAirEta = float(WATER_IOR / AIR_IOR)
+  const preliminarySinTransmitted2 = waterToAirEta
+    .mul(waterToAirEta)
+    .mul(float(1).sub(preliminaryBelowNoV.mul(preliminaryBelowNoV)))
+  const preliminaryCosTransmitted = float(1)
+    .sub(preliminarySinTransmitted2)
+    .max(0.0)
+    .sqrt()
+  const snellAngularStretch = waterToAirEta
+    .mul(preliminaryBelowNoV)
+    .div(preliminaryCosTransmitted.max(0.04))
+    .max(1.0)
+  const snellFootprint = pixelFootprint
+    .mul(snellAngularStretch.mul(snellAngularStretch))
+    .min(64.0)
+  const snellKeeps = [
+    float(1).sub(smoothstep(2.5, 5.5, snellFootprint)),
+    float(1).sub(smoothstep(0.35, 1.2, snellFootprint)),
+    float(1).sub(smoothstep(0.1, 0.4, snellFootprint)),
+  ]
+  let snellDerivatives: Node<'vec4'> = derivativeSamples[0].mul(snellKeeps[0])
+  for (let i = 1; i < cascadeCount; i++) {
+    snellDerivatives = snellDerivatives.add(
+      derivativeSamples[i].mul(snellKeeps[i]),
+    )
+  }
+  const snellSlopeX = snellDerivatives.x.div(
+    max(0.18, snellDerivatives.z.add(1)),
+  )
+  const snellSlopeZ = snellDerivatives.y.div(
+    max(0.18, snellDerivatives.w.add(1)),
+  )
+  const snellResolvedUp = normalize(
+    vec3(snellSlopeX.negate(), 1, snellSlopeZ.negate()),
+  )
+  const snellDistanceFade = smoothstep(5.0, 16.0, snellFootprint)
+  const belowOpticalNormal = normalize(
+    mix(snellResolvedUp, vec3(0, 1, 0), snellDistanceFade),
+  ).negate()
+
   const sunDir = sunDirectionUniform
 
-  // Trace the underwater Snell ray through the opaque framebuffer. The first
-  // depth lookup estimates subject distance; the second projection starts at
-  // the actual displaced interface hit point, preserving the accepted tower
-  // alignment fix. The framebuffer work is behind the same coherent camera-
-  // medium uniform as the rest of the underwater pipeline, so above-water
-  // frames pay no depth/color refraction samples.
-  const incident = viewDir.negate()
-  const refracted = refract(incident, normal, 1.333)
-  const insideWindow = step(1e-5, dot(refracted, refracted))
-  const refractedSample = Fn(() => {
-    const sample = vec4(0).toVar()
-    If(options.submerged.greaterThan(0.5), () => {
-      const initialRefractedView = cameraViewMatrix.mul(vec4(refracted, 0)).xyz
-      const initialRefractedUv = getScreenPosition(
-        initialRefractedView,
-        cameraProjectionMatrix,
-      )
-      const initialUvInside = step(0.002, initialRefractedUv.x)
-        .mul(step(initialRefractedUv.x, 0.998))
-        .mul(step(0.002, initialRefractedUv.y))
-        .mul(step(initialRefractedUv.y, 0.998))
-      const initialSafeUv = viewportSafeUV(
-        initialRefractedUv.clamp(vec2(0.002), vec2(0.998)),
-      )
-      const initialDepth = viewportDepthTexture(initialSafeUv).r
-      const initialSourceView = getViewPosition(
-        initialSafeUv,
-        initialDepth,
-        cameraProjectionMatrixInverse,
-      )
-      const initialSourceWorld = cameraWorldMatrix.mul(vec4(initialSourceView, 1)).xyz
-      const estimatedDistance = initialSourceWorld.sub(vWorld).length().clamp(0.5, 3200.0)
-
-      const refractedTargetWorld = vWorld.add(refracted.mul(estimatedDistance))
-      const refractedTargetView = cameraViewMatrix.mul(vec4(refractedTargetWorld, 1)).xyz
-      const refractedUv = getScreenPosition(refractedTargetView, cameraProjectionMatrix)
-      const uvInside = step(0.002, refractedUv.x)
-        .mul(step(refractedUv.x, 0.998))
-        .mul(step(0.002, refractedUv.y))
-        .mul(step(refractedUv.y, 0.998))
-        .mul(initialUvInside)
-      const safeUv = viewportSafeUV(refractedUv.clamp(vec2(0.002), vec2(0.998)))
-      const sceneColor = options.sceneBackdrop.sample(safeUv as Node<'vec2'>).rgb
-      const sourceDepth = viewportDepthTexture(safeUv).r
-      const sourceView = getViewPosition(safeUv, sourceDepth, cameraProjectionMatrixInverse)
-      const sourceWorld = cameraWorldMatrix.mul(vec4(sourceView, 1)).xyz
-      const sourceOffset = sourceWorld.sub(vWorld)
-      const rayDistance = max(dot(sourceOffset, refracted), 0.0)
-      const lateralError = sourceOffset.sub(refracted.mul(rayDistance)).length()
-      const rayThickness = rayDistance.mul(0.015).add(0.35)
-      const rayAlignment = float(1).sub(
-        smoothstep(rayThickness, rayThickness.mul(3.0), lateralError),
-      )
-      const validity = step(0.05, sourceWorld.y)
-        .mul(step(sourceView.length(), 3200.0))
-        .mul(uvInside)
-        .mul(rayAlignment)
-        .mul(insideWindow)
-      sample.assign(vec4(sceneColor, validity))
-    })
-    return sample
-  })()
-  const refractedScene = refractedSample.rgb
-  const refractedSceneValid = refractedSample.a
-
-  // ── Above-surface shading ──────────────────────────────────────────────
+  // ── Above-surface optical normal ──────────────────────────────────────
   // The FFT resolves down to ~0.83 m. Add two weak, independently advected
   // capillary bands below that limit so close water carries real small-scale
   // slope variation without rewriting the swell. Each band disappears once
@@ -333,6 +374,277 @@ export function createOceanSurfaceMaterial(
     )
   }
 
+  // Exact, unpolarised dielectric Fresnel. The returned Y channel is the
+  // physical transmission-domain mask (zero under total internal reflection).
+  const dielectricFresnel = (
+    cosIncident: Node<'float'>,
+    incidentIor: number,
+    transmittedIor: number,
+  ): Node<'vec2'> => {
+    const etaI = float(incidentIor)
+    const etaT = float(transmittedIor)
+    const etaRatio = etaI.div(etaT)
+    const sinTransmitted2 = etaRatio
+      .mul(etaRatio)
+      .mul(float(1).sub(cosIncident.mul(cosIncident)))
+    // The critical-angle boundary moves across the screen with the FFT
+    // normal. Filter that binary domain test over roughly one output pixel;
+    // exact Fresnel still drives transmission energy to zero at the physical
+    // limit, while the sampling mask no longer toggles an entire pixel.
+    const criticalWidth = sinTransmitted2
+      .fwidth()
+      .mul(1.5)
+      .max(0.001)
+      .min(0.05)
+    const canTransmit = float(1).sub(
+      smoothstep(
+        float(1).sub(criticalWidth),
+        float(1).add(criticalWidth),
+        sinTransmitted2,
+      ),
+    )
+    const cosTransmitted = float(1).sub(sinTransmitted2).max(0.0).sqrt()
+    const rs = etaI
+      .mul(cosIncident)
+      .sub(etaT.mul(cosTransmitted))
+      .div(etaI.mul(cosIncident).add(etaT.mul(cosTransmitted)).max(1e-4))
+    const rp = etaT
+      .mul(cosIncident)
+      .sub(etaI.mul(cosTransmitted))
+      .div(etaT.mul(cosIncident).add(etaI.mul(cosTransmitted)).max(1e-4))
+    return vec2(rs.mul(rs).add(rp.mul(rp)).mul(0.5), canTransmit) as Node<'vec2'>
+  }
+
+  const incident = viewDir.negate()
+  const aboveNoV = max(dot(viewDir, aboveNormal), 0.001)
+  const aboveFresnelResult = dielectricFresnel(aboveNoV, AIR_IOR, WATER_IOR)
+  const aboveFresnel = aboveFresnelResult.x
+  const belowNoV = max(dot(viewDir, belowOpticalNormal), 0.001)
+  const belowFresnelResult = dielectricFresnel(belowNoV, WATER_IOR, AIR_IOR)
+  const interfaceFresnel = belowFresnelResult.x
+  const insideWindow = belowFresnelResult.y
+
+  /**
+   * Trace one reflected/refracted ray against the already-completed opaque
+   * framebuffer. Output = [uv.x, uv.y, surface-to-source metres, signed validity].
+   * Positive validity means the reconstructed source is on the requested side
+   * of the displaced interface. A small negative value means a well-aligned hit
+   * landed on the opposite side within 1.25 m of the interface: that is the
+   * bounded continuity source for piles and other meshes that straddle water.
+   */
+  const traceOpaqueSceneRay = (
+    rayDirection: Node<'vec3'>,
+    expectedSide: 1 | -1,
+    enabled: Node<'float'>,
+    depthSource = options.sceneDepth,
+  ): Node<'vec4'> =>
+    Fn(() => {
+      const trace = vec4(0).toVar()
+      If(enabled.greaterThan(0.001), () => {
+        const initialRayView = cameraViewMatrix.mul(vec4(rayDirection, 0)).xyz
+        const initialUv = getScreenPosition(initialRayView, cameraProjectionMatrix)
+        const initialUvInside = step(0.002, initialUv.x)
+          .mul(step(initialUv.x, 0.998))
+          .mul(step(0.002, initialUv.y))
+          .mul(step(initialUv.y, 0.998))
+        const initialClampedUv = initialUv.clamp(vec2(0.002), vec2(0.998))
+        const initialDepth = depthSource.sample(initialClampedUv as Node<'vec2'>).r
+        const initialSourceView = getViewPosition(
+          initialClampedUv,
+          initialDepth,
+          cameraProjectionMatrixInverse,
+        )
+        const initialSourceWorld = cameraWorldMatrix.mul(vec4(initialSourceView, 1)).xyz
+        const estimatedDistance = initialSourceWorld
+          .sub(vWorld)
+          .length()
+          .clamp(0.5, 3200.0)
+
+        // Reproject from the displaced surface hit, not the camera origin. This
+        // keeps a structure's reflected/refracted image attached at water entry.
+        const targetWorld = vWorld.add(rayDirection.mul(estimatedDistance))
+        const targetView = cameraViewMatrix.mul(vec4(targetWorld, 1)).xyz
+        const targetUv = getScreenPosition(targetView, cameraProjectionMatrix)
+        const uvInside = step(0.002, targetUv.x)
+          .mul(step(targetUv.x, 0.998))
+          .mul(step(0.002, targetUv.y))
+          .mul(step(targetUv.y, 0.998))
+          .mul(initialUvInside)
+        const clampedUv = targetUv.clamp(vec2(0.002), vec2(0.998))
+        const sourceDepth = depthSource.sample(clampedUv as Node<'vec2'>).r
+        const sourceView = getViewPosition(
+          clampedUv,
+          sourceDepth,
+          cameraProjectionMatrixInverse,
+        )
+        const sourceWorld = cameraWorldMatrix.mul(vec4(sourceView, 1)).xyz
+        const sourceOffset = sourceWorld.sub(vWorld)
+        const rayDistance = max(dot(sourceOffset, rayDirection), 0.0)
+        const lateralError = sourceOffset.sub(rayDirection.mul(rayDistance)).length()
+        const rayThickness = rayDistance.mul(0.015).add(0.35)
+        const rayAlignment = float(1).sub(
+          smoothstep(rayThickness, rayThickness.mul(3.0), lateralError),
+        )
+        const sourceIsGeometry = step(sourceDepth, 0.999999).mul(
+          step(sourceView.length(), 3200.0),
+        )
+        const baseValidity = uvInside
+          .mul(sourceIsGeometry)
+          .mul(step(0.02, rayDistance))
+          .mul(rayAlignment)
+
+        // Test side relative to the live local interface, not the mean y=0
+        // plane. A wrong-side hit may still anchor the first 1.25 m of a
+        // continuous crossing mesh; beyond that it cannot masquerade as the
+        // hidden transmitted side and cleanly falls back to sky/body radiance.
+        const requestedSideDistance = dot(sourceOffset, upNormal).mul(expectedSide)
+        const requestedSide = step(0.02, requestedSideDistance)
+        const oppositeSideAnchor = step(requestedSideDistance, -0.02).mul(
+          float(1).sub(smoothstep(0.05, 1.25, requestedSideDistance.abs())),
+        )
+        const signedValidity = baseValidity.mul(requestedSide.sub(oppositeSideAnchor))
+        trace.assign(vec4(clampedUv, rayDistance, signedValidity))
+      })
+      return trace
+    })()
+
+  const sampleTracedSceneWithSource = (
+    trace: Node<'vec4'>,
+    colorSource: OceanMaterialOptions['sceneBackdrop'],
+  ): Node<'vec4'> =>
+    Fn(() => {
+      const sample = vec4(0).toVar()
+      // Explicit LOD remains valid inside the non-uniform geometry-validity
+      // branch, where implicit texture derivatives are undefined. It averages
+      // sky and thin architecture in proportion to the refracted source
+      // footprint instead of turning Snell minification into vertical shards.
+      const sourceFootprint = max(
+        trace.xy.dFdx().mul(screenSize).length(),
+        trace.xy.dFdy().mul(screenSize).length(),
+      )
+      // Level six was still only a 64 px average. Snell compression is
+      // unbounded at the critical angle, so allow the sampler to reach the
+      // 1x1 tail (the backend clamps this to the texture's last real level).
+      const sourceLod = log2(max(sourceFootprint, 1.0)).clamp(0.0, 12.0)
+      If(trace.w.abs().greaterThan(0.001), () => {
+        sample.assign(
+          vec4(
+            colorSource.sample(trace.xy).level(sourceLod).rgb,
+            trace.w,
+          ),
+        )
+      })
+      return sample
+    })()
+
+  const sampleTracedScene = (trace: Node<'vec4'>): Node<'vec4'> =>
+    sampleTracedSceneWithSource(trace, options.sceneBackdrop)
+
+  /**
+   * The dedicated structure pass has already solved the optical path and
+   * rasterized its vertices at their refracted screen positions. Sample it at
+   * this water pixel directly; depth only reconstructs the source path length
+   * needed by above-water Beer-Lambert attenuation.
+   */
+  const sampleInterfaceStructure = (
+    enabled: Node<'float'>,
+    reconstructPath = false,
+  ): { sample: Node<'vec4'>; path: Node<'float'> } => {
+    const structures = options.interfaceStructures
+    if (!structures) return { sample: vec4(0), path: float(0) }
+
+    const sample = Fn(() => {
+      const result = vec4(0).toVar()
+      If(enabled.greaterThan(0.001), () => {
+        const rawColor = structures.color.sample(screenUV)
+        const geometryValidity = rawColor.a.mul(structures.active)
+        If(geometryValidity.greaterThan(0.001), () => {
+          // Linear filtering against a transparent-black target premultiplies
+          // edge color. Undo that before the ocean applies coverage once.
+          const sourceColor = rawColor.rgb.div(max(rawColor.a, 0.001))
+          result.assign(vec4(sourceColor, geometryValidity))
+        })
+      })
+      return result
+    })()
+    const path = reconstructPath
+      ? Fn(() => {
+          const result = float(0).toVar()
+          If(enabled.greaterThan(0.001), () => {
+            const sourceDepth = structures.depth.sample(screenUV).r
+            const sourceView = getViewPosition(
+              screenUV,
+              sourceDepth,
+              cameraProjectionMatrixInverse,
+            )
+            const sourceWorld = cameraWorldMatrix.mul(vec4(sourceView, 1)).xyz
+            result.assign(sourceWorld.sub(vWorld).length().max(0.02))
+          })
+          return result
+        })()
+      : float(0)
+    return {
+      sample,
+      path,
+    }
+  }
+
+  const belowRefracted = refract(
+    incident,
+    belowOpticalNormal,
+    WATER_IOR / AIR_IOR,
+  )
+  // Underwater scene-scale subjects are forward-projected into the dedicated
+  // layer below. A current-view depth snapshot cannot solve an offscreen air
+  // source, and feeding discontinuous depth back into another lookup is what
+  // folded the distant pavilion into animated crystal/paper-ball geometry.
+  const belowSceneSample = vec4(0)
+  const belowSceneValid = float(0)
+  const belowStructure = options.interfaceStructures
+    ? sampleInterfaceStructure(
+        options.interfaceStructures.active.mul(options.submerged).mul(insideWindow),
+      )
+    : { sample: vec4(0), path: float(0) }
+  const belowStructureSample = belowStructure.sample
+  const belowStructureValid = max(belowStructureSample.a, 0.0)
+
+  const aboveRefracted = refract(incident, aboveNormal, AIR_IOR / WATER_IOR)
+  const aboveRefractionEnabled = options.detailed
+    ? isAbove
+        .mul(step(vDistance, 160.0))
+        .mul(step(0.03, float(1).sub(aboveFresnel)))
+    : float(0)
+  const aboveRefractionTrace = traceOpaqueSceneRay(
+    aboveRefracted,
+    -1,
+    aboveRefractionEnabled,
+  )
+  const aboveRefractionSample = sampleTracedScene(aboveRefractionTrace)
+  const aboveRefractionValid = max(aboveRefractionSample.a, 0.0)
+  const aboveInterfaceAnchor = max(aboveRefractionSample.a.negate(), 0.0)
+  const aboveStructure = options.interfaceStructures
+    ? sampleInterfaceStructure(
+        options.interfaceStructures.active.mul(aboveRefractionEnabled),
+        true,
+      )
+    : { sample: vec4(0), path: float(0) }
+  const aboveStructureSample = aboveStructure.sample
+  const aboveStructureValid = max(aboveStructureSample.a, 0.0)
+
+  const reflectedDirection = reflect(incident, aboveNormal)
+  const aboveReflectionEnabled = options.detailed
+    ? isAbove.mul(step(vDistance, 180.0)).mul(step(0.035, aboveFresnel))
+    : float(0)
+  const aboveReflectionTrace = traceOpaqueSceneRay(
+    reflectedDirection,
+    1,
+    aboveReflectionEnabled,
+  )
+  const aboveReflectionSample = sampleTracedScene(aboveReflectionTrace)
+  const aboveReflectionValid = max(aboveReflectionSample.a, 0.0)
+
+  // ── Above-surface shading ──────────────────────────────────────────────
+
   const aboveHeight = vHeight.mul(keepCascade0Above)
   const heightMask = smoothstep(-1.7, 1.5, aboveHeight)
   const bodyBase = mix(DEEP, SHALLOW, heightMask)
@@ -344,29 +656,84 @@ export function createOceanSurfaceMaterial(
     .mul(1.0)
     .mul(smoothstep(-0.1, 1.1, vHeight))
 
-  const noV = max(dot(viewDir, aboveNormal), 0.001)
   const noL = max(dot(aboveNormal, sunDir), 0.0)
-  const fresnelF0 = float(0.02037)
-  const fresnel = fresnelF0.add(
-    float(1)
-      .sub(fresnelF0)
-      .mul(pow(float(1).sub(noV), 5.0)),
-  )
+  const fresnelF0 = float(((AIR_IOR - WATER_IOR) / (AIR_IOR + WATER_IOR)) ** 2)
   const aboveCrestLight = normalize(sunDir.negate().add(aboveNormal.mul(0.4)))
   const aboveCrestScatter = pow(max(dot(viewDir, aboveCrestLight), 0.0), 4.5)
     .mul(smoothstep(-0.1, 1.1, aboveHeight))
   const forwardScatter = pow(max(dot(viewDir, sunDir.negate()), 0.0), 4.0)
     .mul(smoothstep(-0.15, 0.9, aboveHeight))
-    .mul(float(1).sub(fresnel))
+    .mul(float(1).sub(aboveFresnel))
     .mul(0.32)
   const scatterLight = noL.mul(0.5).add(0.5)
-  const body = bodyBase.add(
-    SSS_TINT.mul(aboveCrestScatter.add(forwardScatter)).mul(scatterLight),
+  const surfaceScatter = SSS_TINT.mul(aboveCrestScatter.add(forwardScatter)).mul(
+    scatterLight,
+  )
+  const body = bodyBase.add(surfaceScatter)
+
+  // The analytic sky remains the guaranteed reflection source. A validated
+  // surface-anchored framebuffer hit replaces it only for nearby opaque air
+  // geometry, so pavilion/column reflections cost no mirrored world render.
+  // discStrength 0: sunGlint below IS the disc's delta-light response.
+  const skyReflection = skyRadiance(reflectedDirection, float(0))
+  const reflectedRadiance = mix(
+    skyReflection,
+    aboveReflectionSample.rgb,
+    aboveReflectionValid.clamp(0, 1),
   )
 
-  // discStrength 0: sunGlint below IS the disc's specular response — the
-  // delta-light term. The aureole remains in the shared reflected sky.
-  const skyReflection = skyRadiance(reflect(viewDir.negate(), aboveNormal), float(0))
+  // Air -> water transmission uses actual reconstructed surface-to-subject
+  // metres. The main scene is intentionally unfogged while the camera is in
+  // air, so apply the same Beer-Lambert coefficients and open-water in-scatter
+  // owned by medium.ts along only the submerged segment.
+  const aboveStructureContribution = aboveStructureValid.clamp(0, 1)
+  const aboveTransmissionValidity = max(
+    max(aboveRefractionValid, aboveInterfaceAnchor.mul(0.82)),
+    aboveStructureContribution,
+  ).clamp(0, 1)
+  const aboveTransmissionSource = mix(
+    aboveRefractionSample.rgb,
+    aboveStructureSample.rgb,
+    aboveStructureContribution,
+  )
+  const aboveTransmissionPath = mix(
+    aboveRefractionTrace.z,
+    aboveStructure.path,
+    aboveStructureContribution,
+  )
+  const transmittedRadiance = Fn(() => {
+    const result = body.toVar()
+    If(aboveTransmissionValidity.greaterThan(0.001), () => {
+      const aboveWaterPath = aboveTransmissionPath.clamp(0.05, 3500.0)
+      const aquaticTransmittance = exp(
+        vec3(...AQUATIC_EXTINCTION).mul(aboveWaterPath).negate(),
+      )
+      const transmittedMidpointY = vWorld.y.add(
+        aboveRefracted.y.mul(aboveWaterPath.mul(0.5)),
+      )
+      const transmittedDepthDim = exp(transmittedMidpointY.min(0).mul(0.03))
+      const transmittedUpness = smoothstep(-0.5, 0.75, aboveRefracted.y)
+      const transmittedSunward = pow(max(dot(aboveRefracted, sunDir), 0.0), 6.0).mul(0.06)
+      const aquaticInscatter = mix(
+        vec3(...AQUATIC_AMBIENT_DOWN),
+        vec3(...AQUATIC_AMBIENT_UP),
+        transmittedUpness,
+      )
+        .mul(transmittedDepthDim)
+        .add(sunColorUniform.mul(transmittedSunward))
+      const foggedRefraction = aboveTransmissionSource
+        .mul(aquaticTransmittance)
+        .add(aquaticInscatter.mul(float(1).sub(aquaticTransmittance.g)))
+      result.assign(
+        mix(
+          body,
+          foggedRefraction.add(surfaceScatter.mul(0.25)),
+          aboveTransmissionValidity,
+        ),
+      )
+    })
+    return result
+  })()
 
   const halfVector = normalize(sunDir.add(viewDir))
   const noH = max(dot(aboveNormal, halfVector), 0.0)
@@ -380,7 +747,7 @@ export function createOceanSurfaceMaterial(
     distributionDenominator.mul(distributionDenominator).mul(Math.PI),
   )
   const smithK = roughness.add(1).mul(roughness.add(1)).div(8)
-  const geometryV = noV.div(noV.mul(float(1).sub(smithK)).add(smithK))
+  const geometryV = aboveNoV.div(aboveNoV.mul(float(1).sub(smithK)).add(smithK))
   const geometryL = noL.div(noL.mul(float(1).sub(smithK)).add(smithK).max(1e-4))
   const microFresnel = fresnelF0.add(
     float(1)
@@ -392,10 +759,10 @@ export function createOceanSurfaceMaterial(
     .mul(geometryL)
     .mul(microFresnel)
     .mul(noL)
-    .div(max(noV.mul(noL).mul(4), 0.02))
+    .div(max(aboveNoV.mul(noL).mul(4), 0.02))
   const sunGlint = sunColorUniform.mul(directSpecular).mul(3.4)
 
-  let above = mix(body, skyReflection, fresnel).add(sunGlint)
+  let above = mix(transmittedRadiance, reflectedRadiance, aboveFresnel).add(sunGlint)
 
   if (options.detailed) {
     // Jacobian foam: history-driven coverage × bubbly fbm detail, sun/sky lit.
@@ -436,39 +803,33 @@ export function createOceanSurfaceMaterial(
   }
 
   // ── Below-surface shading: the Silver Ceiling ──────────────────────────
-  const skyThrough = skyRadiance(refracted, float(0)).mul(0.9)
-  const windowGlint = pow(max(dot(refracted, sunDir), 0.0), 700.0)
+  const skyThrough = skyRadiance(belowRefracted, float(0)).mul(0.9)
+  const windowGlint = pow(max(dot(belowRefracted, sunDir), 0.0), 700.0)
     .mul(24.0)
     .mul(sunColorUniform)
 
   // Only real geometry in air participates below the surface. The sky dome
   // remains on the analytic path so its sub-pixel HDR sun cannot become
   // framebuffer-sampling noise.
-  const aboveWaterStructure = refractedSceneValid
+  const belowStructureContribution = belowStructureValid.clamp(0, 1)
+  const aboveWaterStructure = max(
+    belowSceneValid,
+    belowStructureContribution,
+  ).clamp(0, 1)
+  const belowTransmissionSource = mix(
+    belowSceneSample.rgb,
+    belowStructureSample.rgb,
+    belowStructureContribution,
+  )
   const transmittedScene = mix(
     skyThrough.add(windowGlint),
-    refractedScene,
+    belowTransmissionSource,
     aboveWaterStructure,
   )
 
   // Exact unpolarised dielectric Fresnel for water -> air. Schlick alone
   // does not rise correctly into the critical angle, so it would let the
   // structure remain pasted over what should become total internal reflection.
-  const cosIncident = max(dot(viewDir, normal), 0.0)
-  const eta = float(1.333)
-  const cosTransmitted = float(1)
-    .sub(eta.mul(eta).mul(float(1).sub(cosIncident.mul(cosIncident))))
-    .max(0.0)
-    .sqrt()
-  const rs = eta
-    .mul(cosIncident)
-    .sub(cosTransmitted)
-    .div(eta.mul(cosIncident).add(cosTransmitted).max(1e-4))
-  const rp = eta
-    .mul(cosTransmitted)
-    .sub(cosIncident)
-    .div(eta.mul(cosTransmitted).add(cosIncident).max(1e-4))
-  const interfaceFresnel = rs.mul(rs).add(rp.mul(rp)).mul(0.5)
   const interfaceTransmission = insideWindow.mul(float(1).sub(interfaceFresnel))
 
   // Outside the critical angle: total internal reflection. The mirror
@@ -481,6 +842,32 @@ export function createOceanSurfaceMaterial(
 
   const below = mix(tirBody, transmittedScene, interfaceTransmission)
 
-  material.colorNode = vec4(mix(below, above, isAbove), 1.0)
+  const debugMode = options.debugMode ?? 'final'
+  let finalColor: Node<'vec3'> = mix(below, above, isAbove)
+  if (debugMode === 'fresnel') {
+    finalColor = vec3(mix(interfaceFresnel, aboveFresnel, isAbove))
+  } else if (debugMode === 'reflection') {
+    finalColor = mix(tirBody, reflectedRadiance, isAbove)
+  } else if (debugMode === 'transmission') {
+    finalColor = mix(transmittedScene, transmittedRadiance, isAbove)
+  } else if (debugMode === 'interface') {
+    const aboveInterface = aboveStructureSample.rgb.mul(aboveStructureContribution)
+    const belowInterface = belowStructureSample.rgb.mul(belowStructureContribution)
+    finalColor = mix(belowInterface, aboveInterface, isAbove)
+  } else if (debugMode === 'validity') {
+    const aboveValidity = vec3(
+      aboveReflectionValid,
+      aboveRefractionValid,
+      aboveStructureContribution,
+    )
+    const belowValidity = vec3(
+      belowSceneValid,
+      belowStructureContribution,
+      insideWindow,
+    )
+    finalColor = mix(belowValidity, aboveValidity, isAbove)
+  }
+
+  material.colorNode = vec4(finalColor, 1.0)
   return material
 }

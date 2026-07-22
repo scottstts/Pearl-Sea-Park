@@ -50,6 +50,15 @@ ocean and glass optics 0), avoiding another 4× MSAA attachment. `?pass=ao`
 shows raw gather; `ao-filtered`, `ao-applied`, and `ao-mask` isolate each
 subsequent decision.
 
+The ocean remains inside that same scene pass. Its transparent-queue ownership
+captures one shared mipmapped opaque color snapshot and one shared sharp opaque
+depth snapshot; surface-anchored reflection and two-sided refraction only
+resample those copies. The color chain filters source minification near the
+Snell rim using explicit UV-derivative LOD. There is no ocean reflection pass,
+mirrored camera, auxiliary target, or second park submission. Texture reads are
+coherently gated by camera medium, detailed sheet, range, and Fresnel
+contribution; the far skirt stays on analytic sky/body radiance.
+
 Physical glass stays inside the scene pass. Three r185's
 `MeshPhysicalNodeMaterial` copies the completed opaque viewport when its
 transmission path first renders, then samples that mipmapped copy for
@@ -80,7 +89,8 @@ Choices beyond the code:
   loop.
 - **Emissive hierarchy contract:** bloom threshold is 1.0 — materials must express glow through genuinely HDR emissive values (sun sparkle strongest, lamps mid, bioluminescence subtle), never by lowering the threshold.
 - **Type boundary:** @types/three TSL generics (`Node<"vec4">` etc.) churn per release — cross-module node handoffs type as `object` and cast once at the boundary (`asColor` in grade.ts). Do not thread precise TSL generic types through system APIs.
-- `?pass=` views: `ao · ao-filtered · ao-applied · ao-mask · ao-footprint · bloom · depth · normal · exposure · rays · caustics · haze · no-rays · no-post · no-grade`; wake diagnostics are `wake-layers · wake-age · wake-flow`, plus the fountain field modes. `?view=seabed-high` is the fixed high-water-column AO/minification regression camera. `?view`/`?pass` skip the enter button (validation mode).
+- `?pass=` views: `ao · ao-filtered · ao-applied · ao-mask · ao-footprint · bloom · depth · normal · exposure · rays · caustics · haze · no-rays · water-fresnel · water-reflection · water-transmission · water-interface · water-validity · no-post · no-grade`; wake diagnostics are `wake-layers · wake-age · wake-flow`, plus the fountain field modes. `water-interface` isolates the registered Bell cage and the Arrival pavilion's clipped, tessellated air-side target. `?view=seabed-high` is the fixed high-water-column AO/minification regression camera. `?view`/`?pass` skip the enter button (validation mode).
+- The ocean still has no whole-scene reflection/refraction render. Its one shadowless half-CSS auxiliary target (1024 px long-edge cap) has two bounded registrations: the Bell's live-FFT external cage and the Arrival pavilion's stable mean-plane underwater image. The pavilion source is clipped to its air-side assembly, tessellated to 1.2 m edges, rendered only for underwater cameras, and faded out from 204–240 m; it is nine material draws / about 71k triangles rather than a park replay. This target exists because the pavilion's direct image can be offscreen underwater and a two-depth viewport guess repeatedly folded unrelated surfaces into a flickering cluster. The ocean performs one direct target sample, so depth never feeds back into projection. Surfaced-submarine reflection remains outside this target: its opaque exterior participates in the shared same-frame viewport reflection path at zero extra draw cost.
 - Dynamic resolution = `setPixelRatio(base × quality.renderScale)`; all pass targets follow the drawing-buffer size automatically. The base is capped by DPR 1.7 **and** a 4,000,000-pixel drawing-buffer budget (`recommendedPixelRatio`), recomputed on resize before dynamic scale is applied.
 - Dynamic resolution is driven by the actual animation-frame interval, not CPU
   command-submission time. It is an emergency pressure valve bounded to

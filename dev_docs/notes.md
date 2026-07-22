@@ -1880,3 +1880,171 @@
   random spread (spawn scale 1.5–2.6 → 42–73 cm spans), matching the
   seahorse precedent: encounter species get display scale by ruling,
   field-guide realism yields. buildCrabs no longer takes colonies at all.
+
+- 2026-07-22 ocean interface reflection/transmission correction:
+  - Do not weaken water Fresnel to hide pale grazing views. Air/water now uses
+    exact unpolarised dielectric Fresnel on both sides (IOR 1 / 1.333); the old
+    above-water Schlick fit was only a modest over-reflection, while the real
+    defects were sky-only reflection and absent air→water scene transmission.
+  - Never restore a whole-park planar reflection for the ocean. One shared
+    opaque viewport color/depth snapshot feeds surface-anchored reflected and
+    refracted rays; nearby valid opaque geometry replaces analytic sky/body,
+    while the skirt, offscreen, transparent, background, and rejected hits keep
+    the analytic fallback. Above reflection/refraction are bounded to 180/160 m
+    and Fresnel-energy gated.
+  - A single depth layer cannot reveal the hidden half of a mesh spanning both
+    media. Preserve interface continuity by allowing a ray-aligned wrong-side
+    sample only within 1.25 m of the live local FFT interface, fading it out;
+    never turn this into unrestricted foreground sampling. `water-validity`
+    exposes the anchor separately.
+  - Air→water transmission uses reconstructed interface-to-hit metres with the
+    same extinction and ambient endpoints as the underwater medium. Constants
+    live in `sea/opticalConstants.ts`; do not retune surface and fog separately.
+
+- 2026-07-22 Descent Bell interface-crossing layer:
+  - Scott chose the proper targeted fix for the Bell's thin brass frame rather
+    than softening Fresnel or fading geometry at the waterline. The four cage
+    ribs plus external collars/crown/hook are merged into one shadowless proxy;
+    glass, floor, interior trim, cable, pavilion piles, and the rest of the park
+    stay out.
+  - The proxy renders only the half opposite the camera against the same live
+    three-cascade FFT surface. Its half-CSS-resolution RGBA16F/depth target is
+    capped at 1024 px and runs only while the cage intersects the ±1 m surface
+    band within 90 m of the camera. The ordinary shared viewport trace remains
+    the default; the ocean samples this layer only when that trace cannot reveal
+    the hidden crossing half. `water-interface` isolates the contribution.
+
+- 2026-07-22 Descent Bell thin-rib trace attempt (superseded):
+  - The first dedicated layer still left the 3 cm cage ribs cut off inside
+    Snell's window. Root cause: it isolated the correct opposite-medium depth
+    but fed that depth through the same two-tap screen-space guess; a thin rib
+    still had to land under the first guessed UV, so most rays reconstructed
+    background and fell back to sky. A valid unrelated main-scene hit could
+    suppress the auxiliary test as well.
+  - The layer now publishes its active world sphere and target resolution. The
+    ocean intersects each eligible refracted ray with that sphere, marches the
+    complete projected epipolar segment at about two target pixels per step
+    (8 minimum, 32 hard maximum), validates the reconstructed depth against the
+    3D ray with texel-scaled thickness, and exits on the first hit. The cage
+    search runs independently of main-scene validity; exact Fresnel and the
+    general whole-scene two-tap path remain unchanged.
+
+- 2026-07-22 Descent Bell forward-refraction correction:
+  - The bounded epipolar search was the wrong representation even after the
+    Bell geometry had been isolated: a capped half-resolution screen march can
+    still step over a 3 cm rail, so raising its sample count only trades more
+    ocean-fragment cost for a non-guarantee. Do not restore that search.
+  - The Bell proxy now solves refraction in the vertex stage and rasterizes at
+    the apparent screen position. It refines the source/camera crossing against
+    the live three-cascade FFT heightfield, solves the local tangent-interface
+    Fermat path by bisection, re-anchors once to the real heightfield, and solves
+    again. As a source vertex approaches the interface, the apparent path
+    converges to the direct contact point instead of producing a detached tip.
+  - The ocean performs one direct proxy color/depth sample. The existing
+    half-CSS, 1024 px cap, one merged shadowless draw, ±1 m crossing gate, 90 m
+    camera gate, and Bell-brass-only registration remain. Work now scales with
+    the small proxy vertex set instead of every eligible ocean pixel.
+  - Proxy triangles are clipped in the fragment stage, but camera-side
+    vertices stay on the ordinary projection. Only opposite-medium vertices
+    are forward-refracted; otherwise a discarded vertex can still stretch the
+    surviving half of an interface-crossing triangle before alpha test.
+
+- 2026-07-22 Arrival pavilion interface registration + surfaced-sub reflection
+  (whole-pavilion registration superseded below):
+  - Scott confirmed the forward-refracted Bell solution and initially requested
+    the same Snell-window continuity for the complete opaque Arrival pavilion.
+    That whole-assembly registration was later proven invalid for large
+    triangles and replaced by purpose-built waterline contact geometry.
+  - The full Fermat/FFT projection is behind a real vertex branch. Vertices on
+    the camera's own side keep ordinary projection and skip the solve, which
+    prevents the pavilion's extensive submerged bracing from paying discarded
+    optical work in an underwater view.
+  - Do not add a submarine reflection pass. A surfaced craft's opaque exterior
+    already exists in the same-frame opaque viewport snapshot and participates
+    in the general 180 m/Fresnel-gated reflection path exactly like the
+    pavilion. Its physical glass is intentionally outside opaque depth.
+
+- 2026-07-22 Arrival waterline proxy correction and Snell stability:
+  - Whole-pavilion forward refraction was the wrong representation. The six
+    authored piles use one axial segment from seabed to deck, and other large
+    pavilion faces also span too much world space for a nonlinear per-vertex
+    Fermat warp. Near the Snell rim those triangles became crystal-like facets;
+    from above, mixed direct/refracted endpoints stretched submerged structure
+    into translucent curtains. More bisections cannot repair interpolation
+    over invalid source geometry.
+  - The complete pavilion now stays in the existing per-water-pixel opaque
+    viewport reconstruction. The dedicated layer contains only six pile
+    contact segments from y=-1.75 m to the deck and two ladder rails, each
+    axially subdivided at about 0.18 m and merged into one verdigris plus one
+    brass draw. This is both cheaper and the correct split: scene-scale imagery
+    is reconstructed from depth; only the genuinely hidden crossing sliver is
+    forward-rasterized.
+  - Proxy height and fold-aware normal sampling now use the ocean's exact
+    pixel-footprint cascade keeps. Underwater proxy normals also inherit the
+    5–16 m/pixel flattening, so distant contact geometry cannot react to FFT
+    bands already removed from the visible surface. The proxy's moving medium
+    clip and the Snell transmission-domain mask are derivative-filtered over
+    roughly one source/output pixel; exact Fresnel/TIR remains authoritative.
+    Do not add temporal history unless fixed-view validation still finds a
+    residual after these geometric and spatial-filtering corrections.
+
+- 2026-07-22 Snell-rim source-minification correction:
+  - After narrowing the Arrival proxy, above-water curtains disappeared but
+    distant pavilion detail could still collapse into animated vertical shards
+    underwater. Those pixels came from the general opaque viewport trace, not
+    the contact proxy. Water→air angular expansion tends to infinity at the
+    critical angle, so one sharp source-color sample and the ordinary spatial
+    wave LOD are insufficient even when the water surface itself is resolved.
+  - The shared opaque color copy is now a mip-generating viewport texture.
+    Traced color computes explicit LOD from the refracted source-UV derivatives
+    in screen texels, which remains defined outside the non-uniform validity
+    branch and averages thin architecture with its sky background. Depth stays
+    unmipped and retains the existing side/ray/background rejection.
+  - Underwater transmission uses a second normal assembled from the same raw
+    derivative fetches. Its cascade footprint is multiplied by the squared
+    Snell angular stretch `eta*cos(theta_i)/cos(theta_t)` and flattened through
+    the established 5–16 m/pixel handoff when necessary. Exact Fresnel, the
+    critical angle, TIR body, and visible underside normal are unchanged. This
+    adds one color mip chain plus arithmetic, not another draw, scene pass,
+    target, or ray march.
+- 2026-07-22 Snell-rim viewport-validity bound:
+  - Runtime inspection at the fixed `snell` camera showed the interface target
+    inactive, proving the remaining distant pavilion spikes came from the
+    general opaque viewport trace rather than the narrowed waterline proxies.
+    The previous six-level color LOD softened each selected source but left the
+    singular ray mapping and its one-layer depth discontinuities valid forever.
+  - Underwater viewport color can now traverse the complete mip tail. Its
+    signed scene validity fades from 24 to 96 source texels per output pixel,
+    and a second physically parameterized guard fades general geometry over
+    transmitted cosine 0.22 to 0.08 (about 77-85 degrees from the air-side
+    normal). Both hand unresolved detail to the existing analytic sky before
+    the water-to-air Jacobian diverges.
+  - This guard does not change exact Fresnel, TIR, the visible underside normal,
+    above-water optics, or the dedicated forward-projected interface layer.
+    It adds only smoothstep arithmetic and removes temporally unstable data
+    instead of attempting to blur an invalid single-view reconstruction.
+
+- 2026-07-23 Arrival Snell source reconstruction (supersedes the underwater
+  pavilion portions of the three 2026-07-22 entries above):
+  - Fixed captures from the Observatory proved the remaining "paper ball" was
+    not the narrowed waterline proxy. The general two-depth viewport trace used
+    its first discontinuous pavilion/sky depth as the distance for a second UV;
+    neighbouring water pixels therefore selected unrelated roofs, rails, and
+    background. Mips and critical-angle fades softened those selections but
+    could never make the mapping single-valued. The direct pavilion image can
+    also be outside the underwater camera viewport, so a stable one-tap screen
+    projection is insufficient.
+  - Underwater general scene-depth reconstruction has been removed. The
+    Arrival pavilion is now the deliberate scene-scale registration in the
+    shared forward target: clip below root-local y=-0.1 m, tessellate to 1.2 m
+    source edges, solve against the stable mean surface, and sample once in the
+    ocean. The mean plane prevents unresolved per-vertex wave normals from
+    folding the distant source; the visible ocean continues to supply its live
+    silhouette, exact Fresnel/TIR, and Snell mask.
+  - The pavilion registration is underwater-only, fades over 204–240 m, and is
+    nine shadowless half-resolution draws / about 71k triangles. A tier-0
+    fixed-view capture measured roughly 2 ms over the matched no-target view.
+    Above-water reflection remains the zero-extra-draw viewport path, including
+    a surfaced submarine. Do not restore the general underwater two-depth
+    trace, the source-footprint/critical-angle symptom guards, or untessellated
+    whole-pavilion vertex warping.

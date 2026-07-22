@@ -6,6 +6,12 @@ bubbles), `src/sea/wakeFoamMap.ts` (surface wake foam field, owned by the
 sea), and `src/physics/vehicleStructureColliders.ts` (vehicle-only building
 envelopes). Validation bookmark: `?view=submarine`.
 
+- When the craft surfaces, its opaque hull, porcelain, and brass participate
+  automatically in the ocean's shared same-frame viewport reflection, exactly
+  like opaque pavilion geometry. The moving model needs no mirrored duplicate,
+  interface-proxy registration, shadow pass, or vehicle-specific target. The
+  transmissive dome remains outside opaque-depth tracing by design.
+
 ## Model provenance & scale
 
 - The hull is a **verbatim port of `refs/submarine.html`** ("Le Nautile

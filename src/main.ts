@@ -137,7 +137,7 @@ async function boot(): Promise<void> {
     const physics = registry.add(new PhysicsSystem())
     const materials = registry.add(new MaterialsSystem(medium))
     const amenities = registry.add(new ParkAmenitiesSystem(materials))
-    registry.add(new ArrivalSystem(physics, materials))
+    registry.add(new ArrivalSystem(physics, materials, sea))
     const services: DistrictServices = { physics, materials, amenities }
     let player: PlayerSystem | null = null
     let heldItems: HeldItemSystem | null = null
@@ -158,7 +158,7 @@ async function boot(): Promise<void> {
     if (player && services.interaction) {
       registry.add(new TeleportSystem(player, services.interaction, terrainHeight))
     }
-    registry.add(new DescentBellSystem(services, player))
+    registry.add(new DescentBellSystem(services, player, sea))
     const submarine = registry.add(new SubmarineSystem(services, player, medium, sea))
     if (player) gameHud = registry.add(new GameHudSystem(player, sea, submarine))
     registry.add(new PearlLineSystem(services, player))
