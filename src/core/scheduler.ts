@@ -14,12 +14,12 @@ export interface ScheduleEntry {
 /**
  * The park timetable (plan §12) — the park breathes on a schedule.
  * Events fire on the bus as `schedule/event` with phase start/end;
- * shows, the whale, the manta flyover, and chimes all subscribe.
+ * shows, the whale, the eagle-ray flyover, and chimes all subscribe.
  */
 export const PARK_SCHEDULE: ScheduleEntry[] = [
   { name: 'chimes', period: 300, offset: 0, duration: 8 },
   { name: 'fountain-show', period: 720, offset: 90, duration: 180 },
-  { name: 'manta-flyover', period: 900, offset: 300, duration: 45 },
+  { name: 'ray-flyover', period: 900, offset: 300, duration: 45 },
   { name: 'whale-passage', period: 1200, offset: 600, duration: 90 },
 ]
 

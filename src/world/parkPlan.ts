@@ -14,8 +14,10 @@ export function anchorGround(anchor: { x: number; z: number }): number {
   return terrainHeight(anchor.x, anchor.z)
 }
 
-/** Built/reserved footprints: no flora, no scatter. Radii include margin. */
-const KEEPOUT_DISCS: { x: number; z: number; r: number }[] = [
+/** Built/reserved footprints: no flora, no scatter. Radii include margin.
+ *  Exported (readonly) so the seabed verge sampler can plant garden rings
+ *  JUST outside the real reserved edges instead of hardcoding copies. */
+export const KEEPOUT_DISCS: readonly { x: number; z: number; r: number }[] = [
   { x: PARK_PLAN.arrival.x, z: PARK_PLAN.arrival.z, r: 12 },
   { x: PARK_PLAN.atrium.x, z: PARK_PLAN.atrium.z, r: PARK_PLAN.atrium.plazaRadius + 4 },
   { x: PARK_PLAN.tidalCourt.x, z: PARK_PLAN.tidalCourt.z, r: PARK_PLAN.tidalCourt.colonnadeRadius + 11 },

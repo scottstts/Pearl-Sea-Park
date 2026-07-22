@@ -11,14 +11,24 @@ import {
   benchFacingDot,
   benchYawToward,
 } from '../src/world/parkAmenities.ts'
+import { auditFloraGeometry } from '../src/world/floraGeometry.ts'
+import { auditPelagicRoutes } from '../src/wildlife/pelagicRoutesAudit.ts'
+import { auditFaunaGeometry } from '../src/wildlife/speciesGeometry.ts'
+import { auditFaunaAssets } from './audit-fauna-assets.mjs'
+import { Rng } from '../src/core/prng.ts'
 
 const amenities = auditAmenityGeometry()
+const floraRoot = new Rng(19051906)
+const floraGeometry = auditFloraGeometry((label) => floraRoot.fork(label))
+const faunaGeometry = auditFaunaGeometry()
 const noticeBoardRoof = auditNoticeBoardRoof()
 const pearlLineCabin = auditPearlLineCabinGeometry()
 const facilitySigns = auditFacilitySigns()
 const torrentTrack = auditTorrentTrack()
 const torrentCarHull = auditTorrentCarHull()
 const pearlRoute = auditPearlRoute()
+const pelagicRoutes = auditPelagicRoutes()
+const faunaAssets = auditFaunaAssets()
 const oceanSkirts = [256, 384, 448].map((segments) => auditOceanSkirtGeometry(segments))
 const bellGlassOpening = auditBellGlassOpening()
 const benchFacing = [
@@ -74,8 +84,23 @@ const report = {
   torrentTrack,
   torrentCarHull,
   pearlRoute,
+  pelagicRoutes,
+  faunaAssets,
   oceanSkirts,
   bellGlassOpening,
+  floraGeometry,
+  faunaGeometry,
 }
 
 console.log(JSON.stringify(report, null, 2))
+
+const seabedFailures = [
+  ...floraGeometry.failures,
+  ...faunaGeometry.failures,
+  ...pelagicRoutes.failures,
+  ...faunaAssets.failures,
+]
+if (seabedFailures.length > 0) {
+  console.error(`flora/fauna geometry audit FAILED:\n- ${seabedFailures.join('\n- ')}`)
+  process.exitCode = 1
+}

@@ -1,11 +1,9 @@
 import {
   BufferAttribute,
   BufferGeometry,
-  CatmullRomCurve3,
   ConeGeometry,
   CylinderGeometry,
   SphereGeometry,
-  TubeGeometry,
   Vector3,
 } from 'three'
 
@@ -104,6 +102,86 @@ class WildlifeMeshWriter {
     }
   }
 
+  /** Swept tube with parallel-transported frames; closed at both ends
+   *  (fan cap at start, cone tip at the end) so limbs read solid. */
+  tube(
+    points: readonly Vector3[],
+    sides: number,
+    radiusAt: (t: number) => number,
+    morphAt: (t: number) => number = () => 0,
+    tipLength = 0.01,
+  ): void {
+    const count = points.length
+    const tangent = new Vector3()
+    const u = new Vector3()
+    const v = new Vector3()
+    const probe = new Vector3()
+    const rings: number[][] = []
+    for (let i = 0; i < count; i++) {
+      tangent.subVectors(points[Math.min(count - 1, i + 1)], points[Math.max(0, i - 1)])
+      if (tangent.lengthSq() < 1e-10) tangent.set(0, 1, 0)
+      tangent.normalize()
+      if (i === 0) {
+        probe.set(0, 1, 0)
+        if (Math.abs(tangent.dot(probe)) > 0.94) probe.set(1, 0, 0)
+        u.crossVectors(probe, tangent).normalize()
+      } else {
+        u.addScaledVector(tangent, -u.dot(tangent))
+        if (u.lengthSq() < 1e-8) {
+          probe.set(0, 1, 0)
+          if (Math.abs(tangent.dot(probe)) > 0.94) probe.set(1, 0, 0)
+          u.crossVectors(probe, tangent)
+        }
+        u.normalize()
+      }
+      v.crossVectors(u, tangent)
+      const t = count === 1 ? 0 : i / (count - 1)
+      const radius = radiusAt(t)
+      const morph = morphAt(t)
+      const ring: number[] = []
+      for (let s = 0; s < sides; s++) {
+        const angle = (s / sides) * Math.PI * 2
+        const cosA = Math.cos(angle)
+        const sinA = Math.sin(angle)
+        ring.push(
+          this.vertex(
+            points[i].x + (u.x * cosA + v.x * sinA) * radius,
+            points[i].y + (u.y * cosA + v.y * sinA) * radius,
+            points[i].z + (u.z * cosA + v.z * sinA) * radius,
+            morph,
+          ),
+        )
+      }
+      rings.push(ring)
+    }
+    for (let i = 0; i < count - 1; i++) {
+      for (let s = 0; s < sides; s++) {
+        const next = (s + 1) % sides
+        this.quad(rings[i][s], rings[i + 1][s], rings[i + 1][next], rings[i][next])
+      }
+    }
+    const startCap = this.vertex(points[0].x, points[0].y, points[0].z, morphAt(0))
+    for (let s = 0; s < sides; s++) {
+      const next = (s + 1) % sides
+      this.triangle(startCap, rings[0][s], rings[0][next])
+    }
+    const last = points[count - 1]
+    tangent.subVectors(last, points[Math.max(0, count - 2)])
+    if (tangent.lengthSq() < 1e-10) tangent.set(0, 1, 0)
+    tangent.normalize()
+    const tip = this.vertex(
+      last.x + tangent.x * tipLength,
+      last.y + tangent.y * tipLength,
+      last.z + tangent.z * tipLength,
+      morphAt(1),
+    )
+    const lastRing = rings[count - 1]
+    for (let s = 0; s < sides; s++) {
+      const next = (s + 1) % sides
+      this.triangle(tip, lastRing[next], lastRing[s])
+    }
+  }
+
   appendGeometry(geometry: BufferGeometry, morph: (p: Vector3) => number): void {
     const position = geometry.getAttribute('position')
     const base = this.positions.length / 3
@@ -135,105 +213,6 @@ class WildlifeMeshWriter {
     geometry.computeBoundingSphere()
     return geometry
   }
-}
-
-export function createRayGeometry(manta = false): BufferGeometry {
-  const writer = new WildlifeMeshWriter()
-  const halfWidth = manta ? 3.4 : 1.25
-  const halfLength = manta ? 2.25 : 0.9
-  // The wing disc: denser grid, swept-back tips, and a camber that rolls
-  // slightly downward past three-quarter span so the resting pose already
-  // reads as a glide instead of a flat kite. morphWeight stays ±normalizedX
-  // (the wing-lift channel the material animates).
-  const xSegments = 16
-  const zSegments = 9
-  const grid: number[][] = []
-  for (let zIndex = 0; zIndex <= zSegments; zIndex++) {
-    const v = zIndex / zSegments
-    const z = (0.5 - v) * halfLength * 2
-    const row: number[] = []
-    for (let xIndex = 0; xIndex <= xSegments; xIndex++) {
-      const u = xIndex / xSegments
-      const normalizedX = u * 2 - 1
-      const span = Math.abs(normalizedX)
-      const taper = Math.pow(Math.max(0, 1 - Math.abs(z / halfLength) * 0.72), 0.72)
-      const x = normalizedX * halfWidth * taper
-      // Sweep: the outer wing trails backward like a real myliobatid fin.
-      const sweep = -Math.pow(span, 1.7) * halfLength * 0.34
-      const camber = (1 - normalizedX * normalizedX) * 0.22
-      const droop = -Math.pow(Math.max(0, span - 0.72) / 0.28, 1.6) * 0.16
-      const y = camber + droop - Math.abs(z) * 0.035
-      row.push(writer.vertex(x, y, z * (1 - span * 0.18) + sweep, normalizedX))
-    }
-    grid.push(row)
-  }
-  for (let z = 0; z < zSegments; z++) {
-    for (let x = 0; x < xSegments; x++) {
-      writer.quad(grid[z][x], grid[z][x + 1], grid[z + 1][x + 1], grid[z + 1][x])
-    }
-  }
-  writer.ellipsoid([0, 0.16, halfLength * 0.16], [halfWidth * 0.12, 0.22, halfLength * 0.7], 10, 5)
-  // Eye bumps riding the head swell.
-  for (const side of [-1, 1]) {
-    writer.ellipsoid(
-      [side * halfWidth * 0.1, 0.3, halfLength * 0.42],
-      [halfWidth * 0.022, 0.045, halfLength * 0.05],
-      6,
-      4,
-    )
-  }
-  if (manta) {
-    // Cephalic lobes: the manta's unrolled feeding horns, real thickness.
-    for (const side of [-1, 1]) {
-      const lobe = new CylinderGeometry(0.09, 0.16, 0.85, 7)
-      lobe.rotateX(Math.PI / 2 - 0.34)
-      lobe.rotateY(side * 0.22)
-      lobe.translate(side * halfWidth * 0.115, -0.02, halfLength * 0.92)
-      writer.appendGeometry(lobe, () => 0)
-      lobe.dispose()
-    }
-  }
-  // Whip tail: a genuine tapering tube that carries the swim wave outward
-  // (the old tail was one flat triangle — cardboard from every side view).
-  const tailRings = 7
-  const tailStart = -halfLength * 0.86
-  const tailEnd = -halfLength * (manta ? 2.6 : 2.3)
-  const tailRows: number[][] = []
-  for (let ring = 0; ring <= tailRings; ring++) {
-    const t = ring / tailRings
-    const z = tailStart + (tailEnd - tailStart) * t
-    const radius = 0.055 * (1 - t) + 0.008
-    const row: number[] = []
-    for (let i = 0; i < 6; i++) {
-      const angle = (i / 6) * Math.PI * 2
-      row.push(
-        writer.vertex(
-          Math.cos(angle) * radius,
-          Math.sin(angle) * radius * 0.8 - t * 0.05,
-          z,
-          0.25 + t * 0.6,
-        ),
-      )
-    }
-    tailRows.push(row)
-  }
-  for (let ring = 0; ring < tailRings; ring++) {
-    for (let i = 0; i < 6; i++) {
-      const next = (i + 1) % 6
-      writer.quad(
-        tailRows[ring][i],
-        tailRows[ring][next],
-        tailRows[ring + 1][next],
-        tailRows[ring + 1][i],
-      )
-    }
-  }
-  const tailTip = writer.vertex(0, -0.05 - 0.05, tailEnd - 0.05, 0.9)
-  for (let i = 0; i < 6; i++) {
-    const next = (i + 1) % 6
-    writer.triangle(tailTip, tailRows[tailRings][i], tailRows[tailRings][next])
-  }
-  return writer.compile()
 }
 
 export function createTurtleGeometry(): BufferGeometry {
@@ -408,75 +387,6 @@ export function createJellyGeometry(): BufferGeometry {
   return writer.compile()
 }
 
-export function createSeahorseGeometry(): BufferGeometry {
-  // Spine runs crown → arched neck → plump belly → a tail that genuinely
-  // CURLS forward under the body. The body is a unit tube post-scaled to a
-  // per-ring radius profile (tube winding stays trustworthy; hand-built
-  // rings on a curved frame are easy to get inside-out).
-  const path = new CatmullRomCurve3([
-    new Vector3(0.08, 0.6, 0.1),
-    new Vector3(-0.02, 0.44, 0.0),
-    new Vector3(-0.06, 0.18, -0.03),
-    new Vector3(0.0, -0.12, -0.02),
-    new Vector3(0.05, -0.4, -0.1),
-    new Vector3(0.0, -0.62, -0.26),
-    new Vector3(-0.02, -0.64, -0.44),
-    new Vector3(0.0, -0.5, -0.52),
-    new Vector3(0.02, -0.44, -0.42),
-  ])
-  const TUBULAR = 30
-  const RADIAL = 7
-  const smooth01 = (t: number) => t * t * (3 - 2 * t)
-  const radiusAt = (t: number) => {
-    if (t < 0.32) return 0.055 + 0.07 * smooth01(t / 0.32)
-    if (t < 0.5) return 0.125 - 0.012 * smooth01((t - 0.32) / 0.18)
-    return 0.014 + 0.099 * Math.pow(1 - (t - 0.5) / 0.5, 1.4)
-  }
-  const tube = new TubeGeometry(path, TUBULAR, 1, RADIAL, false)
-  const position = tube.getAttribute('position')
-  const ringVertices = RADIAL + 1
-  const spinePoint = new Vector3()
-  const vertex = new Vector3()
-  for (let j = 0; j <= TUBULAR; j++) {
-    const t = j / TUBULAR
-    path.getPointAt(t, spinePoint)
-    // Bony ring segmentation: a seahorse is plated, not smooth — ~13 ridge
-    // rings ripple the radius profile, fading out where the tail thins to a
-    // needle so the curl stays clean.
-    const plate = 1 + 0.055 * Math.sin(t * Math.PI * 26) * Math.min(1, radiusAt(t) / 0.06)
-    const radius = radiusAt(t) * plate
-    for (let i = 0; i < ringVertices; i++) {
-      const index = j * ringVertices + i
-      vertex.fromBufferAttribute(position, index).sub(spinePoint).multiplyScalar(radius).add(spinePoint)
-      position.setXYZ(index, vertex.x, vertex.y, vertex.z)
-    }
-  }
-  tube.computeVertexNormals()
-  const writer = new WildlifeMeshWriter()
-  writer.appendGeometry(tube, (p) => Math.max(0, Math.min(1, (0.5 - p.y) / 1.1)))
-  tube.dispose()
-  // Tail-tip bead closes the open tube end inside the curl.
-  writer.ellipsoid([0.02, -0.44, -0.42], [0.02, 0.02, 0.02], 5, 3, () => 1)
-
-  // Head, tapered tube snout, coronet, and fins with actual thickness (the
-  // old snout and dorsal fin were single flat triangles — cardboard cutouts
-  // from the side they culled on).
-  writer.ellipsoid([0.08, 0.66, 0.14], [0.13, 0.12, 0.17], 10, 6)
-  const snout = new CylinderGeometry(0.022, 0.05, 0.3, 7)
-  snout.rotateX(Math.PI / 2 - 0.32)
-  snout.translate(0.06, 0.6, 0.32)
-  writer.appendGeometry(snout, () => 0)
-  snout.dispose()
-  const coronet = new ConeGeometry(0.05, 0.11, 5)
-  coronet.translate(0.08, 0.8, 0.1)
-  writer.appendGeometry(coronet, () => 0)
-  coronet.dispose()
-  writer.ellipsoid([-0.05, 0.16, -0.17], [0.015, 0.2, 0.08], 6, 4, () => 0.35)
-  writer.ellipsoid([0.21, 0.6, 0.16], [0.04, 0.08, 0.025], 6, 4, () => 0.1)
-  writer.ellipsoid([-0.05, 0.6, 0.16], [0.04, 0.08, 0.025], 6, 4, () => 0.1)
-  return writer.compile()
-}
-
 /**
  * A sea butterfly (pteropod) for the Sun Garden: plump body, two broad
  * wing lobes with real thickness, tiny tail streamer and antennae knobs.
@@ -571,8 +481,174 @@ export function createWhaleGeometry(): BufferGeometry {
   return writer.compile()
 }
 
+/**
+ * Garden eel: a slender S-curved column rising from the sand, head bead at
+ * the top. morphWeight = height fraction — the material sways the column
+ * and, via cameraPosition, sinks the whole colony shyly into the sand when
+ * a guest walks close.
+ */
+export function createGardenEelGeometry(): BufferGeometry {
+  const writer = new WildlifeMeshWriter()
+  const points: Vector3[] = []
+  const SAMPLES = 6
+  for (let i = 0; i <= SAMPLES; i++) {
+    const t = i / SAMPLES
+    points.push(
+      new Vector3(
+        Math.sin(t * Math.PI * 1.7) * 0.035 * t,
+        t * 0.52,
+        Math.sin(t * Math.PI * 1.2 + 0.8) * 0.03 * t,
+      ),
+    )
+  }
+  writer.tube(points, 5, (t) => 0.017 - t * 0.005, (t) => t, 0.004)
+  // Head bead + snout nub lean into the current.
+  writer.ellipsoid([points[SAMPLES].x, 0.53, points[SAMPLES].z], [0.019, 0.024, 0.021], 6, 4, () => 1)
+  writer.ellipsoid([points[SAMPLES].x, 0.535, points[SAMPLES].z + 0.02], [0.009, 0.009, 0.014], 4, 3, () => 1)
+  return writer.compile()
+}
+
+/** Scallop hinge line in geometry space (the material rotates the upper
+ *  valve about this local X-axis for the gape/snap cycle). */
+export const SCALLOP_HINGE = { y: 0.012, z: -0.085 }
+
+/**
+ * Snapping scallop: two ribbed valves with REAL thickness (outer shell,
+ * pale inner nacre sheet, closed rim) meeting at a back hinge. morphWeight
+ * is 1 on every upper-valve vertex and 0 on the lower — the material's
+ * hinge rotation needs no falloff because hinge-line vertices have zero
+ * lever arm by construction.
+ */
+export function createScallopGeometry(): BufferGeometry {
+  const writer = new WildlifeMeshWriter()
+  const COLUMNS = 9
+  const ROWS = [0, 0.42, 0.75, 1]
+  const buildValve = (upper: boolean): void => {
+    const morph = upper ? 1 : 0
+    const sign = upper ? 1 : -1
+    const outer: number[][] = []
+    const inner: number[][] = []
+    for (let r = 0; r < ROWS.length; r++) {
+      const f = ROWS[r]
+      const outerRow: number[] = []
+      const innerRow: number[] = []
+      for (let c = 0; c <= COLUMNS; c++) {
+        const spread = ((c / COLUMNS) * 2 - 1) * 1.35 // fan angle ±77°
+        const rib = 1 + 0.05 * Math.cos(spread * 6.5)
+        const reach = 0.105 * rib * f
+        const x = Math.sin(spread) * reach
+        const z = SCALLOP_HINGE.z + Math.cos(spread) * reach
+        // Dome peaks mid-fan and RETURNS to hinge level at the growing
+        // edge, so the two rims all but meet when the shell rests closed.
+        const dome = sign * (0.008 + 0.042 * Math.sin(f * Math.PI))
+        const ribHeight = sign * 0.0055 * Math.cos(spread * 6.5) * f
+        const y = SCALLOP_HINGE.y + dome + ribHeight
+        outerRow.push(writer.vertex(x, y, z, morph))
+        innerRow.push(writer.vertex(x * 0.94, y - sign * 0.0045, SCALLOP_HINGE.z + (z - SCALLOP_HINGE.z) * 0.94, morph))
+      }
+      outer.push(outerRow)
+      inner.push(innerRow)
+    }
+    for (let r = 0; r < ROWS.length - 1; r++) {
+      for (let c = 0; c < COLUMNS; c++) {
+        if (upper) {
+          writer.quad(outer[r][c], outer[r + 1][c], outer[r + 1][c + 1], outer[r][c + 1])
+          writer.quad(inner[r][c], inner[r][c + 1], inner[r + 1][c + 1], inner[r + 1][c])
+        } else {
+          writer.quad(outer[r][c], outer[r][c + 1], outer[r + 1][c + 1], outer[r + 1][c])
+          writer.quad(inner[r][c], inner[r + 1][c], inner[r + 1][c + 1], inner[r][c + 1])
+        }
+      }
+    }
+    // Rim wall between the sheets along the growing edge and the two
+    // straight sides back to the hinge — the valve is a closed solid.
+    const last = ROWS.length - 1
+    for (let c = 0; c < COLUMNS; c++) {
+      if (upper) writer.quad(outer[last][c], inner[last][c], inner[last][c + 1], outer[last][c + 1])
+      else writer.quad(outer[last][c], outer[last][c + 1], inner[last][c + 1], inner[last][c])
+    }
+    for (const edge of [0, COLUMNS]) {
+      for (let r = 0; r < ROWS.length - 1; r++) {
+        if ((edge === 0) === upper) {
+          writer.quad(outer[r][edge], outer[r + 1][edge], inner[r + 1][edge], inner[r][edge])
+        } else {
+          writer.quad(outer[r][edge], inner[r][edge], inner[r + 1][edge], outer[r + 1][edge])
+        }
+      }
+    }
+  }
+  buildValve(false)
+  buildValve(true)
+  // Hinge knuckle bridges the valves at the back.
+  writer.ellipsoid([0, SCALLOP_HINGE.y, SCALLOP_HINGE.z - 0.004], [0.052, 0.016, 0.02], 6, 3, () => 0)
+  return writer.compile()
+}
+
 export function geometryMetrics(geometry: BufferGeometry): GeometryMetrics {
   const vertices = geometry.getAttribute('position').count
   const triangles = geometry.getIndex()?.count ? geometry.getIndex()!.count / 3 : vertices / 3
   return { vertices, triangles }
+}
+
+export interface FaunaGeometryAudit {
+  archetypes: Record<string, GeometryMetrics & { minY: number; maxY: number }>
+  failures: string[]
+}
+
+/** Numeric self-check for `npm run audit:geometry` over the REMAINING
+ *  procedural fauna (the moving animals are GLB-loaded now and audited
+ *  separately by scripts/audit-fauna-assets.mjs): budgets, finiteness,
+ *  morph ranges, and ground contact. */
+export function auditFaunaGeometry(): FaunaGeometryAudit {
+  const failures: string[] = []
+  const archetypes: FaunaGeometryAudit['archetypes'] = {}
+  const cases: { name: string; build: () => BufferGeometry; maxTriangles: number }[] = [
+    { name: 'turtle', build: () => createTurtleGeometry(), maxTriangles: 1500 },
+    { name: 'jelly', build: () => createJellyGeometry(), maxTriangles: 500 },
+    { name: 'sun-butterfly', build: () => createSunButterflyGeometry(), maxTriangles: 500 },
+    { name: 'humpback', build: () => createWhaleGeometry(), maxTriangles: 2200 },
+    { name: 'garden-eel', build: () => createGardenEelGeometry(), maxTriangles: 160 },
+    { name: 'scallop', build: () => createScallopGeometry(), maxTriangles: 400 },
+  ]
+  for (const testCase of cases) {
+    const geometry = testCase.build()
+    const metrics = geometryMetrics(geometry)
+    geometry.computeBoundingBox()
+    const box = geometry.boundingBox!
+    archetypes[testCase.name] = { ...metrics, minY: box.min.y, maxY: box.max.y }
+    if (metrics.triangles === 0) failures.push(`${testCase.name}: empty geometry`)
+    if (metrics.triangles > testCase.maxTriangles) {
+      failures.push(`${testCase.name}: ${metrics.triangles} triangles exceeds budget ${testCase.maxTriangles}`)
+    }
+    const position = geometry.getAttribute('position')
+    for (let i = 0; i < position.count; i++) {
+      if (
+        !Number.isFinite(position.getX(i)) ||
+        !Number.isFinite(position.getY(i)) ||
+        !Number.isFinite(position.getZ(i))
+      ) {
+        failures.push(`${testCase.name}: non-finite vertex ${i}`)
+        break
+      }
+    }
+    const morph = geometry.getAttribute('morphWeight')
+    for (let i = 0; i < morph.count; i++) {
+      const value = morph.getX(i)
+      if (value < -1.001 || value > 1.001) {
+        failures.push(`${testCase.name}: morphWeight ${value.toFixed(3)} out of range at ${i}`)
+        break
+      }
+    }
+    geometry.dispose()
+  }
+  // Eels rise straight from the ground plane.
+  const eel = createGardenEelGeometry()
+  eel.computeBoundingBox()
+  if (eel.boundingBox!.min.y < -0.03 || eel.boundingBox!.max.y < 0.4) {
+    failures.push(
+      `garden-eel: column spans y ${eel.boundingBox!.min.y.toFixed(3)}..${eel.boundingBox!.max.y.toFixed(3)}`,
+    )
+  }
+  eel.dispose()
+  return { archetypes, failures }
 }

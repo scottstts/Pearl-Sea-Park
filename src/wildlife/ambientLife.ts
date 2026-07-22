@@ -48,10 +48,10 @@ import type { SeaMediumSystem } from '../sea/medium'
 import type { DistrictServices } from '../world/districts/atrium'
 import { anchorGround, PARK_PLAN } from '../world/parkPlan'
 import { terrainHeight } from '../world/terrain'
+import type { FaunaInstance, FaunaLibrary } from './faunaAssets'
+import { BLUE_WHALE_ROUTE, pelagicRouteCurve, REEF_SHARK_ROUTES } from './pelagicRoutes'
 import {
   createJellyGeometry,
-  createRayGeometry,
-  createSeahorseGeometry,
   createSunButterflyGeometry,
   createTurtleGeometry,
   geometryMetrics,
@@ -63,25 +63,40 @@ interface InstanceDraw {
   material: MeshStandardNodeMaterial
 }
 
+/** A GLB animal riding one authored closed circuit. */
+interface RouteSwimmer {
+  instance: FaunaInstance
+  curve: CatmullRomCurve3
+  rate: number
+  phase: number
+}
+
 export interface AmbientLifeSnapshot {
   rays: number
+  flyoverRays: number
   turtles: number
   courtJellies: number
   seahorses: number
   sunButterflies: number
+  sharks: number
+  blueWhales: number
   geometry: Record<string, GeometryMetrics>
 }
 
 /**
  * The authored, low-count wildlife and the Menagerie's habitat staging.
- * Paths are analytic/spline-driven on CPU; all dense motion and body
- * deformation stays in vertex TSL with one draw per population.
+ * The moving open-water cast (eagle rays, both sharks, the blue whale) is
+ * GLB rigs playing their authored clips while CPU splines drive the roots;
+ * the Menagerie exhibits (turtles, jellies, seahorses, sun butterflies)
+ * remain procedural vertex-TSL populations — no replacement assets exist
+ * for them yet.
  */
 export class AmbientLife {
   readonly group = new Object3D()
 
   private readonly medium: SeaMediumSystem
   private readonly services: DistrictServices
+  private readonly fauna: FaunaLibrary
   private readonly timeUniform = uniform(0)
   private readonly smallRayCurves: CatmullRomCurve3[] = []
   private readonly turtleCurve: CatmullRomCurve3
@@ -92,17 +107,27 @@ export class AmbientLife {
   private readonly position = new Vector3()
   private readonly tangent = new Vector3()
   private readonly right = new Vector3()
+  private readonly localUp = new Vector3()
   private readonly up = new Vector3(0, 1, 0)
   private readonly scale = new Vector3()
-  private smallRays: InstanceDraw | null = null
-  private manta: Mesh | null = null
+  private readonly rays: FaunaInstance[] = []
+  private readonly flyover: FaunaInstance[] = []
   private turtles: InstanceDraw | null = null
+  private readonly swimmers: RouteSwimmer[] = []
+  private readonly seahorses: {
+    instance: FaunaInstance
+    base: Vector3
+    baseYaw: number
+    phase: number
+  }[] = []
+  private readonly seahorseHub = new Vector3()
   private readonly denseDraws: InstanceDraw[] = []
   private readonly geometries = new Map<string, GeometryMetrics>()
 
-  constructor(services: DistrictServices, medium: SeaMediumSystem) {
+  constructor(services: DistrictServices, medium: SeaMediumSystem, fauna: FaunaLibrary) {
     this.services = services
     this.medium = medium
+    this.fauna = fauna
     this.turtleCurve = createTurtleLagoonCurve()
   }
 
@@ -110,6 +135,8 @@ export class AmbientLife {
     const rng = ctx.rng.fork('wildlife-ambient')
     this.buildHabitats(ctx)
     this.buildRays(rng.fork('rays'))
+    this.buildFlyover()
+    this.buildPelagics()
     this.buildTurtles(rng.fork('turtles'))
     this.buildJellies(rng.fork('jellies'))
     this.buildSeahorses(rng.fork('seahorses'))
@@ -518,19 +545,8 @@ export class AmbientLife {
   }
 
   private buildRays(rng: Rng): void {
-    const smallGeometry = createRayGeometry(false)
-    this.geometries.set('ray', geometryMetrics(smallGeometry))
-    const smallMaterial = this.createWingMaterial(vec3(0.18, 0.29, 0.31), 0.14)
-    const smallRays = new InstancedMesh(smallGeometry, smallMaterial, 5)
-    smallRays.instanceMatrix.setUsage(DynamicDrawUsage)
-    smallRays.frustumCulled = true
-    smallRays.castShadow = true
-    smallRays.receiveShadow = true
-    smallRays.name = 'wildlife-rays'
-    markDynamicShadowCasters(smallRays)
-    this.smallRays = { mesh: smallRays, material: smallMaterial }
-    this.group.add(smallRays)
-
+    // Five ambient eagle rays gliding their local circles 8–17 m up —
+    // deliberately ABOVE the shark band so the two layers read separately.
     const rayAnchors: readonly [number, number][] = [
       [-105, 155],
       [115, 95],
@@ -538,7 +554,7 @@ export class AmbientLife {
       [120, -35],
       [30, 260],
     ]
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < rayAnchors.length; i++) {
       const [cx, cz] = rayAnchors[i]
       const radius = rng.range(24, 46)
       const points: Vector3[] = []
@@ -551,43 +567,73 @@ export class AmbientLife {
       }
       this.smallRayCurves.push(new CatmullRomCurve3(points, true, 'centripetal', 0.5))
       this.smallRayPhases.push(rng.next())
+      const instance = this.fauna.spawn('eagleRay', {
+        scale: 0.86 + i * 0.08, // 1.9–2.6 m wingspans
+        phase: rng.next(),
+      })
+      instance.root.name = `wildlife-ray-${i}`
+      markDynamicShadowCasters(instance.root)
+      this.group.add(instance.root)
+      this.rays.push(instance)
     }
-
-    const mantaGeometry = createRayGeometry(true)
-    this.geometries.set('manta', geometryMetrics(mantaGeometry))
-    const mantaMaterial = this.createWingMaterial(vec3(0.1, 0.16, 0.18), 0.24)
-    const manta = new Mesh(mantaGeometry, mantaMaterial)
-    manta.castShadow = true
-    manta.receiveShadow = true
-    manta.frustumCulled = true
-    manta.name = 'wildlife-manta'
-    markDynamicShadowCasters(manta)
-    this.manta = manta
-    this.group.add(manta)
   }
 
-  private createWingMaterial(color: Node<'vec3'>, amplitude: number): MeshStandardNodeMaterial {
-    const material = new MeshStandardNodeMaterial()
-    material.side = DoubleSide
-    material.roughness = 0.5
-    material.metalness = 0.04
-    const wing = attribute('morphWeight', 'float') as unknown as Node<'float'>
-    const undulation = sin(
-      this.timeUniform.mul(1.7).add(wing.abs().mul(2.6)),
-    ).mul(wing.abs().pow(1.35)).mul(amplitude)
-    material.positionNode = positionLocal.add(vec3(0, undulation, 0))
-    // Countershaded hide: pale warm belly under the dark dorsal tone, with
-    // the eagle-ray constellation — pale spots scattered over the back only,
-    // from the same field that mottles the dorsal shading.
-    const back = positionGeometry.y.add(0.2).clamp(0, 1)
-    const hideField = fbm2(positionGeometry.xz.mul(2.8))
-    const dorsal = color.mul(hideField.mul(0.3).add(0.85))
-    const spots = smoothstep(0.72, 0.78, fbm2(positionGeometry.xz.mul(5.6).add(31)))
-    material.colorNode = mix(vec3(0.52, 0.56, 0.54), dorsal, back).add(
-      vec3(0.32, 0.36, 0.35).mul(spots).mul(back),
-    )
-    this.medium.applyCaustics(material, 0.9)
-    return material
+  /**
+   * The scheduled Esplanade crossing, re-cast (2026-07-22): the procedural
+   * manta retired with the rest of the procedural swimmers, and the show
+   * is now an eagle-ray SQUADRON — three animals in echelon at the top of
+   * the species' real size range, so the marble-crossing shadow beat
+   * survives at honest scale. Same authored hero path, same 45 s window,
+   * same idle roam over the west sand between shows.
+   */
+  private buildFlyover(): void {
+    const scales = [1.32, 1.22, 1.27] // 2.9 / 2.7 / 2.8 m spans
+    const phases = [0, 0.37, 0.71]
+    for (let i = 0; i < scales.length; i++) {
+      const instance = this.fauna.spawn('eagleRay', { scale: scales[i], phase: phases[i] })
+      instance.root.name = `wildlife-flyover-ray-${i}`
+      markDynamicShadowCasters(instance.root)
+      this.group.add(instance.root)
+      this.flyover.push(instance)
+    }
+  }
+
+  /**
+   * The pelagic heroes (Scott's rulings, 2026-07-22): the reef shark, the
+   * hammerhead, and the 24 m blue whale roam stingray-style RINGS over
+   * the southern verge — circular loops, only slightly different from
+   * each other, each swinging back past the park entrance every ~3–6
+   * minutes (directions and phases staggered). Sharks at 5–6 m over the
+   * seabed, the whale at 9 m (headroom for its ±3.7 m fluke stroke). All
+   * are GLB rigs playing their authored swim clips while CPU splines
+   * drive the roots along wildlife/pelagicRoutes.ts, and all rings are
+   * structure-safe by AUDIT (keepouts, Pearl pylons + descending cabins,
+   * the Torrent track, facility signs, terrain band).
+   */
+  private buildPelagics(): void {
+    for (const route of [...REEF_SHARK_ROUTES, BLUE_WHALE_ROUTE]) {
+      const curve = pelagicRouteCurve(route)
+      const instance = this.fauna.spawn(route.species, {
+        scale: route.scale,
+        phase: route.phase,
+      })
+      instance.root.name = `wildlife-${route.name}`
+      markDynamicShadowCasters(instance.root)
+      this.group.add(instance.root)
+      this.swimmers.push({
+        instance,
+        curve,
+        rate: route.speed / curve.getLength(),
+        phase: route.phase,
+      })
+    }
+
+    registerBookmark({
+      name: 'pelagics',
+      position: [14, terrainHeight(14, 292) + 1.8, 292],
+      look: [-6, terrainHeight(-6, 305) + 18, 305],
+      note: 'Entrance threshold — the park rings carry both sharks and the blue whale overhead',
+    })
   }
 
   private buildTurtles(rng: Rng): void {
@@ -817,84 +863,99 @@ export class AmbientLife {
     this.denseDraws.push({ mesh, material })
   }
 
+  /**
+   * The carousel's seahorse ring, GLB-bodied (Scott's ruling): forty
+   * loaded rigs playing their authored sway clip (bones + morph-target
+   * fin flutter) at honest big-bellied-seahorse scale, hovering the same
+   * ring the procedural ones held. A gentle CPU drift/bob keeps them
+   * breathing between clip beats; one cluster-level distance gate sleeps
+   * the whole herd when nobody is near the carousel.
+   */
   private buildSeahorses(rng: Rng): void {
-    const geometry = createSeahorseGeometry()
-    this.geometries.set('seahorse', geometryMetrics(geometry))
-    const count = 40
-    const origins = new Float32Array(count * 3)
-    const phases = new Float32Array(count)
-    const material = new MeshStandardNodeMaterial()
-    material.side = DoubleSide
-    material.roughness = 0.42
-    material.metalness = 0.08
-    const mesh = new InstancedMesh(geometry, material, count)
-    const matrix = new Matrix4()
-    const quaternion = new Quaternion()
-    const scale = new Vector3()
-    for (let i = 0; i < count; i++) {
+    const carousel = PARK_PLAN.carousel
+    this.seahorseHub.set(carousel.x, terrainHeight(carousel.x, carousel.z) + 3, carousel.z)
+    // Scott's ruling: denser herd, ~2× the size, with a wide random
+    // spread (33–61 cm — display creatures, not field-guide scale).
+    for (let i = 0; i < 72; i++) {
       const angle = rng.range(0, Math.PI * 2)
       const radius = rng.range(13.5, 20)
-      const x = PARK_PLAN.carousel.x + Math.cos(angle) * radius
-      const z = PARK_PLAN.carousel.z + Math.sin(angle) * radius
+      const x = carousel.x + Math.cos(angle) * radius
+      const z = carousel.z + Math.sin(angle) * radius
       const y = terrainHeight(x, z) + rng.range(1.2, 5.6)
-      origins.set([x, y, z], i * 3)
-      phases[i] = rng.range(0, Math.PI * 2)
-      quaternion.setFromAxisAngle(this.up, -angle + Math.PI / 2 + rng.range(-0.45, 0.45))
-      const s = rng.range(0.55, 1.05)
-      scale.set(s, s, s)
-      matrix.compose(new Vector3(x, y, z), quaternion, scale)
-      mesh.setMatrixAt(i, matrix)
+      const instance = this.fauna.spawn('seahorse', {
+        scale: rng.range(1.25, 2.35),
+        phase: rng.next(),
+      })
+      instance.root.name = `wildlife-seahorse-${i}`
+      markMainDetail(instance.root)
+      this.group.add(instance.root)
+      this.seahorses.push({
+        instance,
+        base: new Vector3(x, y, z),
+        baseYaw: -angle + Math.PI / 2 + rng.range(-0.45, 0.45),
+        phase: rng.range(0, Math.PI * 2),
+      })
     }
-    geometry.setAttribute('instanceOrigin', new InstancedBufferAttribute(origins, 3))
-    geometry.setAttribute('instancePhase', new InstancedBufferAttribute(phases, 1))
-    const origin = attribute('instanceOrigin', 'vec3') as unknown as Node<'vec3'>
-    const phase = attribute('instancePhase', 'float') as unknown as Node<'float'>
-    const swayWeight = attribute('morphWeight', 'float') as unknown as Node<'float'>
-    const relative = positionLocal.sub(origin)
-    const sway = sin(this.timeUniform.mul(1.35).add(phase)).mul(swayWeight).mul(0.08)
-    material.positionNode = origin
-      .add(relative)
-      .add(vec3(sway, sin(this.timeUniform.mul(0.7).add(phase)).mul(0.14), sway.mul(-0.6)))
-      .add(currentFlow(origin, this.timeUniform).mul(vec3(0.28, 0.1, 0.28)))
-    material.colorNode = mix(vec3(0.38, 0.18, 0.08), vec3(0.86, 0.54, 0.18), swayWeight)
-    this.medium.applyCaustics(material, 1)
-    mesh.instanceMatrix.needsUpdate = true
-    mesh.computeBoundingSphere()
-    mesh.frustumCulled = true
-    mesh.castShadow = false
-    mesh.receiveShadow = false
-    mesh.name = 'wildlife-seahorses'
-    markMainDetail(mesh)
-    this.group.add(mesh)
-    this.denseDraws.push({ mesh, material })
   }
 
-  update(ctx: GameContext, dt: number, mantaAmount: number, mantaPhase: number): void {
+  private updateSeahorses(elapsed: number, dt: number, camera: Vector3): void {
+    if (this.seahorses.length === 0) return
+    // A 25 cm animal is sub-pixel long before ~120 m; the ring lives
+    // around one hub, so one gate sleeps all forty rigs together.
+    const near = camera.distanceToSquared(this.seahorseHub) < 120 * 120
+    for (const seahorse of this.seahorses) {
+      seahorse.instance.setActive(near)
+      if (!near) continue
+      const root = seahorse.instance.root
+      root.position.set(
+        seahorse.base.x + Math.sin(elapsed * 0.31 + seahorse.phase) * 0.22,
+        seahorse.base.y + Math.sin(elapsed * 0.7 + seahorse.phase) * 0.14,
+        seahorse.base.z + Math.cos(elapsed * 0.26 + seahorse.phase * 1.3) * 0.22,
+      )
+      root.rotation.set(0, seahorse.baseYaw + Math.sin(elapsed * 0.35 + seahorse.phase) * 0.14, 0)
+      seahorse.instance.update(dt)
+    }
+  }
+
+  update(ctx: GameContext, dt: number, flyoverAmount: number, flyoverPhase: number): void {
     this.timeUniform.value = ctx.time.elapsed
-    void dt
-    this.updateSmallRays(ctx.time.elapsed)
-    this.updateManta(ctx.time.elapsed, mantaAmount, mantaPhase)
+    this.updateRays(ctx.time.elapsed, dt)
+    this.updateSwimmers(ctx.time.elapsed, dt)
+    this.updateFlyover(ctx.time.elapsed, dt, flyoverAmount, flyoverPhase)
+    this.updateSeahorses(ctx.time.elapsed, dt, ctx.camera.position)
     this.updateTurtles(ctx.time.elapsed)
   }
 
-  private updateSmallRays(elapsed: number): void {
-    const draw = this.smallRays
-    if (!draw) return
-    for (let i = 0; i < this.smallRayCurves.length; i++) {
+  private updateSwimmers(elapsed: number, dt: number): void {
+    for (const swimmer of this.swimmers) {
+      const u = (swimmer.phase + elapsed * swimmer.rate) % 1
+      swimmer.curve.getPointAt(u, this.position)
+      swimmer.curve.getTangentAt(u, this.tangent).normalize()
+      this.orientAlong(swimmer.instance.root, this.position, this.tangent)
+      swimmer.instance.update(dt)
+    }
+  }
+
+  private updateRays(elapsed: number, dt: number): void {
+    for (let i = 0; i < this.rays.length; i++) {
       const curve = this.smallRayCurves[i]
       const u = (this.smallRayPhases[i] + elapsed * (0.009 + i * 0.0007)) % 1
       curve.getPointAt(u, this.position)
       curve.getTangentAt(u, this.tangent).normalize()
-      this.composeAlong(this.position, this.tangent, 0.82 + i * 0.07)
-      draw.mesh.setMatrixAt(i, this.matrices)
+      this.orientAlong(this.rays[i].root, this.position, this.tangent)
+      this.rays[i].update(dt)
     }
-    draw.mesh.instanceMatrix.needsUpdate = true
-    draw.mesh.computeBoundingSphere()
   }
 
-  private updateManta(elapsed: number, amount: number, phase: number): void {
-    const manta = this.manta
-    if (!manta) return
+  /** Echelon offsets (right, up, back) in the leader's path frame. */
+  private static readonly FLYOVER_OFFSETS: readonly (readonly [number, number, number])[] = [
+    [0, 0, 0],
+    [-3.4, -0.85, -4.4],
+    [3.0, 0.75, -5.7],
+  ]
+
+  private updateFlyover(elapsed: number, dt: number, amount: number, phase: number): void {
+    if (this.flyover.length === 0) return
     const idleAngle = elapsed * 0.014
     const idle = new Vector3(
       -70 + Math.cos(idleAngle) * 85,
@@ -910,10 +971,29 @@ export class AmbientLife {
     const heroTangent = new Vector3(0.04, -Math.cos(phase * Math.PI) * 0.08, -1).normalize()
     this.position.copy(idle).lerp(hero, amount)
     this.tangent.copy(idleTangent).lerp(heroTangent, amount).normalize()
-    this.composeAlong(this.position, this.tangent, 1)
-    manta.matrixAutoUpdate = false
-    manta.matrix.copy(this.matrices)
-    manta.matrixWorldNeedsUpdate = true
+    this.right.crossVectors(this.up, this.tangent).normalize()
+    this.localUp.crossVectors(this.tangent, this.right).normalize()
+    this.orientation.makeBasis(this.right, this.localUp, this.tangent)
+    for (let i = 0; i < this.flyover.length; i++) {
+      const offset = AmbientLife.FLYOVER_OFFSETS[i]
+      const member = this.flyover[i]
+      member.root.position
+        .copy(this.position)
+        .addScaledVector(this.right, offset[0])
+        .addScaledVector(this.localUp, offset[1])
+        .addScaledVector(this.tangent, offset[2])
+      member.root.quaternion.setFromRotationMatrix(this.orientation)
+      member.update(dt)
+    }
+  }
+
+  /** Point a spawned animal's +Z along the tangent, world-up-stabilized. */
+  private orientAlong(root: Object3D, position: Vector3, tangent: Vector3): void {
+    this.right.crossVectors(this.up, tangent).normalize()
+    this.localUp.crossVectors(tangent, this.right).normalize()
+    this.orientation.makeBasis(this.right, this.localUp, tangent)
+    root.position.copy(position)
+    root.quaternion.setFromRotationMatrix(this.orientation)
   }
 
   private updateTurtles(elapsed: number): void {
@@ -941,24 +1021,25 @@ export class AmbientLife {
 
   dispose(ctx: GameContext): void {
     ctx.scene.remove(this.group)
-    for (const draw of [this.smallRays, this.turtles, ...this.denseDraws]) {
+    for (const draw of [this.turtles, ...this.denseDraws]) {
       if (!draw) continue
       draw.mesh.geometry.dispose()
       draw.material.dispose()
     }
-    if (this.manta) {
-      this.manta.geometry.dispose()
-      ;(this.manta.material as MeshStandardNodeMaterial).dispose()
-    }
+    // GLB instances share the FaunaLibrary's geometry/materials — the
+    // library owns that disposal.
   }
 
   debugSnapshot(): AmbientLifeSnapshot {
     return {
-      rays: 6,
+      rays: this.rays.length,
+      flyoverRays: this.flyover.length,
       turtles: 8,
       courtJellies: 400,
-      seahorses: 40,
+      seahorses: this.seahorses.length,
       sunButterflies: 44,
+      sharks: 3,
+      blueWhales: 1,
       geometry: Object.fromEntries(this.geometries),
     }
   }

@@ -1526,3 +1526,357 @@
     helm hints. Do not infer ride names or camera positions in the UI.
   - FPS is presentation cadence from `GameLoop.onFrameEnd`, smoothed before a
     restrained 400 ms DOM update; it is not CPU time or a second stats panel.
+- 2026-07-22 flora/fauna total remake (Scott's request: sculpted, alive,
+  naturally distributed, cheap; see systems/seabed-flora.md + wildlife.md):
+  - **Cross-system determinism via fork labels is the coupling-free way to
+    share a world layout.** `Rng.fork(label)` depends only on seed+label, so
+    FloraSystem and WildlifeSystem each call `computeSeabedColonies(ctx.rng)`
+    and get IDENTICAL reef patches — fish schools circle the exact coral
+    colonies flora planted, with no import between the systems and no
+    ordering hazard. Reuse this for any future paired systems.
+  - **Instanced + positionLocal offsets is now the proven flora pattern**
+    (the jelly precedent generalizes): instance matrices carry
+    yaw/scale/translation; world-space sway offsets add onto positionLocal.
+    For anything that must ROTATE in-shader (fish heading, crab facing,
+    scallop yaw), keep instance rotation IDENTITY, rotate in TSL, and set
+    `normalNode = transformNormalToView(sameRotation(normalGeometry))` —
+    skipping the normal rotation lights a turning fish from the wrong side.
+  - **The grass-skill arc formula bakes a resting droop** (a = φ·w^1.5 gives
+    drop = H(w^1.5 − w) ≠ 0 at φ→0). For buoyant kelp use a = φ_v·w with
+    stiffness in φ_v(w) — every term then vanishes at zero bend. No sag at
+    rest, same nice progressive curvature under load.
+  - **Gait sign lesson:** in a lift/stride leg cycle, feet must lift on the
+    phase half where the stride sweeps back→front and plant while it drifts
+    front→back. `lift = max(0, sin)` with `stride = cos` is the WRONG half —
+    it moonwalks. Negate the lift gate.
+  - **Pair/formation members must share motion parameters exactly** —
+    butterflyfish pairs with independently drawn omegas separate within
+    minutes. Draw once per pair, reuse for both.
+  - Closable two-valve shells: the valve dome profile must RETURN to hinge
+    level at the growing edge (peak mid-fan), or the shell is permanently
+    agape; inner sheets need a tapered offset so they never cross when shut.
+  - `cameraPosition` in the vertex stage is a free proximity sensor: garden
+    eels retract by scaling relative.y with a smoothstep of camera XZ
+    distance (staggered thresholds → the lawn ripples). Zero CPU.
+  - Baked `tint` channel = "color follows the carved cause" generalized (the
+    turtle contour-lines trick): meander ridges, strata bands, branch order,
+    slip bands all displace AND tint in the same loop, and materials just
+    mix on tint. Cheaper and more honest than recomputing fields in TSL.
+  - Reef distribution is patches + falloff + snugging (anemones/urchins
+    against placed rocks, fans on the rim aligned across the patch tangent,
+    sibling micro-clusters for brains) + a thin loner scatter. Uniform
+    random confetti never reads as an ecosystem.
+  - `audit:geometry` now fails (exit 1) on flora/fauna regressions: budgets,
+    finiteness, channel ranges, mean-outward normals on closed masses, crab
+    ground contact, kelp authored height. Extend those tables when adding
+    archetypes — a browserless numeric gate catches inside-out/blown-budget
+    meshes the moment they're built.
+  - Urchin-class seating: round-bottomed creatures standing on protrusions
+    want NEGATIVE sink (lift ≈ 0.6·scale here) — seat() semantics allow it.
+- 2026-07-22 density/LOD correction (Scott: "I don't really see much change
+  anywhere — no lush flora, no fish swimming by"; reef-photo reference):
+  - **Distribute by guest proximity, not map area.** The colony-only layout
+    was ecologically pretty and perceptually EMPTY: all life sat 100–400 m
+    from the paths where the camera never goes. The fix that mattered was
+    the verge sampler (`sampleParkVergePoint` — path shoulders + plaza
+    rims, lateral-biased close, KEEPOUT_DISCS now exported for the rims):
+    plant a quarter of the grass, coral garden beds, shell litter, half
+    the crabs, and scallop beds THERE. If a feature isn't reachable from
+    the walking network's sightline, most players never learn it exists.
+  - **Shader scale-collapse is the LOD workhorse for dense dressing**:
+    per-instance origin attr + `origin + rel·smoothstep(far, 0.75·far,
+    xzDist(camera, origin))` collapses far instances to degenerate points
+    (rasterizer discards; only cheap vertex work remains). This let grass
+    go ~3× and litter ~2.5× with LESS steady-state fragment cost than
+    before. Rigid landmark reef (casters) and 10 m kelp keep full range;
+    the sand-tint field already carries distant meadow color, so grass
+    collapse at 115 m does not pop. Frustum culling still matters: 10×10
+    grass chunks + quadrant sectors.
+  - **Camera-wrapped drifter fish** guarantee close encounters everywhere:
+    the particulate re-tiling trick (fract((anchor−boxCenter)/box)) with
+    per-instance straight headings, swim wave, wag; scale→0 at box walls
+    hides wraps, and a waterline gate (world.y smoothstep −0.5→−1.8)
+    keeps fish out of the air. Box y-band rides ABOVE the eye (center
+    +3 m, half 4.5) so fish never clip up through walkway floors.
+    frustumCulled=false, one draw, zero CPU. Reusable for any ambient
+    passerby life.
+  - Rejected alternative: raising counts alone without the verge band —
+    tripled instances over 500k m² still averages one encounter per
+    minute of walking. Proximity allocation beats magnitude.
+- 2026-07-22 marine-identity + fish-shadow pass (Scott's refs: Fucus bed,
+  coastal algae; "they don't look like sea vegetation at all"):
+  - **Land-plant construction grammars do not survive underwater.** Upright
+    tapered blades = lawn grass; a stipe carrying leaf-blades = a sapling —
+    regardless of palette or sway. Marine reads come from different shapes
+    entirely: broad leathery ribbons with serrated/lobed margins, tubular
+    finger bushes, feathery notched plumes, low DOMED clumps; tall kelp =
+    straps that rise, bow over, and STREAM (spread > rise — now an audit
+    assertion). The vegetation-skill blade/branch patterns are for land;
+    know when a skill's domain does not transfer (Scott called this out
+    explicitly).
+  - Clustered distribution recipe that finally reads natural: low-freq
+    density mask (sand-tint-coupled) × HIGH-frequency clump-noise gate
+    (fbm ~0.033/m, smoothstep 0.42–0.7 → 15–30 m patches) × parent-child
+    sprouting (each parent seeds 1–3 children within ~2 m). Weighted
+    Poisson-disk was considered; the Neyman–Scott cluster process gives
+    the same clumped look for a fraction of the code.
+  - **A caster material must never read TSL `cameraPosition`.** During the
+    dynamic-shadow pass the "camera" is the LIGHT camera: the drifter wrap
+    box would re-tile around the sun and every fish shadow would detach.
+    Feed the main camera's position as a CPU uniform (`viewCenter`) and
+    use it for wrap centers AND LOD fades in anything that casts. (Safe in
+    non-casters: eels/crabs/scallops/flora keep cameraPosition.)
+  - Fish population ruling: NO distant fish. Schools live only on the
+    garden patches by the park; everywhere else two camera-local wrap
+    boxes (dense 24 m shoal + 48 m halo) carry the life, and all fish cast
+    into the continuously-refreshed dynamic map (cheap — it renders every
+    frame anyway; the cached static clipmaps would freeze animated poses).
+- 2026-07-22 model-fidelity pass (double eyes, detached ray tail, pelagics):
+  - **Never paint facial detail with a distance-disc mask**: the disc also
+    catches the body surface BEHIND the authored bump — Scott saw fish with
+    "two eyes per side". Bake a NEGATIVE sentinel into the animation
+    channel on the feature's own vertices (`EYE_MORPH = −0.08`, pupil =
+    `smoothstep(−0.04, −0.065, morph)`); as wave amplitude the magnitude is
+    invisible. ONLY legal where the channel is otherwise non-negative — the
+    ray's ±normalizedX wing channel would tattoo a pupil stripe down the
+    port wing (caught in review; rays keep bump-only eyes).
+  - **"Detached appendage" bugs are containment bugs**: the ray tail
+    started 0.25 body-lengths past the body ellipsoid's end and ~0.15
+    BELOW the wing sheet — invisible from above (plan view aligns), obvious
+    from the side. Fix by construction: extend the parent volume, root the
+    appendage's fattest ring inside it, settle the adjoining surface toward
+    it — and assert containment numerically in audit:geometry so the class
+    can't regress. Sheets got real thickness (top+bottom+rim) at the same
+    time; single sheets vanish edge-on and exaggerate any gap behind them.
+  - **CPU-spline casters can't shader-rotate** (instance rotation is baked
+    per frame), so a lateral swim wave needs the world lateral axis as a
+    per-instance HEADING attribute refreshed alongside the matrices —
+    trivial CPU (4 instances), caster-safe (no cameraPosition, no
+    per-pass divergence). Sibling of the viewCenter-uniform lesson.
+  - Pelagic overhead lanes: the y band [−9.6, −6.5] clears EVERYTHING
+    built (domes ≤ −13 except the atrium spire and wheel crest, which the
+    loop geometry avoids by ≥ 40 m laterally; Pearl cable −10.5). Slow
+    laps (6–17 min) keep big animals "an occasion", not wallpaper.
+- 2026-07-22 pelagic rework (Scott's screenshot: floating shark parts, too
+  high/too small, entrance fly-bys):
+  - **Placement-by-eye is banned for appendages, full stop.** The ray-tail
+    lesson above was NOT generalized and the exact same class shipped
+    again the same day: both sharks' squashed-sphere caudal lobes floated
+    entirely outside the peduncle (upper lobe root ~1 m above/behind the
+    body at whale scale), and the whale shark's eyes were fully BURIED
+    (body half-width 0.81 at their station, eye reach 0.74 — invisible).
+    Now every appendage is a `finPlate` (closed two-sheet + rim solid)
+    whose ROOT CHORD is authored against exported body ring tables, fin
+    roots inherit the body's interpolated wave weight at their station
+    (wave can't shear a seam), and `auditFaunaGeometry` asserts every
+    root-chord probe inside the ring ellipse (`sharkFinRootInsideBody`).
+    When adding ANY new appended part: export the parent volume, probe the
+    root, fail the audit on escape.
+  - **Big-animal presence = altitude, not scale.** At 17 m up a real-scale
+    2.5 m blacktip reads as a minnow. Scott's rule: realistic scale, ~5–6 m
+    over the seabed (whale shark 6.8), i.e. at/below the small rays.
+    Nothing taller than 3.74 m (lamps) stands on open sand/paths outside
+    keepouts, so ≥5.2 m cruise clears all walkway furniture.
+  - **Hero routes are AUTHORED waypoints in a leaf module**
+    (`wildlife/pelagicRoutes.ts`, terrainHeight + three only) — no rng
+    jitter. Authored constants are what make spatial contracts auditable:
+    `pelagicRoutesAudit.ts` (audit-only, never imported by the game)
+    samples the exact game curves vs keepout discs/capsules (mirrored from
+    PARK_PLAN per the torrentTrack literal precedent), sign micro-discs,
+    the Torrent track in 3D, and an entrance-pass contract
+    (`PELAGIC_ENTRANCE_PASS`, ≤45 m). Waypoint y = terrain + clearance so
+    routes ride the dunes; audit pins the sampled band.
+  - **The Pearl Line is a 3D hazard for low fauna, not a ceiling.** Near
+    both stations the cable DESCENDS to dock height — cabins sweep the
+    whole 0–14 m band along the approach legs. Rule: cross the cable line
+    only where (cabin bottom − animal top) ≥ 1.5 m (cabin envelope = cable
+    y down to −PEARL_HANG−1.4), and clear a CONSERVATIVE pylon superset
+    (every 60 m along the loop incl. candidates the game skips) by ≥5 m.
+    The audit caught two would-be cabin collisions (0.4 m!) and three
+    pylon grazes that hand placement missed — never route near the Pearl
+    loop without this check.
+  - Distinctness ruling — SUPERSEDED later the same day: the "four
+    different SHAPES" routes made entrance passes too rare (Scott: "only
+    one time passing the entrance and i never see it again"). Standing
+    ruling now: sharks + whale roam stingray-style circular RINGS anchored
+    off the entrance, only slightly different from each other, returning
+    every few minutes (see the behavior-parity entry below). Long
+    scenic laps are OUT for hero pelagics.
+
+- 2026-07-22 GLB cast pivot (procedural animals retired):
+  - **Ruling: no more procedural animal MESHES** — "just not the level of
+    fidelity i want." All moving animals are free authored GLBs playing
+    their exact authored clips: shark, hammerhead, blue whale (replacing
+    the whale shark on the grand circuit), eagle stingray (ambient rays +
+    the flyover), crab, emperor angelfish, tuna. Raw files stay in
+    `assets/glb_raw/`; the game loads compressed <1 MB copies from
+    `public/fauna/` (pipeline contract enforced by
+    `scripts/audit-fauna-assets.mjs` inside audit:geometry). Do NOT sculpt
+    replacement fauna procedurally again; ask for an asset instead. The
+    still-procedural stragglers (turtles, jellies, seahorses, sun
+    butterflies, humpback, eels, scallops) have NO replacement assets yet
+    and swap the same way when Scott supplies them.
+  - **Measure rigs by SKINNED pose, never mesh-node bounds.** Sketchfab
+    rigs transform meshes through the armature: the blue whale's skeleton
+    scales its mesh 5.6× (raw bounds said 5.8 units, posed truth 32.3);
+    the tuna's mesh node stands vertical while the skeleton swims
+    horizontally. `SkinnedMesh.computeBoundingBox()` after
+    `skeleton.update()` is the only honest ruler (faunaAssets
+    `posedLocalBox`), and per-clone `computeBoundingSphere()` (×1.45
+    swell) is the only honest culling volume.
+  - **Never route-follow a clip with root motion** — the shark's
+    'circling' clip translates 62 units (a baked orbit that would fight
+    the spline). Offline pose audit every clip for center drift before
+    shipping it; strip non-in-place clips in the pipeline.
+  - **Transparent fish ghost under the depth-composited fog.** Underwater
+    haze reads scene depth; BLEND materials don't write it. Angelfish
+    body → OPAQUE, fins → alpha-MASK 0.35, done in the asset, not at
+    runtime.
+  - **gltf-transform extension removal = dispose the Extension OBJECT.**
+    Per-material `setExtension(name, null)` leaves the extension
+    registered and written into `extensionsUsed` (and `metalRough()`
+    re-ADDS specular/ior to carry spec-gloss F0). Strip unlit (the crab
+    shipped unlit — it must be delit to take sun/caustics), clearcoat,
+    specular, ior after conversion.
+  - **GLB materials must convert to MeshStandardNodeMaterial** to receive
+    `medium.applyCaustics` (receivedShadowNode); haze is free (fullscreen
+    HDR composite). Pin metalness ~0.04 and floor roughness per species —
+    Sketchfab exports run glossy (the tuna shipped roughness 0).
+  - **Async asset seam**: `GameSystem.init` may return a Promise (registry
+    awaits; audio precedent) — FaunaLibrary loads in WildlifeSystem's
+    async init, constructors stay synchronous.
+  - **Re-cast decisions**: manta flyover → eagle-ray SQUADRON (3 in
+    echelon, 2.6–2.9 m spans, event/view/postcard renamed manta→rays) —
+    species-honest scale beats one impossible giant. Emperor angelfish
+    live in PAIRS (territorial, not schoolers). Blue whale cruises at
+    clearance 9 m — its animated fluke sweep is ±3.7 m and the cabin
+    audit uses per-species top extents. (The tuna's authored southern
+    route from this entry was replaced the same day by the behavior-parity
+    ruling below — tuna are camera-local cruisers now.) Crab facing flip
+    constant `CRAB_FACING_FLIP` awaits visual confirmation of the walk
+    clip's leading flank.
+
+- 2026-07-22 behavior-parity fixes (same day, after Scott's first look):
+  - **NEVER frustum-cull skinned fauna meshes.** Scott saw animals vanish
+    while partially in shot, and five species never drew at all.
+    SkinnedMesh culls by a bounding sphere in "attached"-bind-mode mesh
+    space; rigs that transform their mesh THROUGH the armature (blue
+    whale skeleton 5.6× its mesh node, tuna's vertical mesh node,
+    multi-skin hammerhead/angelfish) put that sphere in the wrong place —
+    near-identity rigs (shark, ray) merely popped at frame edges, the
+    rest were culled ~always. Per-clone computeBoundingSphere didn't fix
+    it (bindMatrixInverse tracks matrixWorld, so the cached sphere's
+    frame drifts as the animal travels). Standing fix: `frustumCulled =
+    false` on every fauna mesh in FaunaLibrary.prepare; visibility cost
+    is controlled by distance gates instead. Gates use
+    `instance.setActive` = visible + matrixWorldAutoUpdate, so a hidden
+    184-joint crab costs zero matrix-world walks too.
+  - **"Mesh only" is the replacement contract.** Scott's ruling: GLB
+    swaps must keep the OLD behaviors. Concretely restored: (1) the
+    camera-local drifter wrap box is back — ~38 angelfish + a few tuna
+    cruisers always swimming around the guest, same 24×8×24 m box, same
+    wall/waterline scale-fade, no distant fish — with the wrap math on
+    CPU (which deletes the viewCenter-vs-cameraPosition caster trap
+    entirely: no shader-side camera term, shadows agree for free);
+    (2) crabs shuffle BACK AND FORTH on a short wandering line with the
+    walk clip playing in reverse on the return leg (negative
+    mixer.timeScale, eased stops at the ends) — his suggested mechanic,
+    and it hides any clip-direction guess; (3) sharks + whale ring the
+    entrance (below). The tuna ROUTE and its bookmark are gone.
+  - **Entrance rings — SUPERSEDED within hours** by Scott's drawing: the
+    verge rings sat OUTSIDE the park box ("blue path"); he wants the
+    loops ABOVE the park itself ("red path"). See the over-park entry
+    below. The hand-check habit stands: nearest circle point =
+    |dist(center→hazard) − radius| before trusting the audit run.
+
+- 2026-07-22 over-park rings + dead-clip lesson (fourth pass, Scott's
+  drawing):
+  - **The pelagic rings circle ABOVE THE PARK, not outside it.** Standing
+    ruling from Scott's sketch: red path = loop enclosing the guest
+    districts, returning over the entrance every lap; blue path (rings
+    off the south verge) = wrong. Implemented as ~140–165 m-radius
+    wobbled circles centered near (0,150): shark 945 m / 7.9 min CCW
+    @17.5 m, hammerhead 867 m / 8.5 min CW @17.8 m, blue whale 1005 m /
+    9.3 min @20.8 m — entrance passes 6 / 11.3 / 5.5 m, speeds at the
+    energetic end of each species' real cruise range so laps stay in
+    single-digit minutes.
+  - **Over-park flight = height-aware audit.** pelagicRoutesAudit now
+    splits hazards: FULL-HEIGHT (breaching Great Wheel, Descent Bell
+    shaft, Torrent + Pearl stations, submarine berth, Esplanade vault,
+    Midway hall) keep 2D keepouts; everything else is OVERFLYABLE with a
+    top (sun dome exact at 13.8 m, plazas/courts conservative, signs
+    6.5 m, pylons up to their LOCAL cable height) — the species' BODY
+    BOTTOM (belly, or the whale's −3.7 m fluke downstroke) must clear
+    tops by ≥1.2 m. The Pearl cable band is legal above the hardware or
+    below the cabin sweep (±1.5 m). The audit immediately earned its keep
+    again: the Pearl loop's WESTERN return leg rides ~0.7 m ABOVE cruise
+    height, which forced shark/whale clearances up 0.3 m.
+  - **Profile clip ACTIVITY before shipping an animation.** The
+    angelfish's only take (43 s) is completely motionless for its first
+    28 s — random spawn phases parked most fish in the dead stretch and
+    Scott read the species as unanimated ("animation is gone in game"),
+    while QuickLook (playing from t=0 through the active tail) looked
+    fine. Fix: `clipWindow` in the fauna manifest trims to the active
+    window at load (angelfish [28,43] → a live 15 s loop). Bucket-sweep
+    bone velocity across the whole clip; don't judge by a 1-second probe.
+  - **Diagnostic hygiene**: my first bone-motion probe sampled only the
+    FIRST 60 bones and 1.2 s — for a 184-joint crab and a 43 s clip that
+    measured exactly the still parts and "proved" the pipeline broke the
+    animations (it hadn't; every compressed clip is healthy). Measure ALL
+    bones across the FULL duration before blaming a pipeline stage.
+  - Crabs were never missing — sparse (34), small, and camouflaged.
+    (The `?view=crabs` bookmark added here was REMOVED the same day at
+    Scott's request; see the flora-cluster entry below for the standing
+    crab distribution.)
+
+- 2026-07-22 crab clusters + seahorse swap (fifth pass):
+  - **Crabs spawn ON the flora clusters — no separate distribution.**
+    Scott's ruling, with a screenshot of the planted colony patches (the
+    clusters with the conch shells): the seabed colony patches ARE the
+    crab distribution. buildCrabs now walks `colonies.patches` directly,
+    placing each crab between the plants (0.25–0.95 × patch radius,
+    slope + footprint filters kept). The old verge/apron/open-sand
+    sampling is gone. Lesson: when the player says they can't FIND a
+    population, put it where their eyes already go, don't add finding
+    aids — Scott explicitly rejected anything smelling of UI (the
+    `?view=crabs` bookmark is deleted; note the pre-existing `?view=`
+    bookmark system itself is NOT in-game UI and the other views stay).
+  - **Seahorse GLB swap** (assets/glb_raw/seahorse.glb → public/fauna/
+    seahorse.glb, 361 kB): forty rigs on the carousel ring at honest
+    big-bellied-seahorse scale (19–28 cm), authored 10.4 s sway clip
+    playing bones AND morph-target fin flutter. Pipeline rule learned:
+    NEVER simplify() a rig whose clip has `weights` channels — morph
+    targets and the simplifier don't mix; meshopt alone brought 6.4 MB →
+    361 kB with all 28k tris. Activity-profiled before shipping (uniform
+    gentle sway, no dead zones — no clipWindow needed). One cluster-level
+    setActive gate (120 m off the carousel hub) sleeps all forty rigs;
+    procedural createSeahorseGeometry is deleted with its audit case.
+
+- 2026-07-22 crab census + seahorse scale (sixth pass):
+  - **"Guests will find them" is a MEASURABLE claim — census it.** Scott
+    reported no crabs for the third time, so the spawn logic was
+    replicated offline (tsx, same seed 19051906, same fork labels) with
+    distance-to-nearest-path histograms. Verdict: the colony patches are
+    mostly far wilderness (0/90 homes within 10 m of a path, 47/90
+    beyond the 80 m visibility gate), AND the park-footprint filter's
+    2.2 m margin had silently rejected the ENTIRE walkway-verge band
+    since the procedural era — "half the crabs on the verges" never
+    actually existed in any build. Fix: crabs spawn where flora actually
+    grows — 50% verge tufts (sampleParkVergePoint 0.5–5.5 m, NO footprint
+    filter: beside-the-path is the point), 30% colony patches, 20% kelp
+    groves; gate 100 m. Census after: 24/90 within 10 m of a path
+    centerline, 38 on verges. Rule: any "encounter" population ships
+    with a census, not a hope.
+  - **Seahorses at display scale by ruling**: 72 rigs (was 40), spawn
+    scale 1.25–2.35 → 33–61 cm, ~2× the real species ceiling — Scott's
+    explicit call ("on avg 2x bigger with a random size range"),
+    overriding scale-correctness for this exhibit. Realism yields to a
+    direct ruling; note it, don't relitigate it.
+
+- 2026-07-22 crab final placement (seventh pass): Scott sees crabs now.
+  Final rulings: 100% of crabs in the walkway-verge tuft band (colony
+  patches and kelp groves are OUT for crabs — "these are the only places
+  player would actually go to and see"), and 2× display scale with a
+  random spread (spawn scale 1.5–2.6 → 42–73 cm spans), matching the
+  seahorse precedent: encounter species get display scale by ruling,
+  field-guide realism yields. buildCrabs no longer takes colonies at all.
