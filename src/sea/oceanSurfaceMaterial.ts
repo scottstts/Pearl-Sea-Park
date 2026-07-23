@@ -246,9 +246,8 @@ export function createOceanSurfaceMaterial(
   const keepCascade2 = float(1).sub(smoothstep(0.1, 0.4, pixelFootprint))
   const cascadeKeeps = [float(1), keepCascade1, keepCascade2]
 
-  // Bind each raw cascade sample once. The visible-water normal and the more
-  // aggressively filtered Snell transmission normal below reuse these fetches,
-  // so optical stability adds arithmetic rather than texture IO.
+  // Bind each raw cascade sample once: the shared optical normal and the
+  // above-water-only capillary variant below both consume these fetches.
   const derivativeSamples: Node<'vec4'>[] = []
   for (let i = 0; i < cascadeCount; i++) {
     derivativeSamples.push(
@@ -290,53 +289,19 @@ export function createOceanSurfaceMaterial(
   const distanceFade = smoothstep(5.0, 16.0, pixelFootprint)
   const normal = normalize(mix(rawNormal, vec3(0, sideSign, 0), distanceFade))
 
-  // Water -> air expands angles, with an unbounded derivative at the critical
-  // angle. A wave band that is spatially resolved on the water can therefore
-  // still become subpixel in the transmitted image. Estimate that Snell
-  // Jacobian from the regular normal, square it for the 2-D source footprint,
-  // and reapply the established cascade LOD thresholds. This finite-pixel
-  // microfacet average stabilizes transmission without flattening the visible
-  // silver-ceiling reflection.
-  const preliminaryBelowNoV = max(dot(viewDir, normal), 0.001)
-  const waterToAirEta = float(WATER_IOR / AIR_IOR)
-  const preliminarySinTransmitted2 = waterToAirEta
-    .mul(waterToAirEta)
-    .mul(float(1).sub(preliminaryBelowNoV.mul(preliminaryBelowNoV)))
-  const preliminaryCosTransmitted = float(1)
-    .sub(preliminarySinTransmitted2)
-    .max(0.0)
-    .sqrt()
-  const snellAngularStretch = waterToAirEta
-    .mul(preliminaryBelowNoV)
-    .div(preliminaryCosTransmitted.max(0.04))
-    .max(1.0)
-  const snellFootprint = pixelFootprint
-    .mul(snellAngularStretch.mul(snellAngularStretch))
-    .min(64.0)
-  const snellKeeps = [
-    float(1).sub(smoothstep(2.5, 5.5, snellFootprint)),
-    float(1).sub(smoothstep(0.35, 1.2, snellFootprint)),
-    float(1).sub(smoothstep(0.1, 0.4, snellFootprint)),
-  ]
-  let snellDerivatives: Node<'vec4'> = derivativeSamples[0].mul(snellKeeps[0])
-  for (let i = 1; i < cascadeCount; i++) {
-    snellDerivatives = snellDerivatives.add(
-      derivativeSamples[i].mul(snellKeeps[i]),
-    )
-  }
-  const snellSlopeX = snellDerivatives.x.div(
-    max(0.18, snellDerivatives.z.add(1)),
-  )
-  const snellSlopeZ = snellDerivatives.y.div(
-    max(0.18, snellDerivatives.w.add(1)),
-  )
-  const snellResolvedUp = normalize(
-    vec3(snellSlopeX.negate(), 1, snellSlopeZ.negate()),
-  )
-  const snellDistanceFade = smoothstep(5.0, 16.0, snellFootprint)
-  const belowOpticalNormal = normalize(
-    mix(snellResolvedUp, vec3(0, 1, 0), snellDistanceFade),
-  ).negate()
+  // Below-surface optics use this same resolved normal. Water -> air expands
+  // angles with an unbounded derivative at the critical angle, but that is a
+  // property of the transmitted IMAGE, not of the interface: where the window
+  // rim lies is a coverage question answered by derivative-filtered critical-
+  // angle masking, and the one genuinely unresolvable source — the delta-light
+  // sun lobe — is broadened at its own site below. A second normal whose
+  // cascade footprint was scaled by the squared Snell stretch was tried here
+  // and REMOVED: past ~10 m of depth it drove the whole outer window to a
+  // mathematically flat plane, which rendered Snell's window as a clean
+  // analytic conic instead of a live wave-shaped silhouette. Its actual
+  // consumer, the general underwater two-depth viewport trace, no longer
+  // exists (see `belowSceneSample`). Never filter the interface to stabilize
+  // what is transported through it.
 
   const sunDir = sunDirectionUniform
 
@@ -381,13 +346,14 @@ export function createOceanSurfaceMaterial(
     )
   }
 
-  // Exact, unpolarised dielectric Fresnel. The returned Y channel is the
-  // physical transmission-domain mask (zero under total internal reflection).
+  // Exact, unpolarised dielectric Fresnel. Y is the physical transmission-
+  // domain mask (zero under total internal reflection); Z is the transmitted
+  // cosine, which the water -> air side reuses for its angular stretch.
   const dielectricFresnel = (
     cosIncident: Node<'float'>,
     incidentIor: number,
     transmittedIor: number,
-  ): Node<'vec2'> => {
+  ): Node<'vec3'> => {
     const etaI = float(incidentIor)
     const etaT = float(transmittedIor)
     const etaRatio = etaI.div(etaT)
@@ -419,14 +385,18 @@ export function createOceanSurfaceMaterial(
       .mul(cosIncident)
       .sub(etaI.mul(cosTransmitted))
       .div(etaT.mul(cosIncident).add(etaI.mul(cosTransmitted)).max(1e-4))
-    return vec2(rs.mul(rs).add(rp.mul(rp)).mul(0.5), canTransmit) as Node<'vec2'>
+    return vec3(
+      rs.mul(rs).add(rp.mul(rp)).mul(0.5),
+      canTransmit,
+      cosTransmitted,
+    ) as Node<'vec3'>
   }
 
   const incident = viewDir.negate()
   const aboveNoV = max(dot(viewDir, aboveNormal), 0.001)
   const aboveFresnelResult = dielectricFresnel(aboveNoV, AIR_IOR, WATER_IOR)
   const aboveFresnel = aboveFresnelResult.x
-  const belowNoV = max(dot(viewDir, belowOpticalNormal), 0.001)
+  const belowNoV = max(dot(viewDir, normal), 0.001)
   const belowFresnelResult = dielectricFresnel(belowNoV, WATER_IOR, AIR_IOR)
   const interfaceFresnel = belowFresnelResult.x
   const insideWindow = belowFresnelResult.y
@@ -596,11 +566,7 @@ export function createOceanSurfaceMaterial(
     }
   }
 
-  const belowRefracted = refract(
-    incident,
-    belowOpticalNormal,
-    WATER_IOR / AIR_IOR,
-  )
+  const belowRefracted = refract(incident, normal, WATER_IOR / AIR_IOR)
   // Underwater scene-scale subjects are forward-projected into the dedicated
   // layer below. A current-view depth snapshot cannot solve an offscreen air
   // source, and feeding discontinuous depth back into another lookup is what
@@ -877,8 +843,31 @@ export function createOceanSurfaceMaterial(
 
   // ── Below-surface shading: the Silver Ceiling ──────────────────────────
   const skyThrough = skyRadiance(belowRefracted, float(0)).mul(0.9)
-  const windowGlint = pow(max(dot(belowRefracted, sunDir), 0.0), 700.0)
-    .mul(24.0)
+
+  // The transmitted sun is a delta light, so its LOBE — never the interface —
+  // is the part an output pixel can fail to resolve. Water -> air expands
+  // angles by S = eta*cos(theta_i)/cos(theta_t), unbounded at the critical
+  // angle, and for a fixed view ray a normal tilting by d moves the
+  // transmitted direction by |1 - S|*d. Measure that tilt per pixel from the
+  // resolved normal, convolve the lobe with the resulting spread, and rescale
+  // the peak by the surviving exponent so the lobe's integrated energy is
+  // conserved as it widens. Resolved water keeps the original hard sparkle;
+  // the rim hands it to a broad sheen instead of crawling. cos^n ~=
+  // exp(-n*d^2/2), so the authored lobe carries variance 1/n.
+  const snellAngularStretch = float(WATER_IOR / AIR_IOR)
+    .mul(belowNoV)
+    .div(belowFresnelResult.z.max(0.04))
+    .max(1.0)
+  const normalTiltPerPixel = max(normal.dFdx().length(), normal.dFdy().length())
+  const transmittedSpread = snellAngularStretch
+    .sub(1)
+    .mul(normalTiltPerPixel)
+    .mul(0.5)
+  const glintExponent = float(1).div(
+    float(1 / 700).add(transmittedSpread.mul(transmittedSpread)),
+  )
+  const windowGlint = pow(max(dot(belowRefracted, sunDir), 0.0), glintExponent)
+    .mul(glintExponent.mul(24.0 / 700.0))
     .mul(sunColorUniform)
 
   // Only real geometry in air participates below the surface. The sky dome

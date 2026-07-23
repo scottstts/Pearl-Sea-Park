@@ -2089,3 +2089,38 @@
     arrive as per-vertex jitter). Cap the shift at half an edge's apparent
     angular size — folding is a resolution failure, so bound it with the
     source's own resolution; that cap correctly scales as 1/(distance·stretch).
+
+- 2026-07-23 Snell-window rim restored (removes the transmission normal added
+  by the 2026-07-22 "Snell-rim source-minification correction"):
+  - Scott reported the window rim reading as a clean analytic curve where it
+    used to be a live dappled wave silhouette. Cause: the second below-surface
+    normal whose cascade keeps ran on `pixelFootprint × S²`,
+    `S = eta·cosθᵢ/cosθₜ`. Measured at the rim, that product is 3.3 / 10.2 /
+    25.5 / 40.8 at 3 / 10 / 25 / 40 m of camera depth against keeps authored in
+    metres per pixel (2.5–5.5, 0.35–1.2, 0.1–0.4), so from ~10 m down every
+    cascade zeroed and the rim was masked, Fresnel-weighted and refracted off a
+    flat plane. It also reached inward: at 25 m the 0.83 m band was already
+    dead by 45° of incidence, so the window interior lost its ripple too. That
+    is the "sometimes" in the report — depth, not time.
+  - **Check whether a filter still has a consumer before keeping it.** That
+    normal existed to stabilize the general underwater two-depth viewport
+    trace, and the same commit deleted that trace (`belowSceneSample` is now a
+    literal `vec4(0)`; the pavilion moved to the forward-projected layer). It
+    survived as pure cost plus the visual regression.
+  - The fix separates three concerns the filter had merged: rim POSITION is
+    coverage (the derivative-filtered critical-angle mask already owns it, and
+    its `fwidth·1.5` clamp of 0.05 in sin²θₜ ≈ 1.6° is a cap on real per-pixel
+    variation, so it under-softens rather than over-softens); rim CONTENT is a
+    source lookup, and both remaining sources are already safe; the transmitted
+    SUN is the only genuine delta light, so `windowGlint` now convolves its
+    cos^700 lobe with the measured spread `|1 − S|·|∂n/∂pixel|/2` and rescales
+    the peak by the surviving exponent to conserve lobe energy. Resolved water
+    reproduces the old sparkle exactly (spread → 0 ⇒ exponent → 700, gain → 24).
+  - Two dimensional errors worth remembering if a stretch-aware filter is ever
+    revisited: the water→air solid-angle Jacobian is `eta²·cosθᵢ/cosθₜ = S·eta`,
+    not `S²` (up to ~16× over-blur at the clamp), and the stretch is
+    anisotropic — meridional `S`, sagittal a constant `eta`. Applying an
+    angular Jacobian to a metres-per-pixel footprint is a unit error either way.
+  - Verify with `?view=snell` / `?view=arrival-snell-rim` at a fixed `?time=`;
+    `?pass=water-validity` puts `insideWindow` in blue underwater, which
+    isolates the rim shape on its own.
