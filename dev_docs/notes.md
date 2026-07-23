@@ -2048,3 +2048,44 @@
     a surfaced submarine. Do not restore the general underwater two-depth
     trace, the source-footprint/critical-angle symptom guards, or untessellated
     whole-pavilion vertex warping.
+
+- 2026-07-23 world-anchored transmitted body + angular pavilion motion
+  (supersedes a same-day attempt at both, which fixed neither):
+  - **A view-dependent term is not the same as a screen-dependent one.** Scott's
+    test is the right one: standing still and only tilting the head must not
+    change what the ocean is made of. Incidence legitimately changes with view
+    angle (Fresnel), but the pale patch grew because the *presence of bottom
+    light* depended on whether the refracted source landed inside the frustum.
+    Any radiance that only a screen-space trace can supply is frustum-shaped by
+    construction. Dimming that trace — the first attempt added the missing
+    downwelling leg, worth only ~25% at these depths — cannot fix a term whose
+    SHAPE is wrong; it just makes a slightly darker patch.
+  - Fix: `sea/seabedRadiance.ts` bakes `terrainHeight` into a 256² R16F field
+    and every above-water pixel of the detailed sheet transports its own
+    bottom (downwelling leg → Beer–Lambert return → in-scatter). The trace now
+    only *replaces* that base at matched mean radiance, so its validity edge
+    carries detail, not level. Consequence to expect and accept: clear 250 m-
+    visibility water over a 26 m white-sand shelf legitimately reads turquoise
+    at close range and deep blue over the north drop-off — that IS the honest
+    answer, and it makes the park visible from the surface.
+  - When a detailed-sheet-only term changes the BODY color, its handoff must be
+    `edgeKeep`, not distance. Distance-keyed handoffs match the skirt at deck
+    height and leave a bright ring at the seam from an elevated camera.
+  - **Frozen refraction was a magnitude bug, not a missing mechanism.** The
+    first attempt did add live slopes, but scaled them to a 1.6 half-resolution
+    pixel cap ≈ 3 display pixels — invisible, and indistinguishable from doing
+    nothing. Before writing a "bounded" term, compute what the bound is worth in
+    display pixels; a cap chosen for safety alone will silently be a no-op.
+  - The physical form is angular and self-bounding: tilting the interface by δ
+    moves a fixed source's apparent direction by δ·(1 − 1/S), S = the Snell
+    angular stretch. That factor saturates below one even as S diverges at the
+    critical angle, so image motion can never exceed the surface's own lean —
+    unlike a per-vertex Fermat solve, where wave normals enter the path and
+    distance amplifies them into crystal facets. Rotate the solved direction;
+    never feed slope back into the mean plane.
+  - Sample a tilt at the scale the geometry can carry: a central difference of
+    the heightfield over one source edge, NOT a point sample of the derivative
+    map (cascade 0 alone reaches ~2.8 m against 1.2 m edges, and sub-edge bands
+    arrive as per-vertex jitter). Cap the shift at half an edge's apparent
+    angular size — folding is a resolution failure, so bound it with the
+    source's own resolution; that cap correctly scales as 1/(distance·stretch).

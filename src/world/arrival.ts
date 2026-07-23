@@ -610,7 +610,8 @@ export class ArrivalSystem implements GameSystem {
     // is the crucial difference from the rejected whole-pavilion attempt:
     // large deck/pile triangles can no longer interpolate a nonlinear Snell
     // warp into crystal facets. Scene-scale imagery uses the stable mean
-    // surface; local FFT crossings remain the job of the small Bell layer.
+    // surface plus a strictly pixel-bounded FFT shimmer; local, fully physical
+    // FFT crossings remain the job of the small Bell layer.
     this.unregisterInterfaceStructure = this.sea.registerInterfaceStructure({
       name: 'Arrival pavilion',
       root: this.group,
@@ -618,6 +619,7 @@ export class ArrivalSystem implements GameSystem {
       minimumLocalY: -0.1,
       maxEdgeLength: 1.2,
       stableMeanSurface: true,
+      liveInterfaceMotion: true,
       underwaterOnly: true,
       maxCameraDistance: 240,
     })

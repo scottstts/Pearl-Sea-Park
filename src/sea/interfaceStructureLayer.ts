@@ -39,6 +39,7 @@ import {
   step,
   texture,
   uniform,
+  vec2,
   vec3,
   vec4,
 } from 'three/tsl'
@@ -78,6 +79,12 @@ export interface InterfaceStructureRegistration {
   minimumLocalY?: number
   /** Use the mean plane for scene-scale imagery instead of per-vertex waves. */
   stableMeanSurface?: boolean
+  /**
+   * Give a stable mean-plane image the interface's real apparent motion.
+   * Requires `maxEdgeLength`: both the resolvable slope and the bound that
+   * keeps the moving image from folding derive from the source tessellation.
+   */
+  liveInterfaceMotion?: boolean
   /** Skip this scene-scale target entirely for cameras clearly above water. */
   underwaterOnly?: boolean
   /** Per-registration distance gate; the default remains the local 90 m case. */
@@ -243,12 +250,19 @@ export class InterfaceStructureLayer {
     maxEdgeLength,
     minimumLocalY,
     stableMeanSurface = false,
+    liveInterfaceMotion = false,
     underwaterOnly = false,
     maxCameraDistance = ACTIVE_CAMERA_DISTANCE,
   }: InterfaceStructureRegistration): () => void {
     if (meshes.length === 0) throw new Error('Interface structure requires at least one mesh')
     if (maxEdgeLength !== undefined && !(maxEdgeLength > 0)) {
       throw new Error('Interface structure max edge length must be positive')
+    }
+    if (liveInterfaceMotion && !stableMeanSurface) {
+      throw new Error('Live interface motion applies only to a stable mean surface')
+    }
+    if (liveInterfaceMotion && maxEdgeLength === undefined) {
+      throw new Error('Live interface motion requires a source tessellation edge')
     }
     if (!(maxCameraDistance > 0)) {
       throw new Error('Interface structure camera distance must be positive')
@@ -426,6 +440,51 @@ export class InterfaceStructureLayer {
       return cameraProjection.add(tangent.mul(low.add(high).mul(0.5)))
     }
 
+    /**
+     * The interface's real apparent-image motion, added to a solve that keeps
+     * its stable mean plane.
+     *
+     * Tilting the interface by δ moves the apparent direction of a FIXED
+     * source by δ·(1 − 1/S), where S = dθ_transmitted/dθ_incident is the same
+     * Snell angular stretch the ocean material computes. That factor stays
+     * below one at every incidence — including the critical angle, where S
+     * diverges and the factor merely saturates — so the image can never travel
+     * further than the surface actually leans. This is the bound the rejected
+     * per-vertex Fermat solve never had: there, wave normals entered the path
+     * solution itself, where distance and the critical-angle Jacobian
+     * amplified them into folded crystal facets.
+     */
+    const applyInterfaceMotion = (
+      direction: Node<'vec3'>,
+      tilt: Node<'vec3'>,
+      sourceDistance: Node<'float'>,
+    ): Node<'vec3'> => {
+      const cameraIor = mix(AIR_IOR, WATER_IOR, this.submerged)
+      const sourceIor = mix(WATER_IOR, AIR_IOR, this.submerged)
+      const eta = cameraIor.div(sourceIor)
+      const cosIncident = direction.y.abs().max(0.02)
+      const sinTransmitted2 = eta
+        .mul(eta)
+        .mul(float(1).sub(cosIncident.mul(cosIncident)))
+      const cosTransmitted = float(1).sub(sinTransmitted2).max(0).sqrt().max(0.04)
+      const stretch = eta.mul(cosIncident).div(cosTransmitted).max(0.04)
+      const shift = tilt
+        .sub(direction.mul(dot(tilt, direction)))
+        .mul(float(1).sub(float(1).div(stretch)).clamp(-1, 1))
+      // Folding is a resolution failure, so bound it with the source's own
+      // resolution: the shift may not exceed half an edge's apparent angular
+      // size, and two projected neighbours therefore cannot cross. Snell
+      // compression divides that budget, which quiets the window rim — where
+      // this stable projection is the only representable image anyway.
+      const foldLimit = float(maxEdgeLength ?? 1)
+        .mul(0.5)
+        .div(sourceDistance.max(1).mul(stretch))
+      const bounded = shift.mul(
+        float(1).min(foldLimit.div(shift.length().max(1e-5))),
+      )
+      return normalize(direction.add(bounded))
+    }
+
     // Capture only the transmitted half of the frame. Instead of rendering a
     // conventional camera projection and asking every water pixel to hunt for
     // a 3 cm tube in that texture, forward-project each frame vertex through
@@ -437,7 +496,9 @@ export class InterfaceStructureLayer {
         .mul(cameraViewMatrix)
         .mul(vec4(sourceWorld, 1))
       const result = directProjection.toVar()
-      const sourceSurfaceHeight = surfaceHeightAt(sourceWorld.xz)
+      const sourceSurfaceHeight = stableMeanSurface
+        ? float(0)
+        : surfaceHeightAt(sourceWorld.xz)
       const signedHeight = sourceWorld.y.sub(sourceSurfaceHeight)
       const aboveMask = step(0, signedHeight)
       const belowMask = step(signedHeight, 0)
@@ -461,6 +522,7 @@ export class InterfaceStructureLayer {
           .clamp(0, 1)
           .toVar()
         let apparentInterface: Node<'vec3'>
+        let interfaceTilt: Node<'vec3'> | null = null
         if (stableMeanSurface) {
           const crossingXZ = mix(
             cameraPosition.xz,
@@ -472,6 +534,32 @@ export class InterfaceStructureLayer {
             vec3(crossingXZ.x, 0, crossingXZ.y),
             vec3(0, normalOrientation, 0),
           )
+          if (liveInterfaceMotion) {
+            // The slope this image can carry, measured at the scale it is
+            // built from. A point sample of the derivative map would deliver
+            // wave bands shorter than the source tessellation (cascade 0
+            // alone reaches ~2.8 m against 1.2 m edges), and those arrive as
+            // uncorrelated per-vertex jitter rather than motion. A central
+            // difference of the same heightfield over one source edge IS the
+            // resolved slope, and it inherits the footprint keeps that already
+            // retire distant bands.
+            const spacing = float(maxEdgeLength as number)
+            const point = apparentInterface.xz
+            const slope = vec2(
+              surfaceHeightAt(point.add(vec2(maxEdgeLength as number, 0))).sub(
+                surfaceHeightAt(point.sub(vec2(maxEdgeLength as number, 0))),
+              ),
+              surfaceHeightAt(point.add(vec2(0, maxEdgeLength as number))).sub(
+                surfaceHeightAt(point.sub(vec2(0, maxEdgeLength as number))),
+              ),
+            ).div(spacing.mul(2))
+            // Heightfield normal ∝ (−∂h/∂x, 1, −∂h/∂z); the lean of the
+            // camera-oriented normal away from the mean plane is its
+            // horizontal part.
+            interfaceTilt = vec3(slope.x.negate(), 0, slope.y.negate()).mul(
+              normalOrientation,
+            )
+          }
         } else {
           for (let i = 0; i < 3; i++) {
             const crossingXZ = mix(
@@ -517,9 +605,17 @@ export class InterfaceStructureLayer {
             refinedNormal,
           )
         }
-        const apparentDirection = normalize(apparentInterface.sub(cameraPosition))
+        const sourceDistance = sourceWorld.sub(cameraPosition).length()
+        const meanDirection = normalize(apparentInterface.sub(cameraPosition))
+        // Scene-scale imagery keeps the stable mean-plane path solve and takes
+        // the wave's contribution as a bounded rotation of the resulting
+        // apparent direction — an angular quantity, so it is independent of
+        // how far away the source is and cannot be amplified by distance.
+        const apparentDirection = interfaceTilt
+          ? applyInterfaceMotion(meanDirection, interfaceTilt, sourceDistance)
+          : meanDirection
         const apparentWorld = cameraPosition.add(
-          apparentDirection.mul(sourceWorld.sub(cameraPosition).length()),
+          apparentDirection.mul(sourceDistance),
         )
         result.assign(
           cameraProjectionMatrix

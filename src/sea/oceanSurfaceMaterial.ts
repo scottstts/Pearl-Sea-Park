@@ -46,6 +46,7 @@ import {
 } from './opticalConstants'
 import type { InterfaceStructureNodes } from './interfaceStructureLayer'
 import { OCEAN_FLAT_EDGE_MARGIN } from './oceanSkirtGeometry'
+import { SEABED_MEAN_RADIANCE } from './seabedRadiance'
 import {
   WAKE_FOAM_CENTER_X,
   WAKE_FOAM_CENTER_Z,
@@ -78,6 +79,12 @@ export interface OceanMaterialOptions {
   interfaceStructures?: InterfaceStructureNodes
   /** Camera-medium authority: 0 above the displaced surface, 1 below it. */
   submerged: Node<'float'>
+  /**
+   * World-anchored seabed height (baked terrain), giving the detailed sheet
+   * its analytic transmitted-bottom base. Absent on the skirt, which keeps
+   * the far-field palette.
+   */
+  seabedHeight?: (worldXZ: Node<'vec2'>) => Node<'float'>
   /**
    * World-anchored vessel wake foam field, merged into the whitecap foam
    * coverage (detailed sheet only) so wake trails ARE ocean foam.
@@ -682,13 +689,19 @@ export function createOceanSurfaceMaterial(
     aboveReflectionValid.clamp(0, 1),
   )
 
-  // Air -> water transmission uses actual reconstructed surface-to-subject
-  // metres. The main scene is intentionally unfogged while the camera is in
-  // air, so apply the same Beer-Lambert coefficients and open-water in-scatter
-  // owned by medium.ts along only the submerged segment.
+  // Air -> water transmission must be WORLD-anchored, never screen-anchored.
+  // A traced sample only exists while its refracted source happens to sit
+  // inside the current frustum, so radiance the trace alone contributes forms
+  // a camera-frustum-shaped patch that swells under pure head tilt. The base
+  // therefore reconstructs the true local bottom from the baked terrain field
+  // and runs one shared Beer-Lambert transport; the trace merely substitutes
+  // real imagery (piles, shadows, sand texture) at matched luminance where
+  // valid, so its validity boundary carries no brightness step. The trace
+  // itself fades out before its hard 160 m enable for the same reason.
+  const traceRangeFade = float(1).sub(smoothstep(140.0, 160.0, vDistance))
   const aboveStructureContribution = aboveStructureValid.clamp(0, 1)
   const aboveTransmissionValidity = max(
-    max(aboveRefractionValid, aboveInterfaceAnchor.mul(0.82)),
+    max(aboveRefractionValid, aboveInterfaceAnchor.mul(0.82)).mul(traceRangeFade),
     aboveStructureContribution,
   ).clamp(0, 1)
   const aboveTransmissionSource = mix(
@@ -701,39 +714,99 @@ export function createOceanSurfaceMaterial(
     aboveStructure.path,
     aboveStructureContribution,
   )
-  const transmittedRadiance = Fn(() => {
-    const result = body.toVar()
-    If(aboveTransmissionValidity.greaterThan(0.001), () => {
-      const aboveWaterPath = aboveTransmissionPath.clamp(0.05, 3500.0)
-      const aquaticTransmittance = exp(
-        vec3(...AQUATIC_EXTINCTION).mul(aboveWaterPath).negate(),
-      )
-      const transmittedMidpointY = vWorld.y.add(
-        aboveRefracted.y.mul(aboveWaterPath.mul(0.5)),
-      )
-      const transmittedDepthDim = exp(transmittedMidpointY.min(0).mul(0.03))
-      const transmittedUpness = smoothstep(-0.5, 0.75, aboveRefracted.y)
-      const transmittedSunward = pow(max(dot(aboveRefracted, sunDir), 0.0), 6.0).mul(0.06)
-      const aquaticInscatter = mix(
-        vec3(...AQUATIC_AMBIENT_DOWN),
-        vec3(...AQUATIC_AMBIENT_UP),
-        transmittedUpness,
-      )
-        .mul(transmittedDepthDim)
-        .add(sunColorUniform.mul(transmittedSunward))
-      const foggedRefraction = aboveTransmissionSource
-        .mul(aquaticTransmittance)
-        .add(aquaticInscatter.mul(float(1).sub(aquaticTransmittance.g)))
-      result.assign(
-        mix(
-          body,
-          foggedRefraction.add(surfaceScatter.mul(0.25)),
-          aboveTransmissionValidity,
-        ),
-      )
-    })
-    return result
-  })()
+  const seabedHeight = options.seabedHeight
+  const transmittedRadiance: Node<'vec3'> = seabedHeight
+    ? Fn(() => {
+        const result = body.toVar()
+        // `isAbove` comes from the 1x1 waterline texture and is constant
+        // across the draw, so this branch is uniform: underwater frames pay
+        // for none of the seabed transport they would immediately discard.
+        If(isAbove.greaterThan(0.001), () => {
+          // Landing point in two fixed-point steps. Air->water refraction is
+          // never shallower than ~41 degrees below horizontal, so clamping the
+          // descent to 0.3 bounds the step and two seabed fetches converge to
+          // metre level — ample for a radiance gradient.
+          const downSlope = aboveRefracted.y.min(-0.3)
+          const firstPath = seabedHeight(vWorldXZ)
+            .sub(vWorld.y)
+            .div(downSlope)
+            .clamp(0.5, 300.0)
+          const landingXZ = vWorldXZ.add(aboveRefracted.xz.mul(firstPath))
+          const analyticPath = seabedHeight(landingXZ)
+            .sub(vWorld.y)
+            .div(downSlope)
+            .clamp(0.5, 320.0)
+
+          // The traced sample replaces the analytic bottom rather than adding
+          // to it, and both carry the same mean radiance, so crossing the
+          // trace's validity boundary changes detail without changing level.
+          const tracedShare = aboveTransmissionValidity
+          const bottomColor = mix(
+            vec3(...SEABED_MEAN_RADIANCE),
+            aboveTransmissionSource,
+            tracedShare,
+          )
+          const waterPath = mix(
+            analyticPath,
+            aboveTransmissionPath.clamp(0.05, 3500.0),
+            tracedShare,
+          )
+          const aquaticTransmittance = exp(
+            vec3(...AQUATIC_EXTINCTION).mul(waterPath).negate(),
+          )
+          // Both legs cross water. The opaque buffer lights the seabed as if
+          // it stood in air, so restore the missing downwelling leg from the
+          // source's vertical depth and the sun's elevation before the return
+          // path attenuates it. An 18% unfiltered share stands in for
+          // environment and emissive energy the buffer cannot separate.
+          const sourceVerticalDepth = waterPath.mul(aboveRefracted.y.negate().max(0))
+          const downwellingPath = sourceVerticalDepth.div(max(sunDir.y, 0.15))
+          const downwellingTransmittance = exp(
+            vec3(...AQUATIC_EXTINCTION).mul(downwellingPath).negate(),
+          )
+          const sourceLightingFilter = mix(vec3(1), downwellingTransmittance, 0.82)
+          const transmittedMidpointY = vWorld.y.add(
+            aboveRefracted.y.mul(waterPath.mul(0.5)),
+          )
+          const transmittedDepthDim = exp(transmittedMidpointY.min(0).mul(0.03))
+          const transmittedUpness = smoothstep(-0.5, 0.75, aboveRefracted.y)
+          const transmittedSunward = pow(
+            max(dot(aboveRefracted, sunDir), 0.0),
+            6.0,
+          ).mul(0.06)
+          // Crests keep a translucency lift, which the palette's DEEP->SHALLOW
+          // mix used to supply, so the swell still reads through the transport.
+          const aquaticInscatter = mix(
+            vec3(...AQUATIC_AMBIENT_DOWN),
+            vec3(...AQUATIC_AMBIENT_UP),
+            transmittedUpness,
+          )
+            .mul(transmittedDepthDim)
+            .mul(heightMask.mul(0.55).add(1))
+            .add(sunColorUniform.mul(transmittedSunward))
+          const foggedTransmission = bottomColor
+            .mul(sourceLightingFilter)
+            .mul(aquaticTransmittance)
+            .add(aquaticInscatter.mul(float(1).sub(aquaticTransmittance.g)))
+          // Two handoffs back to the palette body, both already owned by this
+          // sheet: the footprint flatten (past it the surface is the far-field
+          // mirror) and the same edge keep every other detailed-only term
+          // uses, which is what makes this sheet meet the palette-only skirt
+          // exactly at their seam from any camera height. The keep also stops
+          // the transport well short of the lagoon saucer's shallow rim, which
+          // would otherwise read as a pale ring at the horizon.
+          const transportKeep = float(1).sub(distanceFade).mul(vEdgeKeep)
+          result.assign(
+            mix(
+              body,
+              foggedTransmission.add(surfaceScatter.mul(0.45)),
+              transportKeep,
+            ),
+          )
+        })
+        return result
+      })()
+    : body
 
   const halfVector = normalize(sunDir.add(viewDir))
   const noH = max(dot(aboveNormal, halfVector), 0.0)

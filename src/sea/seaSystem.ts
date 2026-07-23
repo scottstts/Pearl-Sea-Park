@@ -13,6 +13,7 @@ import {
   type InterfaceStructureRegistration,
 } from './interfaceStructureLayer'
 import { createOceanSkirtGeometry, OCEAN_INNER_HALF_SIZE } from './oceanSkirtGeometry'
+import { createSeabedHeightField, type SeabedHeightField } from './seabedRadiance'
 import { WakeFoamMap } from './wakeFoamMap'
 import { WaterlineProbe } from './waterlineProbe'
 import { WaveSim } from './waveSim'
@@ -34,6 +35,7 @@ export class SeaSystem implements GameSystem {
   private outer: Mesh | null = null
   private probe: WaterlineProbe | null = null
   private interfaceStructures: InterfaceStructureLayer | null = null
+  private seabed: SeabedHeightField | null = null
   private readonly timeUniform = uniform(0)
   private submerged = false
   private followStep = 1
@@ -62,6 +64,12 @@ export class SeaSystem implements GameSystem {
     const sceneDepth = viewportDepthTexture()
     const debugMode = oceanOpticsDebugMode(ctx.flags.pass)
     this.interfaceStructures = new InterfaceStructureLayer(sim, submergedNode)
+    // The transmitted water body must be anchored to where the seabed IS, not
+    // to whatever the current frustum happens to expose: a screen trace alone
+    // makes shallow-bottom brightness appear and expand with head tilt from a
+    // fixed viewpoint. The detailed sheet gets the baked field; the skirt keeps
+    // the far-field palette, which the detailed sheet also converges to.
+    this.seabed = createSeabedHeightField()
     this.wakeFoam = new WakeFoamMap()
     const innerGeometry = new PlaneGeometry(INNER_SIZE, INNER_SIZE, segments, segments)
     innerGeometry.rotateX(-Math.PI / 2)
@@ -74,6 +82,7 @@ export class SeaSystem implements GameSystem {
         sceneDepth,
         interfaceStructures: this.interfaceStructures.nodes,
         submerged: submergedNode,
+        seabedHeight: this.seabed.sampleHeight,
         wakeFoam: this.wakeFoam,
         debugMode,
       }),
@@ -198,6 +207,8 @@ export class SeaSystem implements GameSystem {
     this.probe = null
     this.wakeFoam?.dispose()
     this.wakeFoam = null
+    this.seabed?.dispose()
+    this.seabed = null
     this.interfaceStructures?.dispose()
     this.interfaceStructures = null
     delete ctx.renderer.domElement.dataset.waterInterfaceLayer

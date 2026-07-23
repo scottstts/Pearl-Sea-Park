@@ -51,13 +51,17 @@
   and cable are intentionally excluded. The complete Arrival pavilion now
   shares the bounded target only from underwater, with an air-side clip, 1.2 m
   source tessellation, and a stable mean interface; it is not fed through the
-  rejected general two-depth viewport path. While the Bell cage crosses the
+  rejected general two-depth viewport path. Its mean-plane solve keeps the
+  stable path and takes the wave as a bounded angular rotation of the
+  resulting apparent direction, so the image moves without reintroducing
+  nonlinear Snell geometry. While the Bell cage crosses the
   live FFT surface, its proxy supplies the otherwise hidden opposite-medium
   half to Snell transmission. Each cage vertex solves its apparent optical path
   through a live-FFT tangent interface (three heightfield crossing refinements,
   then two six-step Fermat bisections) before rasterization. The pavilion uses
-  the cheaper single mean-plane solve because scene-scale per-vertex wave
-  normals are unresolved at the Snell rim. The shared target is shadowless and
+  the cheaper single mean-plane solve plus the bounded angular term because
+  scene-scale per-vertex wave normals are unresolved at the Snell rim. The
+  shared target is shadowless and
   half CSS resolution (1024 px maximum edge); the Bell is near-camera gated,
   while the underwater-only pavilion fades over 204–240 m. The ocean samples
   one already-refracted color/depth pixel instead of searching the screen. This
