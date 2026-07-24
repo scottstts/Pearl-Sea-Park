@@ -2438,3 +2438,63 @@
     NOT shadowed; the sky is not what got blocked.
   - Accepted limitation: only static casters. A surfaced submarine or the
     riding Bell casts nothing on the sea.
+
+- 2026-07-24 the distant pavilion folding at the Snell rim
+  (`sea/interfaceStructureLayer.ts`, `solveTangentInterface`):
+  - Symptom: from underwater, half a park away from the entrance, the pavilion's
+    refracted image at the window rim collapsed and folded into itself while
+    walking. Close in it held up fine. Seeing it there at all is correct — the
+    whole above-water hemisphere folds into the 97.2° cone, so distant things
+    do not leave the window, they pile up at its edge.
+  - Cause was the BRACKET of the Fermat bisection, not the step count.
+    `[0, tangentLength]` gives error `L/2ⁿ⁺¹`, growing with separation, while
+    the refracted image shrinks as `1/L` — the solve degrades exactly where the
+    image needs it most. **Check the shape of a numerical error against the
+    shape of the thing it is resolving, not just its magnitude at one distance.**
+  - Two distinct artifacts came out of it, which is why it read as "folding"
+    rather than "blurry": the grid is anchored to each vertex's own `L`, so
+    neighbours quantize onto incommensurate grids and the image breaks into
+    bands; and inside a step `dm/dL ≈ (2k+1)/2ⁿ⁺¹`, hundreds of times the true
+    slope (which correctly saturates to ~0 at distance), smearing each band
+    vertically.
+  - Measured against the exact root at `?view=arrival-snell-rim` (14 m down,
+    pavilion 130 m off, 1 px ≈ 1 mrad), the old solve returned the **same
+    crossing for the waterline and the 6.5 m roof** — the image's true 1.83 px
+    height collapsed to 0.00 px — while sweeping L across the pavilion's own
+    13 m footprint drifted elevation 3.8 px/m and stepped 58 px at a band
+    boundary, against a true variation of 0.16 px. So its vertical structure
+    was being drawn entirely by depth-into-the-scene. New solve: within
+    0.014 px everywhere, height 1.82 px. **Worth doing this check in plain
+    Node against a fine-bisection ground truth before touching the shader** —
+    it took minutes and named the artifact exactly.
+  - Fix: bracket by the critical angle. Only the WATER-side ray is bounded — it
+    is inside Snell's cone by construction, so its crossing point cannot lie
+    beyond `tan θ_c ≈ 1.1346 ×` its own distance from the interface. Submerged
+    that bound belongs to the camera, so the interval is `~1.13 × depth`,
+    identical for every vertex and independent of distance. Exact both ways, so
+    the root is never bracketed out. 14 halvings → tens of microradians.
+  - Sanity numbers worth keeping: refraction compresses incidence only, azimuth
+    passes through. From 14 m down at 150 m, a 6.5 m pavilion spans 1.6 mrad —
+    about **two pixels tall** — against ~100 px of azimuthal width. A thin
+    bright streak at the rim is the right answer; anything much taller out
+    there is solver error. It stays bright because only the short leg is in
+    water (camera → crossing ≈ 1.5 × depth); the long leg is in air.
+  - Follow-up, same day: with the solve exact, Scott reported "only the pillars
+    left, no pavilion". Two separate things, both measured rather than argued:
+    - The tall lattice at that range is **not** this layer. Forcing the
+      interface layer off and re-shooting the identical frame left it
+      pixel-identical — it is the pavilion's six bronze piles + bracing girdle
+      seen directly through the water (~86 × 173 px at 130 m), about 30° BELOW
+      the refracted image. When something looks wrong near an effect you just
+      changed, toggle the effect off before theorising; it took one call.
+    - The refracted pavilion is still drawn, just correct: 66 × 3 px at 130 m,
+      down from 65 × 55 px. Falls as ~1/L^2.4 (the compression factor itself
+      grows with distance) — 135 px at 25 m, 46 at 40, 16 at 60, 6 at 90.
+  - So `maxCameraDistance` dropped 240 → 130, retiring the layer where its image
+    stops resolving instead of at a generous radius. Past ~90 m the 71k
+    triangles land in a few dozen texels of the half-res target — ~1200 tris per
+    texel, each texel picking whichever wins the depth test — so the band
+    scintillates. **Clean sky reads better than a scintillating nothing**, and
+    it saves 213k vertices + 9 draws on every underwater frame in that band.
+    This is the fade-to-the-mean doctrine applied to a whole subsystem rather
+    than to a noise octave.

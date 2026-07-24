@@ -629,7 +629,19 @@ export class ArrivalSystem implements GameSystem {
       // mirrored reflection pass now owns its above-water image. The gate is
       // kept only to skip the draws entirely from a walking camera.
       underwaterOnly: true,
-      maxCameraDistance: 240,
+      // Retired where the image stops resolving, not at some generous radius.
+      // Refraction compresses incidence only, and the compression itself grows
+      // with distance, so the pavilion's above-water image shrinks as ~1/L^2.4:
+      // from 14 m down it is 46 px tall at 40 m, 16 px at 60, 6 px at 90 and
+      // 2.6 px at 130 (1600x900, 55 degree vertical FOV). The shared 0.85 fade
+      // start therefore hands it off between roughly 4 px and 2 px, which no
+      // frame can show — and drawing it further out is not free: below about
+      // 90 m the 71k triangles land in a few dozen texels of the half-resolution
+      // target, so each texel picks whichever one wins the depth test and the
+      // band scintillates. Nothing reads cleaner than a scintillating nothing.
+      // The piles the player still sees out there are ordinary geometry seen
+      // through the water, not this layer.
+      maxCameraDistance: 130,
     })
 
     registerBookmark({

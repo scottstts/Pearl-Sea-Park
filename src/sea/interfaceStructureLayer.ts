@@ -55,6 +55,32 @@ const TARGET_MAX_EDGE = 1024
 const ACTIVE_SURFACE_MARGIN = 1
 const ACTIVE_CAMERA_DISTANCE = 90
 
+/**
+ * Tangent reach of a water-side ray, per metre of its own distance from the
+ * interface: tan(asin(n_air / n_water)). A ray inside water that connects to a
+ * source in air cannot meet the surface beyond the critical angle, so its
+ * crossing point is confined to this multiple of its plane distance however far
+ * away the source is — the crossing radius saturates, it does not keep growing.
+ */
+const CRITICAL_TANGENT = Math.tan(Math.asin(AIR_IOR / WATER_IOR))
+
+/**
+ * Bisection steps for the interface crossing solve, run per proxy vertex.
+ *
+ * The count only means anything alongside the bracket. Bisecting the full
+ * camera-to-source span leaves an absolute error proportional to horizontal
+ * separation, while the refracted image of that source SHRINKS with the same
+ * separation, so the solve goes coarser than the thing it is resolving: past
+ * roughly 100 m the returned crossing is a staircase in source distance, whose
+ * steps chop the image into bands and whose within-step slope smears each band
+ * vertically. That is what folded the distant pavilion at the Snell rim.
+ * Bracketing by the critical angle instead makes the interval ~1.13x the
+ * water-side plane distance — bounded by the CAMERA, identical for every vertex
+ * — and fourteen halvings then land the crossing within a ten-thousandth of it,
+ * a few tens of microradians of apparent direction at any range.
+ */
+const INTERFACE_SOLVE_STEPS = 14
+
 interface RegisteredStructure {
   root: Object3D
   proxies: Mesh[]
@@ -386,9 +412,10 @@ export class InterfaceStructureLayer {
     }
 
     /**
-     * Solve Fermat's stationary optical path for a locally planar interface.
-     * Six bisection steps are stable for both water->air and air->water, and
-     * run per proxy vertex rather than per ocean pixel.
+     * Solve Fermat's stationary optical path for a locally planar interface,
+     * per proxy vertex rather than per ocean pixel. Bisection is bulletproof
+     * here — the Snell residual is strictly monotonic along the tangent — so
+     * all the accuracy lives in the bracket (see INTERFACE_SOLVE_STEPS).
      */
     const solveTangentInterface = (
       sourceWorld: Node<'vec3'>,
@@ -414,9 +441,27 @@ export class InterfaceStructureLayer {
       const tangent = tangentOffset.div(max(tangentLength, 0.001))
       const cameraIor = mix(AIR_IOR, WATER_IOR, this.submerged)
       const sourceIor = mix(WATER_IOR, AIR_IOR, this.submerged)
-      const low = float(0).toVar()
-      const high = tangentLength.toVar()
-      for (let i = 0; i < 6; i++) {
+      // Bracket by the critical angle, not by the whole camera-to-source span.
+      // Only the WATER side is bounded: a ray in water that connects to a
+      // source in air is inside Snell's cone by construction, so it cannot
+      // reach the interface further out than CRITICAL_TANGENT times its own
+      // plane distance. The air side has no such limit and keeps the full span.
+      // Both bounds are exact — the root is never bracketed out — and the
+      // water-side one is what stops the interval from growing with distance.
+      const inWater = this.submerged.greaterThan(0.5)
+      const cameraReach = cameraPlaneDistance.mul(CRITICAL_TANGENT)
+      const sourceReach = sourcePlaneDistance.mul(CRITICAL_TANGENT)
+      const low = select(
+        inWater,
+        float(0),
+        tangentLength.sub(sourceReach).max(0),
+      ).toVar()
+      const high = select(
+        inWater,
+        tangentLength.min(cameraReach),
+        tangentLength,
+      ).toVar()
+      for (let i = 0; i < INTERFACE_SOLVE_STEPS; i++) {
         const middle = low.add(high).mul(0.5)
         const sourceTangentDistance = tangentLength.sub(middle)
         const cameraSine = middle.div(
