@@ -17,9 +17,31 @@ import {
   vec2,
   vec3,
 } from 'three/tsl'
+import type { Node } from 'three/webgpu'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 import type { SeaMediumSystem } from '../sea/medium'
 import { createClearGlassMaterial } from './glass'
+
+/**
+ * Coverage the mosaic's grout removes from each axis of each cell. The authored
+ * band is a smoothstep ramp of this width on either side of a cell boundary,
+ * and a smoothstep ramp averages 0.5 — so it costs exactly this much coverage
+ * per cell, the same as a HARD line of this width straddling the boundary.
+ * That equivalence is what makes the crisp and prefiltered branches agree in
+ * mean, and it is the only reason they can cross-fade without the floor
+ * changing brightness at the handoff.
+ */
+const GROUT_EDGE = 0.09
+
+/**
+ * Area mean of the mosaic's tesserae colour, integrated over the park's whole
+ * tile range against the real `valueNoise2` field. This is NOT `palette(mean
+ * id)`: the palette is a pair of smoothsteps in `id`, so feeding it the average
+ * id gives (0.573, 0.718, 0.703) against the true (0.668, 0.742, 0.695) — a
+ * darker, bluer floor wherever the fade completes, which is exactly the seam a
+ * fade-to-the-mean is supposed to avoid. Recompute this if the palette moves.
+ */
+const MOSAIC_MEAN_TESSERA = /*@__PURE__*/ vec3(0.6681, 0.742, 0.6949)
 
 /**
  * The park's material identity (plan §7), created once and shared.
@@ -202,33 +224,81 @@ export class ParkMaterials {
     // The tile `id` is the master cause: palette pick, glaze polish, and the
     // per-tile tonal wobble all derive from it; the grout line carves color,
     // roughness, AND the bevel normal so edges catch caustic light.
+    //
+    // Every band is retired by the PIXEL FOOTPRINT of the tile grid, never by
+    // camera distance. `detailKeep` cannot serve a big flat floor: at grazing
+    // incidence the footprint grows as distance² / eye height while the distance
+    // itself only grows linearly, so a distance fade still leaves dozens of
+    // tiles inside one pixel out along the esplanade — the ocean's "horizon
+    // comb" lesson, on paving. `fwidth(cell)` measures the real quantity in
+    // tile units and needs no authored metre thresholds at all.
     this.mosaic = lit(
       (() => {
         const m = new MeshStandardNodeMaterial()
         const scale = 6.5 // tiles per meter
         const cell = positionWorld.xz.mul(scale)
-        const id = valueNoise2(cell.floor().mul(0.37))
-        const glaze = valueNoise2(cell.floor().mul(0.91).add(7.0))
+        const tile = cell.floor()
         const local = fract(cell)
-        const grout = smoothstep(0.0, 0.09, local.x)
-          .mul(smoothstep(1.0, 0.91, local.x))
-          .mul(smoothstep(0.0, 0.09, local.y))
-          .mul(smoothstep(1.0, 0.91, local.y))
+        const footprint = cell.fwidth()
+        const coarsest = footprint.x.max(footprint.y)
+
+        // Grout, box-prefiltered per axis. The filtered branch is the exact
+        // running-integral average of a unit-cell line of width GROUT_EDGE, so
+        // it converges to (1 − GROUT_EDGE) on its own at any footprint — no
+        // separate fade, no mean constant, and correct at every intermediate
+        // scale rather than only at the two ends. Widening the smoothstep
+        // instead was rejected: a wider ramp removes more coverage, so distant
+        // paving would darken toward the grout colour as it smoothed.
+        const band = (t: Node<'float'>, w: Node<'float'>): Node<'float'> => {
+          const crisp = smoothstep(0.0, GROUT_EDGE, t).mul(
+            smoothstep(1.0, 1 - GROUT_EDGE, t),
+          )
+          const covered = (v: Node<'float'>): Node<'float'> =>
+            v.floor().mul(1 - GROUT_EDGE).add(fract(v).sub(GROUT_EDGE).max(0))
+          // Centre the equivalent hard line on the boundary the ramps straddle.
+          const u = t.add(GROUT_EDGE * 0.5)
+          const half = w.mul(0.5).max(1e-4)
+          const filtered = covered(u.add(half))
+            .sub(covered(u.sub(half)))
+            .div(half.mul(2))
+          return mix(crisp, filtered, smoothstep(GROUT_EDGE * 0.5, GROUT_EDGE * 2, w))
+        }
+        const grout = band(local.x, footprint.x).mul(band(local.y, footprint.y))
+
+        // `id` and `glaze` are constant across a cell, so they carry no
+        // information at all once one pixel spans one — past that they are just
+        // per-pixel noise, which is what makes the tesserae crawl. Fade them to
+        // the field's measured area mean by the time a pixel covers a whole
+        // tile.
+        const tesseraKeep = float(1).sub(smoothstep(0.35, 1.0, coarsest))
+        const id = valueNoise2(tile.mul(0.37))
+        const glaze = valueNoise2(tile.mul(0.91).add(7.0))
         const palette = mix(
           mix(vec3(0.85, 0.82, 0.74), vec3(0.55, 0.71, 0.7), smoothstep(0.25, 0.55, id)),
           vec3(0.76, 0.62, 0.42),
           smoothstep(0.72, 0.95, id),
         )
-        const toned = palette.mul(glaze.mul(0.18).add(0.91))
+        const toned = mix(
+          MOSAIC_MEAN_TESSERA,
+          palette.mul(glaze.mul(0.18).add(0.91)),
+          tesseraKeep,
+        )
+        const polish = mix(float(0.5), glaze, tesseraKeep)
+        // Both channels now converge on their own: `grout` settles at 0.91² and
+        // the tesserae at their mean, so the far field is the honest average of
+        // the near field with no third constant to keep in sync.
         m.colorNode = mix(vec3(0.35, 0.34, 0.31), toned, grout)
-        m.roughnessNode = mix(float(0.85), glaze.mul(0.26).add(0.18), grout)
+        m.roughnessNode = mix(float(0.85), polish.mul(0.26).add(0.18), grout)
         // Bevel: each tile's rim chamfers down toward the grout, so the field
         // of tesserae catches caustic glints instead of reading as one flat
         // sheet. tilt = −1 at the low-x edge, +1 at the high-x edge, 0 across
-        // the tile face; fades with distance before it can shimmer. Floors
-        // bake their transforms into geometry, so normalGeometry is already
-        // the world up here — perturb it rather than replacing it.
-        const bevel = detailKeep(30).mul(0.42)
+        // the tile face. The chamfer is a fraction of a tile, so it goes first;
+        // 0.09→0.2 tiles per pixel reproduces the old detailKeep(30) head-on
+        // and, unlike it, actually retires at grazing incidence — where a
+        // normal perturbation aliases into shimmer long before the colour does.
+        // Floors bake their transforms into geometry, so normalGeometry is
+        // already the world up here — perturb it rather than replacing it.
+        const bevel = float(1).sub(smoothstep(0.09, 0.2, coarsest)).mul(0.42)
         const tiltX = smoothstep(0.86, 1.0, local.x).sub(smoothstep(0.14, 0.0, local.x))
         const tiltZ = smoothstep(0.86, 1.0, local.y).sub(smoothstep(0.14, 0.0, local.y))
         m.normalNode = normalize(

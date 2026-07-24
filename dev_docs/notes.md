@@ -2498,3 +2498,36 @@
     it saves 213k vertices + 9 draws on every underwater frame in that band.
     This is the fade-to-the-mean doctrine applied to a whole subsystem rather
     than to a noise octave.
+
+- 2026-07-24 mosaic paving aliasing at distance (`materials/library.ts`):
+  - `detailKeep(far)` is camera DISTANCE, and on a big flat floor that is the
+    wrong variable. At grazing incidence a pixel's footprint grows as
+    distance²/eye-height while the distance grows linearly, so a distance fade
+    still leaves dozens of tiles inside one pixel a short way down the
+    esplanade. Same failure the ocean documents as the "horizon comb".
+    The mosaic now retires every band on `cell.fwidth()` — the footprint in
+    TILES — which needs no authored metre thresholds and is right at any angle,
+    resolution, or FOV. Head-on the two agree: at 6.5 tiles/m, footprint ≈
+    0.0065·distance, so `detailKeep(30)` == `smoothstep(0.09, 0.2, footprint)`.
+    **Use the footprint for anything floor-like; keep `detailKeep` for small or
+    non-planar set dressing.**
+  - **Prefilter a periodic band by integrating it, never by widening it.**
+    Widening the grout's smoothstep with the footprint is the obvious move and
+    it is wrong — a wider ramp removes more coverage, so distant paving slides
+    toward the grout colour as it smooths. The trick: a smoothstep ramp averages
+    0.5, so the authored band costs exactly `GROUT_EDGE` of coverage per cell —
+    identical to a HARD line of that width straddling the boundary. That has a
+    closed-form running integral, and a finite difference of it over the
+    footprint is the exact box average at every scale, converging to
+    `1 − GROUT_EDGE` by itself with no fade and no mean constant.
+    Verified in Node: per-axis mean is 0.91000 for footprints from 0 to 200
+    tiles/pixel, so the filter cannot brighten or darken the floor anywhere.
+    **Match the means of the crisp and filtered branches before cross-fading —
+    that is the whole trick, and it is what makes the handoff unfindable.**
+  - **Fade per-cell values to the MEASURED mean of the field, not to the value
+    at the mean input.** `palette` is a pair of smoothsteps in `id`, so
+    `E[f(x)] ≠ f(E[x])`: palette(mean id) = (0.573, 0.718, 0.703) against the
+    true mean (0.668, 0.742, 0.695). A 0.1 error in red is a visible hue and
+    brightness seam right where the fade completes. Integrate the real noise
+    field offline (port `hash21`/`valueNoise2` to JS — they are ten lines) and
+    hardcode it, as `CAUSTIC_FIELD_MEAN` already does.
