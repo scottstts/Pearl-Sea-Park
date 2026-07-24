@@ -8,47 +8,37 @@ import {
 } from 'three'
 import { texture } from 'three/tsl'
 import type { Node } from 'three/webgpu'
-import { SUN_LIGHT_INTENSITY, sunColor, sunDirection } from '../sky/sun'
 import { terrainHeight } from '../world/terrainHeight'
 
 /**
- * World-anchored seabed knowledge for the above-water ocean.
+ * The BARE seabed height, as distinct from the undersea radiance field's
+ * canopy height (sea/underseaRadiance.ts), which is the topmost underwater
+ * surface of any kind.
  *
- * The air→water transmitted base must know where the bottom actually is:
- * a screen-space trace can only report geometry that happens to be inside
- * the current frustum, so any radiance it alone contributes is shaped like
- * the camera frustum and swells/shrinks with pure head tilt — the reported
- * "expanding pale patch". This tiny baked height field lets every water
- * pixel run the same Beer–Lambert transport to the true local bottom, with
- * the traced sample only substituting real imagery at matched luminance.
+ * Where the two agree, the water is looking at sand, and the ocean may
+ * re-add the ripple band and caustic web that the capture deliberately froze
+ * at their mean. Where the canopy stands proud of the seabed, it is a park
+ * structure and neither belongs. That comparison is the only remaining
+ * consumer of this field.
  */
 
-/** Half-extent of the baked field (m): park ±600 plus the 160 m trace range. */
+/** Half-extent of the baked field (m), matching the undersea radiance field. */
 const SEABED_MAP_EXTENT = 800
-/** 256² at 6.25 m cells — radiance grading, not geometry; features are 10s of m. */
-const SEABED_MAP_RESOLUTION = 256
+/** 512² at 3.1 m cells — a sand/structure discriminator, not geometry. */
+const SEABED_MAP_RESOLUTION = 512
 
 /**
- * Mean lit radiance of the sand plateau as the opaque buffer renders it in
- * air (Lambert albedo/π under the fixed sun), so the analytic base and the
- * traced buffer agree across the validity boundary. Albedo is the mean of
- * the terrain palette in world/terrain.ts; the boost stands in for sky/PMREM
- * ambient plus the mean caustic lift on receivedShadowNode.
+ * How much of fully-lit seabed radiance comes from the sun rather than from
+ * sky ambient and the mean caustic lift. Ripples and caustics modulate only
+ * that share: in a structure's shadow there is no direct light for them to
+ * brighten, and letting them do so anyway paints light onto darkness.
+ *
+ * 1.45 is the measured ratio of lit sand radiance to bare Lambert sun
+ * (albedo/π · intensity · sunDirection.y) under this park's fixed sun and
+ * 0.5-intensity PMREM environment.
  */
-const SEABED_MEAN_ALBEDO = [0.5, 0.465, 0.36] as const
 const AMBIENT_AND_CAUSTIC_BOOST = 1.45
-const seabedChannel = (albedo: number, sunTint: number): number =>
-  (albedo / Math.PI) *
-  SUN_LIGHT_INTENSITY *
-  sunTint *
-  sunDirection.y *
-  AMBIENT_AND_CAUSTIC_BOOST
-
-export const SEABED_MEAN_RADIANCE = [
-  seabedChannel(SEABED_MEAN_ALBEDO[0], sunColor.r),
-  seabedChannel(SEABED_MEAN_ALBEDO[1], sunColor.g),
-  seabedChannel(SEABED_MEAN_ALBEDO[2], sunColor.b),
-] as const
+export const SEABED_DIRECT_SHARE = 1 / AMBIENT_AND_CAUSTIC_BOOST
 
 export interface SeabedHeightField {
   /** Seabed world y (always ≤ −0.5) at a world XZ, linearly filtered. */

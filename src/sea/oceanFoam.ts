@@ -109,6 +109,8 @@ export interface OceanFoamInputs {
   viewDir: Node<'vec3'>
   /** The shaded water beneath: a thin raft is translucent, not white paint. */
   waterRadiance: Node<'vec3'>
+  /** Sun visibility at this fragment; foam must go grey inside a cast shadow. */
+  sunShadow: Node<'float'>
   wakeFoam?: WakeFoamMap | null
 }
 
@@ -301,9 +303,15 @@ export function createOceanFoam(inputs: OceanFoamInputs): OceanFoam {
   )
   const foamNoL = max(dot(foamNormal, sunDir), 0.0)
 
+  // Sky ambient survives a cast shadow; the sun's share does not. Foam is the
+  // brightest thing on the water, so leaving it lit would punch white holes
+  // through any shadow crossing a whitecap.
   const foamAmbient = skyRadiance(foamNormal, float(0)).mul(0.22)
   const denseShade = foamAmbient.add(
-    sunColorUniform.mul(foamNoL.mul(0.9).add(0.3)).mul(0.9),
+    sunColorUniform
+      .mul(foamNoL.mul(0.9).add(0.3))
+      .mul(0.9)
+      .mul(inputs.sunShadow),
   )
 
   // A thin raft transmits: the water beneath still shows through, and sunlight
@@ -315,7 +323,7 @@ export function createOceanFoam(inputs: OceanFoamInputs): OceanFoam {
     .mul(float(1).sub(thinOpacity))
     .mul(0.4)
   const thinShade = mix(inputs.waterRadiance, denseShade, thinOpacity).add(
-    sunColorUniform.mul(throughScatter),
+    sunColorUniform.mul(throughScatter).mul(inputs.sunShadow),
   )
 
   return {

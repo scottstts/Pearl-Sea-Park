@@ -20,6 +20,7 @@ import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import { isOpticallyTransparent } from '../materials/glass'
 import type { MaterialsSystem } from '../materials/materialsSystem'
+import { markWaterReflector } from '../render/layers'
 import { fbm2 } from '../render/tslNoise'
 import type { PhysicsSystem } from '../physics/physicsWorld'
 import type { GameContext } from '../runtime/context'
@@ -603,6 +604,9 @@ export class ArrivalSystem implements GameSystem {
       }
     })
     ctx.scene.add(this.group)
+    // The pavilion is the one permanent structure standing in open water, so
+    // it is the main thing the sea reflects.
+    markWaterReflector(this.group)
 
     // A scene-scale target cannot be recovered from the underwater camera's
     // one visible depth layer when the direct pavilion lies offscreen. Render
@@ -620,6 +624,10 @@ export class ArrivalSystem implements GameSystem {
       maxEdgeLength: 1.2,
       stableMeanSurface: true,
       liveInterfaceMotion: true,
+      // Above water this registration contributes nothing anyway (it is
+      // clipped to y >= -0.1, so it has no opposite-medium fragments), and the
+      // mirrored reflection pass now owns its above-water image. The gate is
+      // kept only to skip the draws entirely from a walking camera.
       underwaterOnly: true,
       maxCameraDistance: 240,
     })

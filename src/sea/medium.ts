@@ -37,7 +37,7 @@ import type { RenderPipelineSystem } from '../render/pipeline'
 import { markMainDetail } from '../render/layers'
 import { applyMarineAerialPerspective } from '../sky/marineAerialPerspective'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
-import { CausticsPass, causticWorldSample } from './caustics'
+import { causticWorldSample } from './caustics'
 import { currentFlow } from './current'
 import {
   AQUATIC_AMBIENT_DOWN,
@@ -58,6 +58,27 @@ const AMBIENT_UP = vec3(...AQUATIC_AMBIENT_UP)
 // TIR underside on the ocean surface (oceanSurfaceMaterial tirBody).
 
 /**
+ * Sun CAST shadows are switched off while the undersea radiance field captures
+ * (1 = normal, 0 = capture). Everything else about the seabed's lighting stays.
+ *
+ * They are geometrically correct — a shadow really does land on the sand 32 m
+ * from the Descent Station — but they do not READ as bottom shadows through
+ * the surface, and that is a depth-cue failure rather than a clarity one. A
+ * cast shadow has no texture, colour, or parallax of its own, so nothing places
+ * it at depth; the eye assigns it to the nearest surface and it looks like an
+ * aircraft's shadow lying on the water. Bathymetry and structures do not have
+ * that problem: they carry their own detail and read as being down there.
+ *
+ * The two cues that would sell the depth are refraction parallax and
+ * wave-driven wobble on the shadow's edge, and at this sea state (0.35
+ * amplitude, a calm glassy swell) both are far too small to do it. So the
+ * surface transmits the bottom's SUBSTANCE and not the sun's cast shadows.
+ * Self-shading (N·L) is untouched, so structures keep their form, and
+ * underwater — where the interface is not in the path — shadows are full.
+ */
+export const seabedShadowCaptureKeep = uniform(1)
+
+/**
  * The undersea medium (plan §5): aquatic-perspective fog + volumetric god
  * rays composited in the HDR pipeline hook, the caustics projector, drifting
  * particulates, and the submerged gate. Those aquatic terms are a strict
@@ -70,7 +91,6 @@ export class SeaMediumSystem implements GameSystem {
   private readonly timeUniform = uniform(0)
   /** 0 = open sea, 1 = deep inside an enclosed interior: kills fog glow + rays. */
   private readonly interior = uniform(0)
-  private caustics: CausticsPass | null = null
   private particulates: InstancedMesh | null = null
   private causticSampler: ReturnType<typeof causticWorldSample> | null = null
 
@@ -83,13 +103,14 @@ export class SeaMediumSystem implements GameSystem {
   }
 
   init(ctx: GameContext): void {
-    const sim = this.sea.sim
-    if (!sim) throw new Error('SeaMediumSystem requires SeaSystem to init first')
     const submerged = this.sea.visualSubmergedNode
     if (!submerged) throw new Error('SeaMediumSystem requires the visual waterline gate')
 
-    const caustics = new CausticsPass(sim, ctx.quality.params.causticsSize)
-    this.caustics = caustics
+    // The projector belongs to the sea (it is generated from the wave sim, and
+    // the ocean surface material samples it while it builds). This system owns
+    // the two read paths over it.
+    const caustics = this.sea.caustics
+    if (!caustics) throw new Error('SeaMediumSystem requires the sea caustics projector')
     // Two sampler variants over one texture: the god-ray march keeps the
     // exact sampler (its per-pixel jitter breaks screen-space derivatives),
     // while surfaces get the footprint-faded one — the mip-less caustic web
@@ -204,7 +225,9 @@ export class SeaMediumSystem implements GameSystem {
     if (!sampler) return
     material.receivedShadowNode = Fn(([shadow]: [Node<'float'>]) => {
       const caustic = sampler(positionWorld).g
-      return shadow.mul(caustic.mul(strength).add(1.0))
+      return mix(float(1), shadow, seabedShadowCaptureKeep).mul(
+        caustic.mul(strength).add(1.0),
+      )
     }) as unknown as typeof material.receivedShadowNode
   }
 
@@ -251,8 +274,6 @@ export class SeaMediumSystem implements GameSystem {
 
   update(ctx: GameContext): void {
     this.timeUniform.value = ctx.time.elapsed
-    // Always project: caustics stay visible through the surface from above.
-    this.caustics?.update(ctx.renderer)
   }
 
   lateUpdate(ctx: GameContext): void {
@@ -266,7 +287,5 @@ export class SeaMediumSystem implements GameSystem {
 
   dispose(ctx: GameContext): void {
     if (this.particulates) ctx.scene.remove(this.particulates)
-    this.caustics?.dispose()
-    this.caustics = null
   }
 }

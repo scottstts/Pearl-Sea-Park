@@ -19,7 +19,7 @@ import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { PlayerSystem } from '../player/player'
-import { markDynamicShadowCasters } from '../render/layers'
+import { markDynamicShadowCasters, markWaterReflector } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { SeaSystem } from '../sea/seaSystem'
@@ -392,6 +392,9 @@ export class DescentBellSystem implements GameSystem {
     })
     markDynamicShadowCasters(this.car)
     markDynamicShadowCasters(cable)
+    // The Bell rides through the waterline, so it reflects while docked. Must
+    // follow the dynamic-caster marks, whose exclusive `set` would clear this.
+    markWaterReflector(this.group)
     this.unregisterWaterInterfaceFrame = this.sea.registerInterfaceStructure({
       root: this.car,
       meshes: waterInterfaceFrame,

@@ -1,8 +1,10 @@
 import { Mesh, PlaneGeometry } from 'three'
-import { uniform, viewportDepthTexture, viewportMipTexture } from 'three/tsl'
+import { uniform } from 'three/tsl'
 import { registerBookmark } from '../core/debug'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
+import type { RenderPipelineSystem } from '../render/pipeline'
+import { CausticsPass } from './caustics'
 import { runFftSelfTest } from './fftCompute'
 import {
   createOceanSurfaceMaterial,
@@ -12,8 +14,11 @@ import {
   InterfaceStructureLayer,
   type InterfaceStructureRegistration,
 } from './interfaceStructureLayer'
+import { OceanReflectionPass } from './oceanReflection'
 import { createOceanSkirtGeometry, OCEAN_INNER_HALF_SIZE } from './oceanSkirtGeometry'
 import { createSeabedHeightField, type SeabedHeightField } from './seabedRadiance'
+import { SurfaceSunShadow } from './surfaceSunShadow'
+import { UnderseaRadianceField, type UnderseaBakeHooks } from './underseaRadiance'
 import { WakeFoamMap } from './wakeFoamMap'
 import { WaterlineProbe } from './waterlineProbe'
 import { WaveSim } from './waveSim'
@@ -31,14 +36,35 @@ export class SeaSystem implements GameSystem {
   sim: WaveSim | null = null
   /** Persistent vessel wake foam field — vehicles splat, the surface reads. */
   wakeFoam: WakeFoamMap | null = null
+  /**
+   * The one caustic projector, generated from this system's wave sim and read
+   * by the medium, every lit underwater material, and the ocean's own
+   * transmitted bottom. Owned here so it exists before the surface material
+   * that samples it is built.
+   */
+  caustics: CausticsPass | null = null
   private inner: Mesh | null = null
   private outer: Mesh | null = null
   private probe: WaterlineProbe | null = null
   private interfaceStructures: InterfaceStructureLayer | null = null
+  private reflection: OceanReflectionPass | null = null
+  private surfaceShadow: SurfaceSunShadow | null = null
   private seabed: SeabedHeightField | null = null
+  private undersea: UnderseaRadianceField | null = null
   private readonly timeUniform = uniform(0)
+  private readonly pipeline: RenderPipelineSystem
   private submerged = false
   private followStep = 1
+
+  /**
+   * The render pipeline is held only for its scene pass: both the mirrored
+   * reflection and the undersea capture must render through its exact MRT, or
+   * they hand the main pass node builder states built for a different output
+   * layout (the cache key does not carry the MRT).
+   */
+  constructor(pipeline: RenderPipelineSystem) {
+    this.pipeline = pipeline
+  }
 
   init(ctx: GameContext): void {
     const sim = new WaveSim(ctx.rng)
@@ -51,24 +77,18 @@ export class SeaSystem implements GameSystem {
 
     const timeNode = this.timeUniform as unknown as import('three/webgpu').Node<'float'>
     const submergedNode = this.probe.visualSubmergedNode
-    // Both ocean sheets sample one framebuffer copy. Shared viewport color and
-    // depth nodes make every per-surface lookup resolve to the same
-    // render-scoped textures instead of copying the 4 MP HDR/depth targets for
-    // every reflected/refracted lookup or once per ocean sheet.
-    // Snell's window strongly minifies above-water imagery near its rim.
-    // Generate one mip chain for the already-required opaque snapshot so
-    // thin architecture can be footprint-filtered instead of point-aliased.
-    const sceneBackdrop = viewportMipTexture() as unknown as Parameters<
-      typeof createOceanSurfaceMaterial
-    >[2]['sceneBackdrop']
-    const sceneDepth = viewportDepthTexture()
     const debugMode = oceanOpticsDebugMode(ctx.flags.pass)
+    this.surfaceShadow = new SurfaceSunShadow()
     this.interfaceStructures = new InterfaceStructureLayer(sim, submergedNode)
-    // The transmitted water body must be anchored to where the seabed IS, not
-    // to whatever the current frustum happens to expose: a screen trace alone
-    // makes shallow-bottom brightness appear and expand with head tilt from a
-    // fixed viewpoint. The detailed sheet gets the baked field; the skirt keeps
-    // the far-field palette, which the detailed sheet also converges to.
+    this.reflection = new OceanReflectionPass()
+    this.caustics = new CausticsPass(sim, ctx.quality.params.causticsSize)
+    // Neither above-water optical source may be a screen-space trace: both
+    // reflection and transmission are then gated on whether a ray direction's
+    // vanishing point happens to be inside the frustum, which is a pure
+    // function of camera pitch. The detailed sheet gets the world-anchored
+    // pair; the skirt keeps the far-field palette, which the detailed sheet
+    // also converges to.
+    this.undersea = new UnderseaRadianceField()
     this.seabed = createSeabedHeightField()
     this.wakeFoam = new WakeFoamMap()
     const innerGeometry = new PlaneGeometry(INNER_SIZE, INNER_SIZE, segments, segments)
@@ -78,10 +98,11 @@ export class SeaSystem implements GameSystem {
       createOceanSurfaceMaterial(sim, timeNode, {
         detailed: true,
         edgeFadeHalfSize: INNER_SIZE / 2,
-        sceneBackdrop,
-        sceneDepth,
         interfaceStructures: this.interfaceStructures.nodes,
+        reflection: this.reflection.nodes,
+        sunShadow: this.surfaceShadow.node,
         submerged: submergedNode,
+        undersea: this.undersea.nodes,
         seabedHeight: this.seabed.sampleHeight,
         wakeFoam: this.wakeFoam,
         debugMode,
@@ -99,16 +120,16 @@ export class SeaSystem implements GameSystem {
       createOceanSkirtGeometry(segments),
       createOceanSurfaceMaterial(sim, timeNode, {
         detailed: false,
-        sceneBackdrop,
-        sceneDepth,
         interfaceStructures: this.interfaceStructures.nodes,
+        reflection: this.reflection.nodes,
+        sunShadow: this.surfaceShadow.node,
         submerged: submergedNode,
         debugMode,
       }),
     )
     outer.frustumCulled = false
-    // The skirt goes first so the detailed sheet's backdrop is never replaced
-    // by a previous draw over the central refraction region.
+    // The skirt goes first so the detailed sheet always draws over it in the
+    // overlap band rather than the other way round.
     outer.renderOrder = -101
     ctx.scene.add(outer)
     this.outer = outer
@@ -140,6 +161,8 @@ export class SeaSystem implements GameSystem {
     if (!this.sim) return
     this.timeUniform.value = ctx.time.elapsed
     this.sim.update(ctx.renderer, ctx.time.elapsed, dt)
+    // Always project: caustics stay visible through the surface from above.
+    this.caustics?.update(ctx.renderer)
     this.wakeFoam?.update(ctx.renderer, dt, ctx.time.elapsed)
 
     const step = this.followStep
@@ -160,6 +183,7 @@ export class SeaSystem implements GameSystem {
       ctx.camera.position.y,
     )
     this.interfaceStructures?.update(ctx)
+    this.reflection?.update(ctx, this.surfaceHeightAtCamera, this.pipeline.scenePass)
 
     if (ctx.flags.debug && ctx.time.frame % 60 === 0) {
       ctx.renderer.domElement.dataset.waterInterfaceLayer = JSON.stringify(
@@ -200,6 +224,21 @@ export class SeaSystem implements GameSystem {
     return this.interfaceStructures.register(registration)
   }
 
+  /**
+   * Capture the world-anchored undersea radiance field. Must run once, after
+   * every world system has initialized and the static shadow casters are
+   * sealed — the park has to be in the field for the water to show it.
+   */
+  async bakeUnderseaField(
+    ctx: GameContext,
+    hooks: UnderseaBakeHooks = {},
+  ): Promise<void> {
+    await this.undersea?.bake(ctx, this.pipeline.scenePass, hooks)
+    // The one cast shadow the water itself shows. Same load-time slot, and it
+    // must follow the undersea capture, which restores the world's visibility.
+    this.surfaceShadow?.bake(ctx)
+  }
+
   dispose(ctx: GameContext): void {
     if (this.inner) ctx.scene.remove(this.inner)
     if (this.outer) ctx.scene.remove(this.outer)
@@ -209,6 +248,14 @@ export class SeaSystem implements GameSystem {
     this.wakeFoam = null
     this.seabed?.dispose()
     this.seabed = null
+    this.undersea?.dispose()
+    this.undersea = null
+    this.caustics?.dispose()
+    this.caustics = null
+    this.reflection?.dispose()
+    this.reflection = null
+    this.surfaceShadow?.dispose()
+    this.surfaceShadow = null
     this.interfaceStructures?.dispose()
     this.interfaceStructures = null
     delete ctx.renderer.domElement.dataset.waterInterfaceLayer

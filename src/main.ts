@@ -122,6 +122,7 @@ async function boot(): Promise<void> {
   const registry = new SystemRegistry()
   const pipeline = new RenderPipelineSystem()
   let sky: SkySystem | null = null
+  let sea: SeaSystem | null = null
   let gameHud: GameHudSystem | null = null
   if (flags.debug) registry.add(new DebugOverlaySystem())
   if (flags.view === 'gallery') {
@@ -129,7 +130,7 @@ async function boot(): Promise<void> {
     registry.add(new DevOrbitSystem())
   } else {
     sky = registry.add(new SkySystem())
-    const sea = registry.add(new SeaSystem())
+    sea = registry.add(new SeaSystem(pipeline))
     const medium = registry.add(new SeaMediumSystem(pipeline, sea))
     registry.add(new LensDripSystem(pipeline, sea))
     registry.add(new TerrainSystem(medium))
@@ -182,6 +183,14 @@ async function boot(): Promise<void> {
   // the loading ticket still owns the screen. Later clipmap recenters execute
   // that bundle instead of traversing the full live scene on the game frame.
   sky?.sealStaticShadowCasters(scene)
+  // The ocean's transmitted bottom is a world-anchored capture of the park, so
+  // it can only be taken once the park exists and its shadow casters are
+  // sealed. It runs for validation views too — a `?view=` reload skips warmup,
+  // but never the water's only source of what lies below it.
+  ticket.setProgress('undersea-field', 0.7)
+  await sea?.bakeUnderseaField(ctx, {
+    invalidateShadows: () => sky?.invalidateShadowLevels(),
+  })
   const postcardAudit = auditPostcardBookmarks()
   canvas.dataset.postcardAudit = JSON.stringify(postcardAudit)
   if (!postcardAudit.complete) {

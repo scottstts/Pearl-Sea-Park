@@ -16,7 +16,7 @@ import { ArchKit } from '../archkit/modules'
 import { SlotWriter } from '../archkit/writer'
 import { registerBookmark } from '../core/debug'
 import type { PlayerSystem } from '../player/player'
-import { markDynamicShadowCasters } from '../render/layers'
+import { markDynamicShadowCasters, markWaterReflector } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { currentFlowCpu } from '../sea/current'
@@ -466,6 +466,9 @@ export class GreatWheelSystem implements GameSystem {
       }
     })
     markDynamicShadowCasters(this.rotor)
+    // The wheel's crest breaches, so it reflects in the ocean. Must follow the
+    // dynamic-caster mark, whose exclusive `set` would otherwise clear this.
+    markWaterReflector(this.group)
     ctx.scene.add(this.group)
     this.updateRotor()
 

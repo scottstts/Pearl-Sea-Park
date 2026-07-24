@@ -1,5 +1,5 @@
 import { Color, DoubleSide } from 'three'
-import type { Side } from 'three'
+import type { Material, Side } from 'three'
 import { MeshPhysicalNodeMaterial, MeshStandardNodeMaterial } from 'three/webgpu'
 import type { Node } from 'three/webgpu'
 import { mrt, normalView, vec4 } from 'three/tsl'
@@ -62,5 +62,36 @@ export function isOpticallyTransparent(material: MeshStandardNodeMaterial): bool
     material.transparent === true ||
     (physical.transmission ?? 0) > 0 ||
     physical.transmissionNode != null
+  )
+}
+
+/**
+ * Can this mesh be rendered by an auxiliary pass that writes ONE plain colour
+ * attachment? Both the ocean's mirrored reflection and the undersea radiance
+ * capture ask this, and both would otherwise fail hard rather than degrade.
+ *
+ * A material carrying its own `mrtNode` — glass and the ocean both declare
+ * `mrt({ normal })` — REPLACES a null render-context MRT instead of adding to
+ * it, so its fragment struct ends up with no colour member at all and WGSL
+ * rejects it ("structures must have at least one member"). Transmission also
+ * wants a backdrop capture the auxiliary pass has no business triggering, and
+ * `depthWrite: false` geometry has no meaningful place in a depth-resolved
+ * top-down capture. One predicate covers all three.
+ */
+export function isOpaqueAuxiliaryCapture(material: Material): boolean {
+  const optical = material as Material & {
+    depthWrite?: boolean
+    transmission?: number
+    transmissionNode?: object | null
+    backdropNode?: object | null
+    mrtNode?: object | null
+  }
+  return (
+    optical.transparent !== true &&
+    optical.depthWrite !== false &&
+    !((optical.transmission ?? 0) > 0) &&
+    optical.transmissionNode == null &&
+    optical.backdropNode == null &&
+    optical.mrtNode == null
   )
 }

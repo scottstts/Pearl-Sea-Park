@@ -26,6 +26,7 @@ import {
   refract,
   smoothstep,
   texture,
+  uniform,
   varying,
   vec2,
   vec3,
@@ -144,6 +145,15 @@ export class CausticsPass {
 const CAUSTIC_FIELD_MEAN = 0.18
 
 /**
+ * Set to 1 only while the undersea radiance field bakes. That field is a
+ * STATIC capture, so a live caustic web frozen into it would be a permanently
+ * painted-on pattern on the seabed. Capturing the spatial mean instead leaves
+ * the low-frequency lift — which is all the ocean surface can honestly
+ * transmit anyway (see the note at the end of this file).
+ */
+export const causticBakeNeutral = uniform(0)
+
+/**
  * Sample caustic light at a world position: project along the sun to the
  * surface plane, wrap into the tile, chromatic triple-tap, fade with depth.
  * Returns an rgb concentration factor around 1.
@@ -177,7 +187,11 @@ export function causticWorldSample(
     const g = causticsNode.sample(uv.add(vec2(spread, spread.negate()))).r
     const b = causticsNode.sample(uv.add(vec2(spread.negate().mul(1.6), spread))).r
     const depthFade = exp(worldPos.y.mul(0.055)).min(1.0)
-    let field: Node<'vec3'> = vec3(r, g, b)
+    let field: Node<'vec3'> = mix(
+      vec3(r, g, b),
+      vec3(CAUSTIC_FIELD_MEAN),
+      causticBakeNeutral,
+    ) as unknown as Node<'vec3'>
     if (options.footprintFade) {
       // Metres of surface plane crossed by one output pixel. Filaments are
       // ~0.1–0.2 m wide; keep the web fully below 0.06 m/px and dissolve it
@@ -189,3 +203,22 @@ export function causticWorldSample(
     return field.mul(depthFade)
   })
 }
+
+/**
+ * NOTE — the caustic web is deliberately NOT restored on the ocean's
+ * transmitted bottom, and a live sample must never be added there.
+ *
+ * You cannot see a caustic web through the surface that made it. The same
+ * slope field that focuses the light also displaces your view of the bottom,
+ * and the two decorrelate with depth and incidence: a swimming pool shows
+ * caustics through the surface, a 26 m shelf viewed from a 4 m deck does not.
+ * The filaments are ~0.15 m wide against a transmitted image whose own
+ * resolution through 39 m of water and a live interface is far coarser.
+ *
+ * An earlier version restored the web as a live/mean ratio and it read as a
+ * bright cellular net painted ON the water — the 17 m tile plainly visible
+ * across the whole sheet. The undersea capture takes the field at
+ * `CAUSTIC_FIELD_MEAN` (`causticBakeNeutral`), and that mean lift is the whole
+ * of what the surface can honestly transmit. Underwater, where the interface
+ * is not in the path, `applyCaustics` keeps the full live web.
+ */

@@ -2184,3 +2184,257 @@
   - `WaveSim` now exposes `readonly sea` so foam reads the actual wind axis
     instead of re-importing `DEFAULT_SEA_STATE`. Anything else deriving from
     the sea state must read it there too.
+
+- 2026-07-24 both above-water optical sources made world-anchored (supersedes
+  the trace-plus-analytic-base compromise in the 2026-07-23 "world-anchored
+  transmitted body" entry, and narrows its "never a mirrored park render"
+  ruling):
+  - **Find the gate before redesigning the term.** Scott reported the pale/dark
+    patch again after the world-anchored base landed. The gate was one line:
+    `traceOpaqueSceneRay` projected the ray DIRECTION (`vec4(dir, 0)`), so
+    `initialUvInside` asked "is this direction's vanishing point inside the
+    frustum?" — a pure function of camera pitch with no scene geometry in it at
+    all. Air→water bends every ray to within 48.6° of straight down, so at 55°
+    FOV the threshold pitch is `β − 27.5°`: nothing transmitted above −14°, the
+    band reached 30 m at −15°, 10 m at −19°, 5 m at −28°, and the view cone
+    clipped it at BOTH ends. That is why the artifact was an annular band with a
+    dappled edge (wave normals jitter β by a few degrees), not a blob. Deriving
+    that table took minutes and pinned the whole diagnosis; guessing at the
+    radiance model would have wasted the session.
+  - Reflection had the identical defect mirrored: reflected rays leave at
+    `+atan(h/d)` above horizontal, so pitching down past ~20° switched every
+    reflection off. It read as milder only because its fallback (`skyRadiance`)
+    is a plausible sky, whereas transmission's fallback was a flat tint.
+  - **The rule: forward projection is frustum-safe, backward tracing is not.**
+    Source → apparent screen position can only be missing when the water pixel
+    needing it is also offscreen. Water pixel → source screen position has no
+    such guarantee. `InterfaceStructureLayer` was always on the right side of
+    this line; the two traces never were.
+  - **Anchoring the geometry is not anchoring the radiance.** The previous fix
+    baked `terrainHeight` and transported depth analytically — correct, and
+    useless here, because the park pad is flat: a depth-only base is ONE
+    UNIFORM COLOUR, so 100% of the visible variation still came from the
+    frustum-shaped trace. Matching mean levels across a validity boundary
+    cannot fix a term whose shape is wrong. If a term's fallback has no
+    spatial structure, the fallback is not a fallback.
+  - `sea/underseaRadiance.ts` captures the actual bottom instead: one ortho
+    top-down render at load, 2048² RGBA16F + mips over ±800 m (0.78 m/texel)
+    for radiance and 2048² R16F for canopy height. Aim the landing solve at the
+    CANOPY, never the seabed — a roof at −8 m ends the ray 18 m early.
+  - **What a world-anchored capture cannot carry, capture at its MEAN — but
+    only restore what the surface can actually transmit.** 0.78 m/texel loses
+    the sand's ~3 m ripple band, so the capture flattens it
+    (`seabedRippleBakeFlat`) and the water re-adds it analytically, sharper
+    than the trace ever was. Weight that by the direct-sun share only: a shadow
+    has no sun for a ripple to brighten.
+  - **The caustic web is the counter-example, and it cost a round trip.** It is
+    also captured at its mean (`causticBakeNeutral`, so no live pattern freezes
+    into a static field), but restoring it as a live/mean ratio was WRONG and
+    Scott caught it on sight: it read as a bright cellular net painted on the
+    water, with the 17 m caustic tile visible across the whole sheet. You
+    cannot see a caustic web through the surface that made it — the slope field
+    that focuses the light also displaces your view of the bottom, and the two
+    decorrelate with depth and incidence. A pool shows caustics through the
+    surface; a 26 m shelf from a 4 m deck does not, and ~0.15 m filaments are
+    far below what a transmitted image resolves through 39 m of water. Before
+    restoring a high-frequency signal through an interface, ask whether the
+    INTERFACE can carry it, not just whether the texture could.
+  - **Procedural noise has no mip chain.** Re-adding a 0.14 m grain at a
+    landing point that moves with the wave normal is crawling shimmer.
+    `seabedRippleSlope` therefore takes an optional footprint and fades each
+    band to zero against its OWN wavelength; a slope perturbation has mean zero,
+    so fading to zero IS the filtered answer. The seabed material passes
+    nothing and keeps its authored response bit-for-bit.
+  - **Two fields compared per texel must share a UV convention exactly.** The
+    chain is: WebGPU puts NDC y = +1 at the framebuffer TOP, WGSL samples v = 0
+    at texture row 0, and `DataTexture.flipY` is false. So `up = (0,0,-1)` on
+    the ortho camera makes the capture's mapping identical to
+    `createSeabedHeightField`'s, with no flip on either axis. Do not infer this
+    from the caustics pass — a caustic tile is statistically homogeneous, so a
+    flipped sample there is invisible and proves nothing.
+  - **Do not match a side target's MRT to reuse pipelines.** The WebGPU render
+    cache key carries sample count and colour/depth formats as well, so
+    matching the scene pass's MRT alone reuses nothing — and matching its 4×
+    MSAA at 2048² with two attachments is ~335 MB transient. One plain colour
+    attachment plus `await renderer.compileAsync(scene, orthoCamera)` is
+    cheaper in every dimension; compileAsync moves the builds off the main
+    thread behind the ticket.
+  - The capture parks `ctx.camera` at (0, 0, 120) and invalidates the shadow
+    clipmap first. Clipmap levels follow the camera; level 2 covers ±252 m at
+    full resolution, and z = 120 is the one centre holding both the park core
+    and the Arrival pavilion. Forced-dirty levels render regardless of
+    `updateBudget`, so one `invalidate()` + one `nodeFrame.update()` is enough.
+  - Hide by RULE, not by list: "not opaque or not depth-writing" removes the sky
+    dome, both ocean sheets, particulates, bubbles, wake sheets, and glass in
+    one predicate. Layers 0 + MAIN_DETAIL only, so nothing on
+    DYNAMIC_SHADOW_LAYER freezes into a static field in a load-time pose.
+  - **The rejected planar reflector was rejected for its SCOPE, not its
+    technique.** A nested whole-scene reflector costs whole-park vertex, draw,
+    and shadow submission that no target resolution reduces. A mirrored camera
+    restricted to `WATER_REFLECTION_LAYER` submits a handful of objects and is
+    both cheaper and more complete than the trace it replaces (the trace's own
+    tessellated alternative, extending `InterfaceStructureLayer`, would have
+    rendered MORE geometry). Re-read a rejection for its actual reason before
+    treating it as a ban.
+  - Planar-mirror sampling is at the water pixel's OWN screen position,
+    x-flipped: a mirrored camera rendering the real world is the main camera
+    rendering the mirrored world, and one reflection flips handedness. Waves
+    contribute only the difference between the flat and tilted vanishing
+    points. That difference is the one legitimate use of a direction projection
+    here — never let it become a validity test again.
+  - `markWaterReflector` is additive and MUST be called after
+    `markDynamicShadowCasters`, whose exclusive `layers.set` clears it.
+  - **Screen-space derivative builtins are only defined in uniform control
+    flow.** The ocean evaluates its transmitted bottom inside a waterline
+    branch, so `causticFieldRatio` takes the footprint as an argument instead of
+    measuring it with `dFdx`. The ocean already knows the exact world footprint
+    its refracted ray lands with, which is a better measure anyway. Texture
+    sampling inside that branch is fine and already shipped
+    (`sampleInterfaceStructure`); derivatives are the part that is not.
+  - Deleting the traces removed `viewportMipTexture()`/`viewportDepthTexture()`
+    from the ocean entirely — a full-frame HDR copy plus mip chain every frame,
+    gone. The material stays `transparent: true` purely for render-order
+    ownership now; the backdrop it once captured no longer exists.
+  - Regression test: `?pass=water-validity` above water. R (mirror active) and
+    G (undersea field present) must be FLAT while the camera rotates in place.
+    Any structure in them is this bug returning.
+
+- 2026-07-24 follow-up, two runtime traps in the undersea capture:
+  - **`scene.overrideMaterial` does NOT keep its own material state.**
+    `Renderer.renderObject` overwrites the override's `transparent` from every
+    source material it stands in for (`transparent || transmission > 0 ||
+    transmissionNode || backdropNode`) and never restores it, so one
+    transmissive or alpha-blended source turns the override into a blended
+    pipeline for the rest of the pass. Against the single-channel R16F canopy
+    target that is a hard WebGPU validation failure — "Color blending srcFactor
+    is reading alpha but it is missing from fragment output" — and the affected
+    draws are DROPPED, which shows up as holes in the height field reading as
+    near-black water (an uncovered texel clamps to the abyss clear and takes
+    the maximum Beer-Lambert path). Fix: set `blending = NoBlending` on any
+    override material. The backend tests `blending !== NoBlending` first, so it
+    short-circuits before `transparent` is consulted at all.
+  - Test transmissive materials EXPLICITLY when filtering for "opaque".
+    `createClearGlassMaterial` carries `transparent = false` — physical
+    transmission composites against the captured backdrop rather than alpha
+    blending — so a `transparent !== true` check alone lets glass through.
+  - `renderer.renderAsync()` is deprecated in r185; `render()` plus the already
+    awaited `renderer.init()` is the supported form.
+
+- 2026-07-24 auxiliary render passes: three traps that all present as one
+  cryptic WGSL error, plus the load-time rule (measured in-browser):
+  - **`MRTNode` resolves output names against the bound target's TEXTURE
+    NAMES, and silently skips misses.** `mrt({ output, normal })` against a
+    target whose textures are unnamed matches nothing, so the fragment struct
+    comes out EMPTY and the shader is rejected: "structures must have at least
+    one member". Same for a material carrying its own `mrtNode` (glass and the
+    ocean both declare `mrt({ normal })`) rendered with `setMRT(null)` into a
+    single unnamed attachment. Any auxiliary target must copy the scene pass's
+    texture names — `PassNode` names its attachments 'output' and 'normal'.
+  - **The node builder state cache key does NOT include the renderer MRT.** So
+    a material compiled by an auxiliary pass hands the MAIN pass a shader built
+    for a different output layout. This is why `InterfaceStructureLayer` clones
+    its materials — the cloning is load-bearing, not cosmetic. An auxiliary
+    pass must EITHER use the scene pass's MRT or use its own material
+    instances; rendering the park's real materials under a different MRT is
+    never safe.
+  - Failed pipelines are retried, so one of these bugs also shows up as load
+    time: the canopy pass measured 10.2 s while its pipelines were failing and
+    0.9 s once fixed.
+  - **Match a side target's render context and its compile cost stops being
+    additive.** Measured, on a mismatched target: 76 s awaiting `compileAsync`,
+    or 14 s of synchronous pipeline building inside `render()`, against a 35 ms
+    render — a whole second pipeline set for the park, used once. Matched (same
+    colour type/format, attachment count, sample count, MRT, names) the capture
+    builds the pipelines the warmup was about to build anyway: end-to-end load
+    measured 54.3 s with the capture on versus 59.8 s with it off. Tiling keeps
+    that affordable — a 4x multisampled 2048² pair is ~400 MB, 1024² tiles are
+    ~100 MB and freed immediately.
+  - Do NOT reach for `compileAsync` on a one-shot pass. It awaits every
+    pipeline promise; synchronous creation returns immediately and lets the
+    driver compile off the critical path. `compileAsync` is for pipelines that
+    will be used again.
+  - **`scene.overrideMaterial` does not keep its own state**: `renderObject`
+    overwrites its `transparent` from each source material and never restores
+    it. Set `blending = NoBlending` on any override material — the backend
+    tests that first, so it short-circuits before `transparent` matters.
+  - Chrome's console buffer survives navigations in tooling reads, so stale
+    errors look like live ones. Verify a fix with a per-load in-page counter
+    (a temporary `console.error` wrapper writing to `window`), not by reading
+    the console after a reload.
+
+- 2026-07-24 no sun cast shadows in what the surface transmits (follows the
+  undersea-capture entries above):
+  - **"Physically correct" and "reads correctly" are different acceptance
+    tests, and the second one wins.** The capture carried real sun shadows —
+    the Descent Station's 13 m disc on the sand 32 m south-east, the pile
+    shadows, the entrance sign's. All correctly placed; verified against the
+    seabed by flying the same sight-line to just under the surface and
+    comparing. Scott rejected them anyway, and his reasoning was exact: they
+    look like an aircraft's shadow lying ON the water, not like anything at the
+    bottom. That is a depth-cue failure, not a contrast one.
+  - Why shadows specifically: a cast shadow has no texture, no colour, and no
+    parallax of its own, so nothing in the image places it at depth and the eye
+    assigns it to the nearest surface. Bathymetry and structures never have
+    this problem — they carry their own detail. The cues that WOULD sell the
+    depth are refraction parallax and wave-driven wobble on the shadow's edge,
+    and at 0.35 amplitude (an authored calm glassy swell) both are far too
+    small. So the surface transmits the bottom's SUBSTANCE, not the sun's cast
+    shadows.
+  - Do not "fix" this by dimming shadows or muddying the water. At the
+    authored 250 m clarity a bottom shadow genuinely WOULD be visible; the
+    objection is to its appearance, not its brightness, so the honest fix is to
+    remove the term rather than to argue the physics down.
+  - Implemented as `seabedShadowCaptureKeep` through the `receivedShadowNode`
+    that `applyCaustics` already installs — a uniform, so no recompile, and its
+    coverage is already every lit underwater material (terrain, flora,
+    wildlife, and all ArchKit architecture via `materials/library.ts`). Third
+    uniform in the same family as `seabedRippleBakeFlat` and
+    `causticBakeNeutral`; keep new capture-neutral levers in that shape.
+    Self-shading (N·L) is untouched, so structures keep their form.
+  - **`markDynamicShadowCasters` is not "this subtree moves".** It only
+    relocates meshes whose `castShadow` is true, which left 23 submarine parts
+    (glass, lamp bulbs, cage rings) on layer 0 — where the undersea capture
+    would paint a movable vehicle permanently onto the seabed at its berth.
+    `markDynamic` in `render/layers.ts` moves a whole moving subtree. Any
+    future capture of the "static world" must ask whether the layer it trusts
+    actually means static.
+  - Isolating this took `?pass=water-reflection` vs `?pass=water-transmission`
+    from a matched camera pose, driven from the console via
+    `__pearl.registry.systems` + the dev-orbit `controls.target`. That beats
+    reasoning about which term a patch lives in — I guessed the pavilion
+    shadow first and was wrong about which side of the frame it was on.
+
+- 2026-07-24 the pavilion's shadow ON the water (`sea/surfaceSunShadow.ts`) —
+  the other half of the shadow ruling above:
+  - **The distinction that resolves it is WHERE the shadow lands, not whether
+    shadows are allowed.** A shadow on the seabed does not read through the
+    surface (no texture, no parallax, so the eye puts it on the water). A
+    shadow on the WATER is co-located with the surface, so nothing has to place
+    it at depth, and it reads immediately. Scott arrived at this himself after
+    the seabed shadows were removed: what he had wanted all along was the
+    pavilion's shadow on the sea, which had never existed.
+  - The ocean is a `MeshBasicNodeMaterial`, so it has no lighting model and had
+    never been shadowed by anything. The Descent Station stood in open sea
+    casting nothing onto the water it stands in.
+  - **Do not feed `CachedShadowClipmapNode` into the ocean material.** Tried
+    first, since it would have given live shadows from every caster for free.
+    A material outside the lighting path has no `receivedShadowNode` hook, the
+    fragment pipeline fails to build, and the frame goes black. Live shadows on
+    the water would require the ocean to become a lit material.
+  - So it bakes, like everything else this session: fixed sun + fixed
+    above-water structures means the footprint on y = 0 is a fixed function of
+    world XZ. One override material shears each vertex down its own sun ray
+    onto the plane before projecting (`p − sunDir·(p.y / sunDir.y)`), rendered
+    top-down and additively, with sub-waterline fragments writing zero. The
+    ocean walks each displaced point UP its sun ray to y = 0 before sampling,
+    so a crest reads the mask where its light comes from.
+  - Sized ±400 m at z = 160 rather than the park's ±800: only above-water
+    things cast, and clamp-to-edge returns unlit outside, which is the right
+    answer. That buys 0.39 m/texel for 16 MB.
+  - Apply it to the sun's DIRECT terms only — glint, crest/forward scatter,
+    sun-driven in-scatter, and foam's direct share. **Foam matters more than it
+    sounds**: it is the brightest thing on the water, so leaving it lit punches
+    white holes through any shadow crossing a whitecap. The sky reflection is
+    NOT shadowed; the sky is not what got blocked.
+  - Accepted limitation: only static casters. A surfaced submarine or the
+    riding Bell casts nothing on the sea.

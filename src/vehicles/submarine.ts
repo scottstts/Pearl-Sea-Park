@@ -5,7 +5,7 @@ import type { Rng } from '../core/prng'
 import type { Interactable } from '../player/interact'
 import type { PlayerSystem } from '../player/player'
 import { PLAYER_CAPSULE_OFFSET } from '../player/player'
-import { markDynamicShadowCasters } from '../render/layers'
+import { markDynamic, markDynamicShadowCasters, markWaterReflector } from '../render/layers'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import { BuoyancyProbe } from '../sea/buoyancyProbe'
@@ -245,6 +245,14 @@ export class SubmarineSystem implements GameSystem {
     model.group.rotation.order = 'YXZ'
     this.applyVisualPose(this.position, this.yaw)
     markDynamicShadowCasters(model.group)
+    // That helper only moves meshes whose `castShadow` is true, which left 23
+    // of the boat's parts (glass, lamp bulbs, cage rings) on layer 0 — where
+    // the undersea radiance capture would paint them permanently onto the
+    // seabed at the berth. The whole hull moves, so all of it is dynamic.
+    markDynamic(model.group)
+    // Surfaced, the boat reflects in the ocean. Must follow the dynamic marks,
+    // whose exclusive `set` would otherwise clear this.
+    markWaterReflector(model.group)
     ctx.scene.add(model.group)
 
     if (!this.sea.sim) throw new Error('SubmarineSystem requires SeaSystem to init first')

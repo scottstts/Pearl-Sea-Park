@@ -91,6 +91,14 @@ export class SkySystem implements GameSystem {
     }
   }
 
+  /**
+   * NOTE — the cached clipmap node cannot be consumed by a material outside the
+   * lighting path. Using it directly in the ocean's `MeshBasicNodeMaterial`
+   * (which has no lighting model, so no `receivedShadowNode` hook) fails to
+   * build the fragment pipeline and blacks out the frame. The ocean gets its
+   * sun visibility from the baked `sea/surfaceSunShadow.ts` mask instead.
+   */
+
   /** Called after every world system has initialized, before the first render. */
   sealStaticShadowCasters(scene: Scene): void {
     if (!this.clipmaps) return
