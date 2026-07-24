@@ -38,6 +38,51 @@ Architecture (spectral-ocean skill, WebGPU/TSL production tier):
   a surface property, wake foam rides displacement exactly and cannot float
   or sink. The compute pass self-gates: it dispatches only within ~35 s of a
   splat, so an unused sea costs one boot clear and nothing per frame.
+- **Above-water foam is its own module** (`sea/oceanFoam.ts`, 2026-07-24): four
+  coverage populations, one shading path, applied as the single
+  `mix(above, color, mask)` the whitecap term always was. The Jacobian
+  whitecap and the wake field answer *where the surface just folded*; the three
+  additions answer *what that folding left behind*, which is the part a purely
+  instantaneous foam model cannot have. **Windrows** are the load-bearing one:
+  Langmuir convergence lines, ~12.5 m across-wind × ~95 m along-wind, built in
+  the sim's own wind frame (`sim.sea.windAzimuth`, same `atan2(kz, kx)`
+  convention as the spectrum, so streaks cut across the crest lines), drifting
+  downwind at 3% of wind speed. They are modelled statistically, not simulated:
+  windrows are the *steady state* of a sustained 8.5 m/s wind, so a slowly
+  drifting anisotropic field is the honest representation of one rather than a
+  stand-in — and the cascades could not hold them anyway, because the FFT
+  patches tile (the same finding that produced `wakeFoamMap.ts`). A **raft
+  tail** reads the fold history's recovery band [0.26, 0.66] as thinning foam
+  instead of bare water, and **crest tear** puts a whisper of froth on the
+  tallest crests inside a gust patch, where breaking begins before the
+  horizontal Jacobian folds. All three combine by `max()`, never add — the same
+  rule the wake deposits use.
+- **Foam LOD conserves coverage; only the whitecap lace retires to zero.** Every
+  new band fades to its OWN MEAN as the pixel footprint grows (`mix(0.5, band,
+  keep)`, zero-mean detail octaves, `mix(0.46, lace, keep)`), because foam is an
+  albedo term: a band that fades to zero makes a distant patch of sea brighten
+  or darken with camera height. Windrows therefore survive far past the ~1 m
+  bubble lace — their own structure is 12 m wide, so their keep is authored
+  against *that* scale (3–7 m/pixel) instead of copied from the lace's 0.25–0.8.
+  Past the coarse keep the band field IS its mean, which sits below the
+  convergence-line threshold, so the population retires to exactly zero on its
+  own; a second distance fade would double-count the handoff. Thin coverage
+  multiplies by `edgeKeep` (it changes the body color, and the skirt has no
+  foam); the dense whitecap keeps its original footprint-only keep, which
+  already kills it long before the seam.
+- **Foam shading is thickness-graded, and the grade is a SHARE.**
+  `mix(thinShade, denseShade, denseMask / (denseMask + thinMask))` — dividing by
+  the total is what guarantees a pixel with no raft on it shades exactly as it
+  did before the module existed; grading on absolute `denseMask` instead would
+  have quietly dimmed every partial-coverage whitecap. Thin rafts are
+  translucent (the water beneath shows through, opacity rising with the raft's
+  own density) and forward-scatter sunlight toward a viewer facing the sun;
+  only dense froth reads as the near-white sheet. Bubble microrelief perturbs
+  the normal the foam is lit by, and its keep drives that perturbation to zero
+  by ~0.2 m/pixel — at which point the shading is bit-identical to the old
+  smooth-normal result, so distant whitecaps are untouched and near ones gain
+  relief. `sea/oceanFoam.ts` collects the coverage art-direction knobs in one
+  block; the geometry and physics constants above them are not tuning dials.
 - Cascade 0 has a separate conservative above-water footprint keep (2.5–5.5 m
   per pixel). Apply it to the derivative field *before* the fold denominator
   and use the same interval for cascade-0 vertex displacement and
@@ -116,6 +161,6 @@ Hard-won lessons (do not re-learn these):
   owner of atmospheric convergence. Do not fix the shelf by restoring distant
   displacement: the flat skirt remains required for alias-free grazing views.
 - **The sun disc is physical**: 0.53° angular diameter, Neckel–Labs limb darkening, HDR core ~1500× with a three-lobe circumsolar aureole; bloom makes the glare. `skyRadiance(dir, discStrength)` — the ocean passes `discStrength 0` because its analytic `sunGlint`/`windowGlint` terms ARE the delta-light specular response; re-reflecting the HDR disc through bumpy normals double-counts it as sparkling white pixels. Never re-add a wide flat smoothstep disc.
-- **Water optical diagnostics**: `?pass=water-fresnel` shows exact interface reflectance; `water-reflection` shows the reflected radiance after geometry/sky fallback; `water-transmission` shows the transmitted radiance; `water-interface` isolates all forward-refracted interface proxies; `water-validity` encodes above-water reflection / refraction / interface-proxy validity as R/G/B, and underwater general above-geometry / interface-proxy / Snell-window membership as R/G/B. Under `?debug`, `canvas.dataset.waterInterfaceLayer` reports active state, draw/vertex/triangle counts, and target dimensions once per 60 frames. Pair with fixed `?view=ceiling`, `?view=snell`, `?view=ocean-seam`, `?view=arrival-snell-rim`, and a fixed `?time=`. `arrival-snell-rim` deliberately places the distant pavilion at the water-to-air singularity and is the guard against returning crystal/shard geometry.
+- **Water optical diagnostics**: `?pass=water-fresnel` shows exact interface reflectance; `water-reflection` shows the reflected radiance after geometry/sky fallback; `water-transmission` shows the transmitted radiance; `water-interface` isolates all forward-refracted interface proxies; `water-validity` encodes above-water reflection / refraction / interface-proxy validity as R/G/B, and underwater general above-geometry / interface-proxy / Snell-window membership as R/G/B; `water-foam` shows the four foam coverage populations before lace and shading (R dense whitecap + wake, G windrow raft, B crest tear) and is black underwater and on the skirt, both of which carry no foam term. Under `?debug`, `canvas.dataset.waterInterfaceLayer` reports active state, draw/vertex/triangle counts, and target dimensions once per 60 frames. Pair with fixed `?view=ceiling`, `?view=snell`, `?view=ocean-seam`, `?view=arrival-snell-rim`, and a fixed `?time=`. `arrival-snell-rim` deliberately places the distant pavilion at the water-to-air singularity and is the guard against returning crystal/shard geometry.
 - **Waterline authority** (`sea/waterlineProbe.ts`): after the final camera pose, a 1-thread compute samples the same three displacement cascades at camera XZ (2 fixed-point rounds against choppy horizontal offset). It writes a 1×1 sampled state texture for the same frame's ocean/medium render and separately starts an async storage-buffer height copy for CPU events. `SeaSystem.surfaceHeightAtCamera` is therefore intentionally latent and must never gate visual underwater effects; nothing may compare camera y against 0 as a substitute for the displaced surface.
 - Camera: near 0.1, far 5000 (dome 3400, skirt 9000 wide) — don't shrink far below the dome radius; the "black sky" failure mode is far-plane culling.

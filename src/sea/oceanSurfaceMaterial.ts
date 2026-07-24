@@ -34,7 +34,7 @@ import {
   vec4,
 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
-import { fbm2, valueNoise2 } from '../render/tslNoise'
+import { valueNoise2 } from '../render/tslNoise'
 import { skyRadiance } from '../sky/skyRadiance'
 import { sunColorUniform, sunDirectionUniform } from '../sky/sun'
 import {
@@ -45,14 +45,10 @@ import {
   WATER_IOR,
 } from './opticalConstants'
 import type { InterfaceStructureNodes } from './interfaceStructureLayer'
+import { createOceanFoam } from './oceanFoam'
 import { OCEAN_FLAT_EDGE_MARGIN } from './oceanSkirtGeometry'
 import { SEABED_MEAN_RADIANCE } from './seabedRadiance'
-import {
-  WAKE_FOAM_CENTER_X,
-  WAKE_FOAM_CENTER_Z,
-  WAKE_FOAM_SIZE,
-  type WakeFoamMap,
-} from './wakeFoamMap'
+import type { WakeFoamMap } from './wakeFoamMap'
 import type { WaveSim } from './waveSim'
 
 /** Water body palette (linear HDR-ish, tuned for the golden afternoon). */
@@ -107,9 +103,12 @@ export type OceanOpticsDebugMode =
   | 'transmission'
   | 'interface'
   | 'validity'
+  | 'foam'
 
 export function oceanOpticsDebugMode(pass: string): OceanOpticsDebugMode {
   switch (pass) {
+    case 'water-foam':
+      return 'foam'
     case 'water-fresnel':
       return 'fresnel'
     case 'water-reflection':
@@ -803,42 +802,30 @@ export function createOceanSurfaceMaterial(
 
   let above = mix(transmittedRadiance, reflectedRadiance, aboveFresnel).add(sunGlint)
 
+  let foamDebug: Node<'vec3'> = vec3(0)
   if (options.detailed) {
-    // Jacobian foam: history-driven coverage × bubbly fbm detail, sun/sky lit.
-    // Coverage only where the surface genuinely folded; fades with distance
-    // so the fbm detail can never read as far-field shimmer.
-    let coverage: Node<'float'> = float(1).sub(smoothstep(-0.05, 0.26, vFoam))
-    let churn: Node<'float'> = float(0)
-    if (options.wakeFoam) {
-      // Vessel wake joins the SAME whitecap pipeline (coverage → lace →
-      // foamShade): a property of this surface, never an overlay, so it
-      // rides the displaced water exactly. Sampling by the undisplaced
-      // vWorldXZ matches the Jacobian channel, so deposited foam sloshes
-      // with the same horizontal chop as the ocean's own whitecaps.
-      const wakeUv = vWorldXZ
-        .sub(vec2(WAKE_FOAM_CENTER_X, WAKE_FOAM_CENTER_Z))
-        .div(WAKE_FOAM_SIZE)
-        .add(0.5)
-      const wake = options.wakeFoam.foamNode.sample(wakeUv)
-      // Residue behaves exactly like whitecap coverage — the shared lace
-      // multiply opens holes in it as it decays. Fresh churn adds the
-      // near-solid froth core right behind the hull.
-      coverage = max(coverage, smoothstep(0.02, 0.6, wake.g))
-      churn = smoothstep(0.1, 0.75, wake.r)
-    }
-    const bubbleA = fbm2(vWorldXZ.mul(0.9).add(vec2(0.13, 0.07).mul(timeUniform)))
-    const bubbleB = fbm2(vWorldXZ.mul(1.7).sub(vec2(0.11, 0.05).mul(timeUniform)))
-    const foamKeep = float(1).sub(smoothstep(0.25, 0.8, pixelFootprint))
-    const foamMask = coverage
-      .mul(bubbleA.mul(bubbleB).mul(1.7).add(0.06))
-      .add(churn.mul(bubbleA.mul(0.45).add(0.62)))
-      .mul(foamKeep)
-      .clamp(0, 1)
-    const foamAmbient = skyRadiance(aboveNormal, float(0)).mul(0.22)
-    const foamShade = foamAmbient.add(
-      sunColorUniform.mul(noL.mul(0.9).add(0.3)).mul(0.9),
-    )
-    above = mix(above, foamShade, foamMask)
+    // Foam is its own system (`sea/oceanFoam.ts`): the Jacobian whitecap and
+    // vessel wake answer where the surface just folded, while the windrow
+    // raft, its tail, and crest tear answer what that folding left behind.
+    // All four are coverage feeding one shading path, so foam remains a
+    // property of this surface rather than an overlay on it.
+    const foam = createOceanFoam({
+      sea: sim.sea,
+      time: timeUniform,
+      worldXZ: vWorldXZ,
+      jacobianHistory: vFoam,
+      crestHeight: aboveHeight,
+      steepness: vec2(aboveSlopeX, aboveSlopeZ).length(),
+      convergence: aboveDerivatives.z.add(aboveDerivatives.w).negate(),
+      pixelFootprint,
+      edgeKeep: vEdgeKeep,
+      normal: aboveNormal,
+      viewDir,
+      waterRadiance: above,
+      wakeFoam: options.wakeFoam,
+    })
+    foamDebug = foam.debug
+    above = mix(above, foam.color, foam.mask)
   }
 
   // ── Below-surface shading: the Silver Ceiling ──────────────────────────
@@ -916,6 +903,10 @@ export function createOceanSurfaceMaterial(
     const aboveInterface = aboveStructureSample.rgb.mul(aboveStructureContribution)
     const belowInterface = belowStructureSample.rgb.mul(belowStructureContribution)
     finalColor = mix(belowInterface, aboveInterface, isAbove)
+  } else if (debugMode === 'foam') {
+    // Above water only: the four coverage populations, unshaded and unlaced.
+    // Underwater stays black — no foam term exists on the Snell/TIR side.
+    finalColor = foamDebug.mul(isAbove)
   } else if (debugMode === 'validity') {
     const aboveValidity = vec3(
       aboveReflectionValid,

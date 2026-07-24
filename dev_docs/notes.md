@@ -2124,3 +2124,63 @@
   - Verify with `?view=snell` / `?view=arrival-snell-rim` at a fixed `?time=`;
     `?pass=water-validity` puts `insideWindow` in blue underwater, which
     isolates the rim shape on its own.
+
+- 2026-07-24 complementary above-water foam (`sea/oceanFoam.ts`; the whitecap
+  block moved out of `oceanSurfaceMaterial.ts` unchanged and gained three
+  populations around it):
+  - **The gap was persistence, not density.** Jacobian whitecaps and the wake
+    field are both instantaneous — foam exists exactly while the fold does.
+    Real sea foam OUTLIVES its fold: it thins, opens into lace, and Langmuir
+    circulation sweeps it into wind-aligned convergence streaks. That residue
+    is most of what separates "waves with whitecaps" from "an ocean". Adding
+    more whitecaps would not have produced it.
+  - Windrows cannot live in the cascades — the FFT patches tile, so nothing
+    world-anchored and long-lived fits inside them (the same wall that produced
+    `wakeFoamMap.ts`). They are modelled statistically instead: a slowly
+    drifting anisotropic field ~12.5 m across-wind × ~95 m along-wind in the
+    sim's own wind frame. This is not a stand-in for a simulation — windrows
+    ARE the steady state of a sustained wind, so a steady field is the honest
+    representation. The instantaneous sim keeps everything instantaneous: the
+    raft tail rides the fold history's recovery band and the streaks thicken
+    where the displacement divergence says the surface converges.
+  - **Foam is an albedo term, so its LOD must conserve coverage, not detail.**
+    Every band fades to its own MEAN (`mix(0.5, band, keep)`, zero-mean detail
+    octaves, `mix(0.46, lace, keep)`) instead of to zero. Fading a coverage
+    source to zero makes a distant patch of sea brighten or darken with camera
+    height — the same class of error as the frustum-shaped transmitted body.
+    The existing whitecap lace keeps its fade-to-zero because its coverage
+    source (the cascade Jacobian) aliases at range anyway.
+  - **Author each keep against the structure's OWN wavelength.** Windrows
+    survive to 3–7 m/pixel where the bubble lace dies at 0.25–0.8, because they
+    are 12 m wide, not 1 m. Copying the lace's keep would have thrown away the
+    entire mid-distance range where streaks are the most convincing thing on
+    the water. Same discipline as the cascade keeps, applied to a shading band.
+  - A field that fades to its mean also retires itself: past the coarse keep
+    the band field IS 0.5, which sits below the convergence-line threshold, so
+    coverage reaches exactly zero with no second distance fade. Adding one
+    would double-count the handoff.
+  - **Grade thickness by SHARE, never by absolute coverage.**
+    `mix(thin, dense, denseMask/(denseMask+thinMask))` shades a pixel with no
+    raft on it exactly as before the module existed. The first form,
+    `mix(thin, dense, denseMask)`, silently dimmed every partial-coverage
+    whitecap — a regression disguised as physics, because a half-covered pixel
+    genuinely IS half thin foam. Preserving an approved look means finding the
+    formulation whose limit reproduces it, not arguing the new one is better.
+  - Same trick for the bubble microrelief: it perturbs the normal the foam is
+    lit by, and its keep drives the perturbation to zero by ~0.2 m/pixel, so
+    the shading is bit-identical to the old smooth-normal result at any
+    distance. Near foam gains relief; nothing else moves.
+  - Crest tear is gated on HEIGHT, not on an absolute slope threshold: the body
+    palette's authored -1.7..1.5 m response pins what a crest is in metres,
+    while the sea's slope distribution is not knowable without a render (the
+    0.35 amplitude scale makes it far gentler than its 8.5 m/s spectrum
+    suggests). When one signal is calibrated by an existing constant and the
+    other is not, gate on the calibrated one and let the other only modulate.
+  - `?pass=water-foam` shows the raw populations (R dense whitecap + wake, G
+    windrow raft, B crest tear) before lace and shading — check coverage there
+    before touching any threshold in the final image. The coverage knobs are
+    collected in one block at the top of `oceanFoam.ts`; the geometry and
+    physics constants above them are not tuning dials.
+  - `WaveSim` now exposes `readonly sea` so foam reads the actual wind axis
+    instead of re-importing `DEFAULT_SEA_STATE`. Anything else deriving from
+    the sea state must read it there too.

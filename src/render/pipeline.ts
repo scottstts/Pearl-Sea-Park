@@ -45,7 +45,8 @@ const AO_WORLD_RADIUS = 0.25
  * sRGB via renderOutput → dream grade (display-referred).
  *
  * `?pass=` isolation views: ao · ao-filtered/applied/mask/footprint · bloom ·
- * depth · normal · haze · water-fresnel/reflection/transmission/interface/validity ·
+ * depth · normal · haze ·
+ * water-fresnel/reflection/transmission/interface/validity/foam ·
  * no-post · no-grade.
  * S3 composites (aquatic fog, god rays) splice in between AO and bloom.
  */
@@ -279,6 +280,7 @@ export class RenderPipelineSystem implements GameSystem {
       case 'water-transmission':
       case 'water-interface':
       case 'water-validity':
+      case 'water-foam':
       case 'no-post':
         outputNode = renderOutput(sceneColor, AgXToneMapping, SRGBColorSpace)
         break

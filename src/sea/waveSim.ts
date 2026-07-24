@@ -68,6 +68,9 @@ function createMapTexture(n: number): StorageTexture {
  */
 export class WaveSim {
   readonly patchLengths: number[]
+  /** The sea state these cascades were built from — consumers that need the
+   * wind axis (foam windrows) must read it here, never re-import a default. */
+  readonly sea: SeaState
   /** TSL texture nodes — .value is repointed after each ping-pong swap. */
   readonly displacementNodes: ReturnType<typeof texture>[]
   readonly derivativeNodes: ReturnType<typeof texture>[]
@@ -82,6 +85,7 @@ export class WaveSim {
     const { resolution: n, patchLengths, boundaryFactor, choppiness, foamRecovery, amplitude } =
       OCEAN_PRESET
     this.patchLengths = patchLengths
+    this.sea = sea
     const logN = Math.log2(n)
     const mask = uint(n - 1)
     const shift = uint(logN)
