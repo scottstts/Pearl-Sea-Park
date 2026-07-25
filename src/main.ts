@@ -4,6 +4,7 @@ import { getBookmark, parseFlags } from './core/debug'
 import { DebugOverlaySystem } from './core/debugOverlay'
 import { EventBus } from './core/events'
 import type { GameEvents } from './core/gameEvents'
+import { LoadTimingRecorder } from './core/loadTiming'
 import { recordAutoRuntimeSample, selectInitialQuality } from './core/autoQuality'
 import { Rng } from './core/prng'
 import { QualityState } from './core/quality'
@@ -19,7 +20,7 @@ import { LensDripSystem } from './render/lensDrips'
 import { RenderPipelineSystem } from './render/pipeline'
 import { releaseStaticGeometryArrays } from './render/releaseGeometry'
 import { createRenderer, webgpuAvailable } from './render/renderer'
-import { warmupRenderer } from './render/warmup'
+import { precompileRendererShaders, warmupRenderer } from './render/warmup'
 import { enableMainDetailLayer } from './render/layers'
 import { FramePerformanceMonitor } from './render/performanceMonitor'
 import { CarouselSystem } from './rides/carousel'
@@ -55,9 +56,12 @@ import { WildlifeSystem } from './wildlife/wildlifeSystem'
 const DEFAULT_SEED = 19051906 // the year the gates first opened
 
 async function boot(): Promise<void> {
+  const bootStartedAt = performance.now()
   const ticket = createTicketScreen(document.body)
   const flags = parseFlags()
+  const validationMode = flags.view !== null || flags.pass !== 'final' || flags.fixedTime !== null
 
+  const webgpuCheckStart = performance.now()
   if (!(await webgpuAvailable())) {
     ticket.showError(
       'This experience requires WebGPU',
@@ -69,9 +73,13 @@ async function boot(): Promise<void> {
   const canvas = document.createElement('canvas')
   canvas.id = 'scene'
   document.body.prepend(canvas)
+  const loadTiming = new LoadTimingRecorder(canvas, bootStartedAt)
+  loadTiming.record('webgpu-check', performance.now() - webgpuCheckStart)
+  const recordLoadTiming = loadTiming.record.bind(loadTiming)
 
   ticket.setProgress('render-pipeline', 0.05)
   let renderer
+  const rendererStart = performance.now()
   try {
     renderer = await createRenderer(canvas, flags.debug)
   } catch {
@@ -81,9 +89,12 @@ async function boot(): Promise<void> {
     )
     return
   }
+  loadTiming.record('render-pipeline', performance.now() - rendererStart)
 
   ticket.setProgress('quality-benchmark', 0.075)
+  const qualityStart = performance.now()
   const qualitySelection = await selectInitialQuality(renderer, flags.tier)
+  loadTiming.record('quality-benchmark', performance.now() - qualityStart)
   canvas.dataset.qualitySelection = JSON.stringify(qualitySelection)
 
   const scene = new Scene()
@@ -176,21 +187,48 @@ async function boot(): Promise<void> {
   }
   registry.add(pipeline)
 
-  await registry.init(ctx, (label, index, total) =>
-    ticket.setProgress(label, 0.1 + 0.62 * (index / Math.max(1, total))),
+  const systemsStart = performance.now()
+  await registry.init(
+    ctx,
+    (label, index, total) =>
+      ticket.setProgress(label, 0.1 + 0.62 * (index / Math.max(1, total))),
+    (label, durationMs) => loadTiming.record(`init:${label}`, durationMs),
   )
+  loadTiming.record('init:systems', performance.now() - systemsStart)
   // The fixed sun and immutable world can record their shadow commands while
   // the loading ticket still owns the screen. Later clipmap recenters execute
   // that bundle instead of traversing the full live scene on the game frame.
+  const shadowSealStart = performance.now()
   sky?.sealStaticShadowCasters(scene)
+  loadTiming.record('init:static-shadow-bundle', performance.now() - shadowSealStart)
+
+  // Compile scene materials BEFORE the one-shot undersea capture. Both use the
+  // scene pass's exact MRT context, so the bake reuses these asynchronously
+  // created pipelines instead of synchronously becoming a second warmup.
+  ticket.setProgress('prewarm', 0.72)
+  const shaderWarmupStart = performance.now()
+  const shaderWarmup = await precompileRendererShaders(
+    ctx,
+    pipeline,
+    (fraction) => ticket.setProgress('prewarm', 0.72 + 0.1 * fraction),
+  )
+  loadTiming.record(
+    'warmup-shaders',
+    performance.now() - shaderWarmupStart,
+    { signatures: shaderWarmup.signatures },
+  )
+
   // The ocean's transmitted bottom is a world-anchored capture of the park, so
   // it can only be taken once the park exists and its shadow casters are
-  // sealed. It runs for validation views too — a `?view=` reload skips warmup,
-  // but never the water's only source of what lies below it.
-  ticket.setProgress('undersea-field', 0.7)
+  // sealed. It runs for validation views too — they skip first-use frame
+  // submission, but never the water's only source of what lies below it.
+  ticket.setProgress('undersea-field', 0.83)
+  const underseaStart = performance.now()
   await sea?.bakeUnderseaField(ctx, {
     invalidateShadows: () => sky?.invalidateShadowLevels(),
+    recordTiming: recordLoadTiming,
   })
+  loadTiming.record('undersea-bake', performance.now() - underseaStart)
   const postcardAudit = auditPostcardBookmarks()
   canvas.dataset.postcardAudit = JSON.stringify(postcardAudit)
   if (!postcardAudit.complete) {
@@ -215,26 +253,36 @@ async function boot(): Promise<void> {
     }
   }
 
-  // Validation shortcuts (?view / ?pass / ?fixedTime) skip the enter gate.
-  const validationMode = flags.view !== null || flags.pass !== 'final' || flags.fixedTime !== null
-
   // Every shader the park can ever ask for is built, driver-compiled, and
   // used once behind the ticket screen. The Enter button appears only after
   // this completes: entry is instant and roaming never hits a first-sight
-  // pipeline compile again. Validation runs keep their fast reload instead.
+  // pipeline compile again. Validation runs compile scene materials for the
+  // capture but still accept first-use frame stutter for faster iteration.
   if (!validationMode) {
+    const frameWarmupStart = performance.now()
     await warmupRenderer(
       ctx,
       registry,
       pipeline,
-      (fraction) => ticket.setProgress('prewarm', 0.72 + 0.27 * fraction),
-      { invalidateShadows: () => sky?.invalidateShadowLevels() },
+      (fraction) => ticket.setProgress('prewarm', 0.84 + 0.15 * fraction),
+      {
+        invalidateShadows: () => sky?.invalidateShadowLevels(),
+        recordTiming: recordLoadTiming,
+      },
     )
+    loadTiming.record('warmup-frames', performance.now() - frameWarmupStart)
     // Warmup just drew every mesh, so every attribute is on the GPU: drop
     // the retained CPU copies of the static park (hundreds of MB of external
     // memory pressure otherwise feeding random full-GC freezes mid-roam).
+    const geometryReleaseStart = performance.now()
     const geometryRelease = releaseStaticGeometryArrays(scene)
     canvas.dataset.geometryRelease = JSON.stringify(geometryRelease)
+    loadTiming.record('geometry-release', performance.now() - geometryReleaseStart, {
+      geometriesReleased: geometryRelease.geometriesReleased,
+      geometriesSkipped: geometryRelease.geometriesSkipped,
+      megabytesReleased: geometryRelease.megabytesReleased,
+      meshesSeen: geometryRelease.meshesSeen,
+    })
     ticket.setProgress('ready', 1)
   }
 
@@ -278,6 +326,7 @@ async function boot(): Promise<void> {
     }
   }
   loop.start()
+  loadTiming.ready()
 
   if (!validationMode) await ticket.showEnter()
   ticket.hide()

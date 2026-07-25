@@ -236,7 +236,18 @@ export class SeaSystem implements GameSystem {
     await this.undersea?.bake(ctx, this.pipeline.scenePass, hooks)
     // The one cast shadow the water itself shows. Same load-time slot, and it
     // must follow the undersea capture, which restores the world's visibility.
-    this.surfaceShadow?.bake(ctx)
+    const surfaceShadowStart = performance.now()
+    const surfaceShadow = this.surfaceShadow?.bake(ctx)
+    hooks.recordTiming?.(
+      'surface-shadow-bake',
+      performance.now() - surfaceShadowStart,
+      surfaceShadow
+        ? {
+            nonOpaqueMeshes: surfaceShadow.nonOpaqueMeshes,
+            submergedMeshes: surfaceShadow.submergedMeshes,
+          }
+        : undefined,
+    )
   }
 
   dispose(ctx: GameContext): void {

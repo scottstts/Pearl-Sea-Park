@@ -12,12 +12,15 @@ export class SystemRegistry {
   async init(
     ctx: GameContext,
     onProgress?: (label: string, index: number, total: number) => void,
+    onTiming?: (label: string, durationMs: number) => void,
   ): Promise<void> {
     const total = this.systems.length
     for (let i = 0; i < total; i++) {
       const system = this.systems[i]
       onProgress?.(system.id, i, total)
+      const start = performance.now()
       await system.init?.(ctx)
+      onTiming?.(system.id, performance.now() - start)
     }
     onProgress?.('ready', total, total)
   }

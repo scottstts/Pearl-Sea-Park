@@ -2531,3 +2531,30 @@
     brightness seam right where the fade completes. Integrate the real noise
     field offline (port `hash21`/`valueNoise2` to JS — they are ten lines) and
     hardcode it, as `CAUSTIC_FIELD_MEAN` already does.
+
+- 2026-07-25 cold-load regression after the world-anchored ocean rewrite
+  (`render/warmup.ts`, `sea/underseaRadiance.ts`):
+  - Measured incognito load was 114.05 s: warm frames 73.53, undersea bake
+    29.79, scene shader warmup 7.50. The capture ran BEFORE `compileAsync`, so
+    its four scene renders synchronously created the same pipelines that the
+    later warmup then compiled; matched MRT state prevents a second pipeline
+    set, but cannot repair backwards scheduling.
+  - Scene material/layout representatives now compile first against the exact
+    scene-pass MRT. The actual final RenderPipeline quad is separately compiled
+    with `createRenderPipelineAsync`; scene-mesh representatives cannot cover
+    its AO/medium/bloom/exposure/grade graph.
+  - Six full-resolution all-scene frames had no current cadence owner. Exposure
+    fires at logical frame zero and static bundles need initial-graph +
+    post-invalidation submission, so warmup is two 64×36 uncull/reveal frames
+    plus one normally culled full-size allocation frame. The logical entry
+    frame remains six, preventing runtime cadence drift.
+  - Three r185 regenerates destination mips after every texture copy. The four
+    radiance tiles therefore built four full 2048² pyramids; only the last
+    could be final. Preallocate all levels, suppress tile 1–3 generation, and
+    generate once on tile 4. No field, filter, resolution, MSAA, MRT, ocean,
+    caustic, foam, ray, reflection, or grading parameter changed.
+  - `canvas.dataset.loadTiming` is now source-owned and published after every
+    record, including per-system init, material signature count, every capture
+    tile, canopy, surface shadow, final-pipeline compile, warm-frame submit/wall
+    timing, and ready total. Use it rather than attributing GPU backlog to the
+    phase whose next rAF happened to wait for it.

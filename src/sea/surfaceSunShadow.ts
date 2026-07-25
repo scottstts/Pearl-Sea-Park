@@ -1,5 +1,6 @@
 import {
   AdditiveBlending,
+  Box3,
   Color,
   DoubleSide,
   LinearFilter,
@@ -60,6 +61,12 @@ const CAMERA_Y = 300
 const FLOOR_Y = -400
 /** Ignore anything at or below the mean waterline; it cannot shadow the water. */
 const ABOVE_WATER_EPSILON = 0.05
+const SURFACE_BOUNDS = new Box3()
+
+export interface SurfaceSunShadowBakeSummary {
+  nonOpaqueMeshes: number
+  submergedMeshes: number
+}
 
 export class SurfaceSunShadow {
   /** Sun visibility at a displaced surface point: 1 lit, 0 fully shadowed. */
@@ -128,18 +135,26 @@ export class SurfaceSunShadow {
   }
 
   /** Capture the mask. Same load-time slot as the undersea radiance field. */
-  bake(ctx: GameContext): void {
+  bake(ctx: GameContext): SurfaceSunShadowBakeSummary {
     const { renderer, scene } = ctx
     const hidden: Object3D[] = []
+    let nonOpaqueMeshes = 0
+    let submergedMeshes = 0
+    scene.updateMatrixWorld(true)
     scene.traverse((object) => {
       const mesh = object as Mesh
       if (!mesh.isMesh || !mesh.visible || !mesh.material) return
       const materials: Material[] = Array.isArray(mesh.material)
         ? mesh.material
         : [mesh.material]
-      if (materials.every(isOpaqueAuxiliaryCapture)) return
-      mesh.visible = false
-      hidden.push(mesh)
+      const opaque = materials.every(isOpaqueAuxiliaryCapture)
+      const submerged = opaque && isProvablySubmerged(mesh)
+      if (!opaque || submerged) {
+        if (submerged) submergedMeshes++
+        else nonOpaqueMeshes++
+        mesh.visible = false
+        hidden.push(mesh)
+      }
     })
 
     const previousTarget = renderer.getRenderTarget()
@@ -161,10 +176,39 @@ export class SurfaceSunShadow {
       renderer.setClearColor(this.savedClearColor, previousAlpha)
       for (const object of hidden) object.visible = true
     }
+    return { nonOpaqueMeshes, submergedMeshes }
   }
 
   dispose(): void {
     this.target.dispose()
     this.material.dispose()
   }
+}
+
+/**
+ * The override shader projects base geometry and writes exactly zero for every
+ * point at/below the mean waterline. A plain mesh whose transformed bounding
+ * box is wholly below that plane therefore cannot affect the mask at all.
+ *
+ * Keep instanced, skinned and morphed geometry conservatively: their runtime
+ * vertex transforms are not represented by geometry.boundingBox. This is an
+ * output-equivalent submission prune, not a caster or quality heuristic.
+ */
+function isProvablySubmerged(mesh: Mesh): boolean {
+  const dynamic = mesh as Mesh & {
+    isInstancedMesh?: boolean
+    isSkinnedMesh?: boolean
+  }
+  const geometry = mesh.geometry
+  if (
+    dynamic.isInstancedMesh === true ||
+    dynamic.isSkinnedMesh === true ||
+    Object.keys(geometry.morphAttributes).length > 0
+  ) {
+    return false
+  }
+  if (geometry.boundingBox === null) geometry.computeBoundingBox()
+  if (geometry.boundingBox === null) return false
+  SURFACE_BOUNDS.copy(geometry.boundingBox).applyMatrix4(mesh.matrixWorld)
+  return SURFACE_BOUNDS.max.y < ABOVE_WATER_EPSILON
 }

@@ -16,6 +16,7 @@ import type { Material, Mesh, Object3D, RenderTargetOptions } from 'three'
 import { MeshBasicNodeMaterial } from 'three/webgpu'
 import type { Node, PassNode } from 'three/webgpu'
 import { positionWorld, texture, vec4 } from 'three/tsl'
+import type { LoadTimingSink } from '../core/loadTiming'
 import { isOpaqueAuxiliaryCapture } from '../materials/glass'
 import { MAIN_DETAIL_LAYER } from '../render/layers'
 import type { GameContext } from '../runtime/context'
@@ -87,6 +88,7 @@ export interface UnderseaFieldNodes {
 export interface UnderseaBakeHooks {
   /** Force every cached shadow level to re-render at the capture centre. */
   invalidateShadows?: () => void
+  recordTiming?: LoadTimingSink
 }
 
 export class UnderseaRadianceField {
@@ -248,7 +250,11 @@ export class UnderseaRadianceField {
 
       // ── Radiance ───────────────────────────────────────────────────────
       const radianceRenderStart = performance.now()
-      this.captureRadiance(ctx, scenePass)
+      this.captureRadiance(ctx, scenePass, hooks.recordTiming)
+      hooks.recordTiming?.(
+        'undersea-radiance',
+        performance.now() - radianceRenderStart,
+      )
 
       // ── Canopy height ──────────────────────────────────────────────────
       scene.overrideMaterial = this.canopyMaterial
@@ -261,6 +267,10 @@ export class UnderseaRadianceField {
       const canopyRenderStart = performance.now()
       renderer.clear()
       renderer.render(scene, this.camera)
+      hooks.recordTiming?.(
+        'undersea-canopy',
+        performance.now() - canopyRenderStart,
+      )
       if (ctx.flags.debug) {
         const end = performance.now()
         console.info(
@@ -307,7 +317,11 @@ export class UnderseaRadianceField {
    * soon as the capture ends. Resolution is unaffected — the persistent field
    * is assembled from the tiles at the full 0.78 m/texel.
    */
-  private captureRadiance(ctx: GameContext, scenePass: PassNode | null): void {
+  private captureRadiance(
+    ctx: GameContext,
+    scenePass: PassNode | null,
+    recordTiming?: LoadTimingSink,
+  ): void {
     const { renderer, scene } = ctx
     const source = scenePass?.renderTarget
     const capture = new RenderTarget(TILE_RESOLUTION, TILE_RESOLUTION, {
@@ -335,7 +349,14 @@ export class UnderseaRadianceField {
 
     const extent = UNDERSEA_FIELD_EXTENT
     const tileExtent = (extent * 2) / TILES
+    const radianceTexture = this.radianceTarget.texture
     try {
+      // Allocate the complete destination mip pyramid once. Three r185
+      // otherwise regenerates every mip after EACH copyTextureToTexture call;
+      // with four tiles that built three incomplete pyramids which were
+      // immediately discarded. Keep auto-generation off until the final tile,
+      // whose copy creates the one complete, byte-identical mip chain.
+      renderer.initTexture(radianceTexture)
       renderer.setRenderTarget(capture)
       renderer.setMRT(scenePass?.getMRT() ?? null)
       if (ctx.flags.debug) {
@@ -350,6 +371,7 @@ export class UnderseaRadianceField {
       renderer.setClearColor(0x000000, 1)
       for (let tileZ = 0; tileZ < TILES; tileZ++) {
         for (let tileX = 0; tileX < TILES; tileX++) {
+          const tileStart = performance.now()
           const x0 = -extent + tileX * tileExtent
           const z0 = -extent + tileZ * tileExtent
           // The camera's x axis is world +x and its y axis is world −z, so the
@@ -364,15 +386,27 @@ export class UnderseaRadianceField {
           // Row 0 of both the tile and the field is world z = −extent, so the
           // destination origin is a plain scaled offset with no flip.
           TILE_ORIGIN.set(tileX * TILE_RESOLUTION, tileZ * TILE_RESOLUTION, 0)
+          const finalTile = tileX === TILES - 1 && tileZ === TILES - 1
+          radianceTexture.generateMipmaps = finalTile
           renderer.copyTextureToTexture(
             capture.texture,
-            this.radianceTarget.texture,
+            radianceTexture,
             null,
             TILE_ORIGIN,
+          )
+          recordTiming?.(
+            `undersea-tile:${tileZ * TILES + tileX + 1}`,
+            performance.now() - tileStart,
+            {
+              generatesMipmaps: finalTile,
+              tileX,
+              tileZ,
+            },
           )
         }
       }
     } finally {
+      radianceTexture.generateMipmaps = true
       capture.dispose()
     }
   }

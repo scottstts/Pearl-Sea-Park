@@ -1,4 +1,10 @@
-import { AgXToneMapping, NoToneMapping, SRGBColorSpace } from 'three'
+import {
+  AgXToneMapping,
+  ColorManagement,
+  NoToneMapping,
+  SRGBColorSpace,
+} from 'three'
+import type { Camera, Mesh } from 'three'
 import { RenderPipeline } from 'three/webgpu'
 import type { Node, PassNode } from 'three/webgpu'
 import {
@@ -304,6 +310,47 @@ export class RenderPipelineSystem implements GameSystem {
   render(): void {
     void this.pipeline?.render()
     if (this.context) this.meter?.afterRender(this.context)
+  }
+
+  /**
+   * Compile the ACTUAL final fullscreen pipeline with WebGPU's asynchronous
+   * pipeline path. Scene-mesh warmup alone cannot cover this material: it owns
+   * the full AO → medium → bloom → exposure → grade graph and otherwise falls
+   * through to synchronous creation on the first submitted frame.
+   *
+   * Three r185 does not expose RenderPipeline.compileAsync(), but its concrete
+   * quad is intentionally a normal Mesh. Keep this narrow adapter guarded so a
+   * future Three upgrade fails at load instead of silently restoring the
+   * first-frame compile stall.
+   */
+  async compileAsync(): Promise<void> {
+    const renderer = this.context?.renderer
+    const pipeline = this.pipeline as unknown as {
+      _quadMesh?: Mesh & { camera?: Camera }
+      _update?: () => void
+    } | null
+    if (!renderer || !pipeline) return
+    if (typeof pipeline._update !== 'function' || !pipeline._quadMesh?.camera) {
+      throw new Error('Three RenderPipeline warmup contract changed')
+    }
+
+    // RenderPipeline.render() updates its graph before temporarily switching
+    // the renderer to a linear, un-tonemapped output context. Mirror that order
+    // exactly so this compile hits the same render-context and pipeline cache.
+    pipeline._update()
+    const previousToneMapping = renderer.toneMapping
+    const previousOutputColorSpace = renderer.outputColorSpace
+    const previousXr = renderer.xr.enabled
+    renderer.toneMapping = NoToneMapping
+    renderer.outputColorSpace = ColorManagement.workingColorSpace
+    renderer.xr.enabled = false
+    try {
+      await renderer.compileAsync(pipeline._quadMesh, pipeline._quadMesh.camera)
+    } finally {
+      renderer.xr.enabled = previousXr
+      renderer.toneMapping = previousToneMapping
+      renderer.outputColorSpace = previousOutputColorSpace
+    }
   }
 
   update(ctx: GameContext, dt: number): void {
