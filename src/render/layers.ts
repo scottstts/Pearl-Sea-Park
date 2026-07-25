@@ -40,10 +40,10 @@ export function markDynamicShadowCasters(object: Object3D): void {
  * Move an entire moving subtree onto the dynamic layer, casters or not.
  *
  * `markDynamicShadowCasters` only relocates meshes whose `castShadow` is true,
- * which is right for the shadow system but leaves a vehicle's non-casting parts
- * on layer 0 — where any capture of the STATIC world (the undersea radiance
- * field) will bake them in place forever. The main camera renders this layer,
- * so visibility is unchanged.
+ * which is right for the shadow system but leaves a vehicle's non-casting
+ * parts on layer 0. Keeping the whole moving subtree together also prevents
+ * future static auxiliary passes from freezing only part of it. The main
+ * camera renders this layer, so visibility is unchanged.
  */
 export function markDynamic(object: Object3D): void {
   object.traverse((node) => {

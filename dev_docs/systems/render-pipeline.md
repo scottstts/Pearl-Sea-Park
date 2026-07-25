@@ -140,19 +140,18 @@ Choices beyond the code:
   park if paid in one frame) and the browser compiles native shaders lazily
   on each pipeline's first submitted use (GPU-process stall = the roaming
   freeze). One representative mesh per material × geometry-layout signature
-  is now batch-`compileAsync`ed against the scene pass's own target + MRT
-  **before** the undersea capture; the capture shares those pipelines instead
-  of synchronously becoming a second compiler. The actual RenderPipeline
+  is batch-`compileAsync`ed against the scene pass's own target + MRT. The
+  actual RenderPipeline
   fullscreen quad (AO → medium → bloom → exposure → grade) is compiled
   asynchronously too. First-use submission is two 64×36 all-scene frames
   (initial graph, then forced static-shadow bundles), followed by one normally
   culled full-size frame to allocate the runtime targets. Runtime resolution,
   shader coverage, and the logical six-frame entry cadence are unchanged.
-  Validation modes still skip the submitted-frame warmup, but retain the
-  pre-capture material compilation because it is faster than synchronous bake
-  compilation. `canvas.dataset.loadTiming` records material signatures, final
-  pipeline compilation, every warm frame's submit/wall time, and full boot
-  totals.
+  Validation modes still skip the submitted-frame warmup. The deleted
+  undersea-radiance capture no longer contributes render, canopy, tile, mip, or
+  shadow-recenter work. `canvas.dataset.loadTiming` records material
+  signatures, the retained surface-shadow bake, final-pipeline compilation,
+  every warm frame's submit/wall time, and full boot totals.
 - **Runtime light membership is shader topology in Three r185.** Adding,
   removing, hiding, or layer-excluding a `Light` changes `LightsNode`'s cache
   key and synchronously rebuilds every lit RenderObject/WGSL program in the

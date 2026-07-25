@@ -12,7 +12,6 @@ import {
   exp,
   float,
   getViewPosition,
-  log2,
   max,
   min,
   mix,
@@ -48,8 +47,10 @@ import type { InterfaceStructureNodes } from './interfaceStructureLayer'
 import { createOceanFoam } from './oceanFoam'
 import type { OceanReflectionNodes } from './oceanReflection'
 import { OCEAN_FLAT_EDGE_MARGIN } from './oceanSkirtGeometry'
-import { SEABED_DIRECT_SHARE } from './seabedRadiance'
-import type { UnderseaFieldNodes } from './underseaRadiance'
+import {
+  SEABED_DIRECT_SHARE,
+  SEABED_MEAN_RADIANCE,
+} from './seabedRadiance'
 import type { WakeFoamMap } from './wakeFoamMap'
 import type { WaveSim } from './waveSim'
 
@@ -73,15 +74,9 @@ export interface OceanMaterialOptions {
   /** Camera-medium authority: 0 above the displaced surface, 1 below it. */
   submerged: Node<'float'>
   /**
-   * World-anchored capture of everything below the waterline, giving the
-   * detailed sheet its transmitted bottom. Absent on the skirt, which keeps
-   * the far-field palette.
-   */
-  undersea?: UnderseaFieldNodes
-  /**
-   * Bare seabed height (baked terrain). Only the sand carries the ripple band
-   * the undersea capture deliberately flattened, so the two heights together
-   * say where re-adding it is legitimate.
+   * World-anchored seabed height. The detailed sheet uses this only for
+   * capture-free bathymetric transport of a uniform mean sand radiance; it
+   * carries no park geometry or scene color.
    */
   seabedHeight?: (worldXZ: Node<'vec2'>) => Node<'float'>
   /**
@@ -142,14 +137,11 @@ export function oceanOpticsDebugMode(pass: string): OceanOpticsDebugMode {
  * the true Snell's window with total internal reflection outside it.
  *
  * BOTH optical sources above water are world-anchored, and neither may be
- * gated on a screen-space validity test. Reflection reads a mirrored render
- * (sea/oceanReflection.ts) over analytic skyRadiance; transmission reads the
- * undersea radiance field (sea/underseaRadiance.ts). The screen-space traces
- * they replaced projected a ray DIRECTION and required its vanishing point to
- * be inside the frustum — a purely angular test against camera pitch, so from
- * one fixed viewpoint a tilt of the head grew a band of seabed out of flat
- * tint and switched every reflection off. Standing still and looking around
- * must never change what the water is made of.
+ * gated on a screen-space validity test. Reflection reads the bounded mirrored
+ * render in sea/oceanReflection.ts. Transmission transports a spatially
+ * uniform mean sand radiance through world-anchored bathymetry, deliberately
+ * carrying no submerged park imagery. Standing still and looking around must
+ * never change what the water is made of.
  */
 export function createOceanSurfaceMaterial(
   sim: WaveSim,
@@ -506,13 +498,11 @@ export function createOceanSurfaceMaterial(
   const belowStructureValid = max(belowStructureSample.a, 0.0)
 
   const aboveRefracted = refract(incident, aboveNormal, AIR_IOR / WATER_IOR)
-  // The undersea field below carries the whole transmitted bottom. The
-  // forward-projected structure layer still substitutes over it for meshes
-  // that straddle the waterline (piles, the Bell's frame), where close-range
-  // parallax matters and a top-down capture has none. That layer rasterizes
-  // its own vertices at their refracted screen position, so its coverage is
-  // exactly as available as the water pixel needing it — the property the
-  // deleted backward trace never had.
+  // The forward-projected structure layer is retained only for meshes that
+  // physically straddle the waterline (the Bell's frame), where close-range
+  // optical continuity matters. It is independent of the deleted static-park
+  // radiance capture and rasterizes its own vertices at their refracted screen
+  // position.
   const aboveStructureEnabled = options.detailed
     ? isAbove.mul(step(0.03, float(1).sub(aboveFresnel)))
     : float(0)
@@ -540,13 +530,10 @@ export function createOceanSurfaceMaterial(
     .mul(1.0)
     .mul(smoothstep(-0.1, 1.1, vHeight))
 
-  // A shadow cast ON the water is the one shadow that reads correctly from
-  // above it: it is co-located with the surface, so nothing has to place it at
-  // depth (contrast the seabed's cast shadows, deliberately absent from the
-  // undersea capture — see sea/medium.ts). It applies to the sun's DIRECT
-  // contribution only. The sky reflection is untouched, because the sky is not
-  // what got blocked; the mirrored render already handles the occluder's own
-  // reflected image.
+  // A shadow cast ON the water is co-located with the surface, so nothing has
+  // to place it at depth. It applies to the sun's DIRECT contribution only.
+  // The sky reflection is untouched, because the sky is not what got blocked;
+  // the mirrored render already handles the occluder's own reflected image.
   const sunShadow = (
     options.sunShadow ? options.sunShadow(vWorld) : float(1)
   ).clamp(0, 1)
@@ -613,98 +600,72 @@ export function createOceanSurfaceMaterial(
       })()
     : skyReflection
 
-  // Air -> water transmission is WORLD-anchored: every metre of it comes from
-  // the undersea radiance field, indexed by world XZ. Nothing here can change
-  // because the camera turned. The forward-projected structure layer is the
-  // one substitution, and it is world-anchored too.
-  const undersea = options.undersea
+  // Air -> water transmission is capture-free and WORLD-anchored. The terrain
+  // height determines the water path, but the transported bottom is one
+  // spatially uniform mean sand radiance: no park mesh, flora, shadow, or
+  // captured scene color can appear through the surface. The local
+  // waterline-crossing structure layer remains an explicit substitution.
   const seabedHeight = options.seabedHeight
-  const transmittedRadiance: Node<'vec3'> = undersea && seabedHeight
+  const transmittedRadiance: Node<'vec3'> = seabedHeight
     ? Fn(() => {
         const result = body.toVar()
         // `isAbove` comes from the 1x1 waterline texture and is constant
         // across the draw, so this branch is uniform: underwater frames pay
         // for none of the seabed transport they would immediately discard.
         If(isAbove.greaterThan(0.001), () => {
-          // Landing point in two fixed-point steps, aimed at the CANOPY — the
-          // topmost underwater surface — not the bare seabed: a roof at -8 m
-          // ends the ray eighteen metres before the sand does. Air->water
-          // refraction is never shallower than ~41 degrees below horizontal, so
-          // clamping the descent to 0.3 bounds the step and two fetches
-          // converge to metre level, ample for a radiance grading field.
+          // Two fixed-point bathymetry samples settle the landing point.
+          // Air->water refraction is never shallower than ~41 degrees below
+          // horizontal, so clamping the descent to 0.3 bounds both steps.
           const downSlope = aboveRefracted.y.min(-0.3)
-          const firstPath = undersea
-            .canopyHeight(vWorldXZ)
+          const firstPath = seabedHeight(vWorldXZ)
             .sub(vWorld.y)
             .div(downSlope)
             .clamp(0.5, 300.0)
           const midLandingXZ = vWorldXZ.add(aboveRefracted.xz.mul(firstPath))
-          const canopyPath = undersea
-            .canopyHeight(midLandingXZ)
+          const seabedPath = seabedHeight(midLandingXZ)
             .sub(vWorld.y)
             .div(downSlope)
             .clamp(0.5, 320.0)
             .toVar()
-          const landingXZ = vWorldXZ.add(aboveRefracted.xz.mul(canopyPath))
-          // Every remaining lookup reads the SETTLED landing point, including
-          // this one: the sand/structure test and the ripple band it gates must
-          // agree per texel with the radiance sample they modulate, and near a
-          // structure's edge the first iterate is metres away from it.
-          const canopyY = undersea.canopyHeight(landingXZ).toVar()
+          const landingXZ = vWorldXZ.add(aboveRefracted.xz.mul(seabedPath))
 
-          // The field is world-anchored, so its LOD is a world footprint too:
-          // one pixel's cone down the air leg, compressed by refraction along
+          // One pixel's cone down the air leg, compressed by refraction along
           // the water leg, then spread over the bottom by the landing angle.
+          // This footprint filters only the procedural ripple slope; there is
+          // no captured radiance texture or mip chain.
           const landingFootprint = float(PIXEL_ANGLE)
-            .mul(vDistance.add(canopyPath.mul(AIR_IOR / WATER_IOR)))
+            .mul(vDistance.add(seabedPath.mul(AIR_IOR / WATER_IOR)))
             .div(downSlope.negate())
-          const landingLod = log2(
-            max(landingFootprint.div(undersea.texelSize), 1.0),
-          ).clamp(0.0, 11.0)
 
-          // Restore the sand's ripple band, which the capture flattened
-          // because 0.78 m/texel cannot carry a ~3 m wave. It modulates DIRECT
-          // sunlight only: in a structure's shadow there is no sun for a ripple
-          // to brighten, and letting it do so anyway is exactly the painted-on
-          // look a world-anchored field is supposed to avoid. Ripples belong to
-          // the sand alone, so this is gated on the canopy being the seabed.
-          //
-          // The caustic web is deliberately NOT restored here — see the note in
-          // sea/caustics.ts. A surface cannot transmit a web its own slopes
-          // scramble; only the mean lift the capture already holds survives.
-          const isSand = float(1).sub(
-            smoothstep(0.4, 1.4, canopyY.sub(seabedHeight(landingXZ))),
-          )
+          // Keep the existing sand ripple response without encoding any scene
+          // imagery. It modulates only the direct-light share of the uniform
+          // mean sand radiance and fades by its own pixel footprint.
           const rippleSlope = seabedRippleSlope(landingXZ, landingFootprint)
           const rippleNormal = normalize(vec3(rippleSlope.x, 1, rippleSlope.y))
-          const rippleRatio = mix(
-            float(1),
-            max(dot(rippleNormal, sunDir), 0.0).div(max(sunDir.y, 0.05)),
-            isSand,
+          const rippleRatio = max(dot(rippleNormal, sunDir), 0.0).div(
+            max(sunDir.y, 0.05),
           )
           const restoredDetail = mix(float(1), rippleRatio, SEABED_DIRECT_SHARE)
 
-          // The structure layer replaces the field for meshes that straddle
-          // the waterline, where a top-down capture has no parallax.
+          // Only explicitly registered waterline-crossing geometry may replace
+          // the uniform bathymetric base.
           const structureShare = aboveStructureContribution
           const bottomColor = mix(
-            undersea.radiance(landingXZ, landingLod).mul(restoredDetail),
+            vec3(...SEABED_MEAN_RADIANCE).mul(restoredDetail),
             aboveStructureSample.rgb,
             structureShare,
           )
           const waterPath = mix(
-            canopyPath,
+            seabedPath,
             aboveStructure.path.clamp(0.05, 3500.0),
             structureShare,
           )
           const aquaticTransmittance = exp(
             vec3(...AQUATIC_EXTINCTION).mul(waterPath).negate(),
           )
-          // Both legs cross water. The undersea field lights the bottom as if
-          // it stood in air, so restore the missing downwelling leg from the
-          // source's vertical depth and the sun's elevation before the return
-          // path attenuates it. An 18% unfiltered share stands in for
-          // environment and emissive energy the capture cannot separate.
+          // The authored mean radiance is measured in air, so restore the
+          // missing downwelling leg before attenuating the return path. An 18%
+          // unfiltered share preserves the existing environment-light balance.
           const sourceVerticalDepth = waterPath.mul(aboveRefracted.y.negate().max(0))
           const downwellingPath = sourceVerticalDepth.div(max(sunDir.y, 0.15))
           const downwellingTransmittance = exp(
@@ -716,10 +677,8 @@ export function createOceanSurfaceMaterial(
           )
           const transmittedDepthDim = exp(transmittedMidpointY.min(0).mul(0.03))
           const transmittedUpness = smoothstep(-0.5, 0.75, aboveRefracted.y)
-          // Sun-driven in-scatter from the column immediately under this
-          // point, so the shadow that darkens the surface darkens the water
-          // just beneath it too. The bottom itself is lit from the landing
-          // point, 30-odd metres away, and is deliberately not shadowed.
+          // Sun-driven in-scatter from the column immediately under this point,
+          // so a shadow on the surface darkens the water just beneath it too.
           const transmittedSunward = pow(
             max(dot(aboveRefracted, sunDir), 0.0),
             6.0,
@@ -738,13 +697,8 @@ export function createOceanSurfaceMaterial(
             .mul(sourceLightingFilter)
             .mul(aquaticTransmittance)
             .add(aquaticInscatter.mul(float(1).sub(aquaticTransmittance.g)))
-          // Two handoffs back to the palette body, both already owned by this
-          // sheet: the footprint flatten (past it the surface is the far-field
-          // mirror) and the same edge keep every other detailed-only term
-          // uses, which is what makes this sheet meet the palette-only skirt
-          // exactly at their seam from any camera height. The keep also stops
-          // the transport well short of the lagoon saucer's shallow rim, which
-          // would otherwise read as a pale ring at the horizon.
+          // Preserve the existing handoffs to the palette body at the
+          // footprint flatten and detailed-sheet edge.
           const transportKeep = float(1).sub(distanceFade).mul(vEdgeKeep)
           result.assign(
             mix(
@@ -895,11 +849,12 @@ export function createOceanSurfaceMaterial(
     // Underwater stays black — no foam term exists on the Snell/TIR side.
     finalColor = foamDebug.mul(isAbove)
   } else if (debugMode === 'validity') {
-    // Above water R and G must be FLAT under pure camera rotation from a
-    // fixed viewpoint — that is the whole contract this pass exists to hold.
+    // Above water R and G must be FLAT under pure camera rotation from a fixed
+    // viewpoint. G now means capture-free bathymetric transmission is present;
+    // it carries no scene imagery.
     const aboveValidity = vec3(
       reflection ? reflection.active : float(0),
-      undersea ? float(1) : float(0),
+      seabedHeight ? float(1) : float(0),
       aboveStructureContribution,
     )
     const belowValidity = vec3(

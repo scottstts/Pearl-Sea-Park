@@ -40,10 +40,9 @@ import { sunDirection, sunDirectionUniform } from '../sky/sun'
  * static: a fixed sun plus fixed above-water structures means the shadow
  * footprint on y = 0 is a fixed function of world XZ.
  *
- * This is the ONE cast shadow the water may show. It is co-located with the
- * surface, so nothing has to place it at depth — unlike the seabed's cast
- * shadows, which are deliberately absent from the undersea capture because
- * they read as lying on the surface rather than 26 m under it (sea/medium.ts).
+ * This is the one cast shadow the water itself shows. It is co-located with
+ * the surface, so nothing has to place it at depth. The capture-free
+ * transmission path contains no seabed or park shadow imagery.
  */
 
 /**
@@ -92,8 +91,8 @@ export class SurfaceSunShadow {
       CAMERA_Y - FLOOR_Y,
     )
     this.camera.position.set(0, CAMERA_Y, CENTER_Z)
-    // Same convention as the undersea capture: image +x is world +x and image
-    // +y is world −z, so the UV remap below needs no flip on either axis.
+    // Image +x is world +x and image +y is world −z, so the UV remap below
+    // needs no flip on either axis.
     this.camera.up.set(0, 0, -1)
     this.camera.lookAt(0, 0, CENTER_Z)
     this.camera.layers.set(0)
@@ -134,7 +133,7 @@ export class SurfaceSunShadow {
     }
   }
 
-  /** Capture the mask. Same load-time slot as the undersea radiance field. */
+  /** Capture the fixed structures' shadow on the water surface. */
   bake(ctx: GameContext): SurfaceSunShadowBakeSummary {
     const { renderer, scene } = ctx
     const hidden: Object3D[] = []

@@ -8,21 +8,18 @@ import {
 } from 'three'
 import { texture } from 'three/tsl'
 import type { Node } from 'three/webgpu'
+import { SUN_LIGHT_INTENSITY, sunColor, sunDirection } from '../sky/sun'
 import { terrainHeight } from '../world/terrainHeight'
 
 /**
- * The BARE seabed height, as distinct from the undersea radiance field's
- * canopy height (sea/underseaRadiance.ts), which is the topmost underwater
- * surface of any kind.
+ * World-anchored bathymetry for capture-free above-water transmission.
  *
- * Where the two agree, the water is looking at sand, and the ocean may
- * re-add the ripple band and caustic web that the capture deliberately froze
- * at their mean. Where the canopy stands proud of the seabed, it is a park
- * structure and neither belongs. That comparison is the only remaining
- * consumer of this field.
+ * It carries no scene color or structure canopy: the ocean uses only the
+ * terrain depth to transport one authored mean sand radiance through the
+ * water column. The submerged park is therefore never encoded here.
  */
 
-/** Half-extent of the baked field (m), matching the undersea radiance field. */
+/** Half-extent of the bathymetry field (m), covering the park and approaches. */
 const SEABED_MAP_EXTENT = 800
 /** 512² at 3.1 m cells — a sand/structure discriminator, not geometry. */
 const SEABED_MAP_RESOLUTION = 512
@@ -39,6 +36,25 @@ const SEABED_MAP_RESOLUTION = 512
  */
 const AMBIENT_AND_CAUSTIC_BOOST = 1.45
 export const SEABED_DIRECT_SHARE = 1 / AMBIENT_AND_CAUSTIC_BOOST
+
+/**
+ * Mean lit radiance of the sand plateau in air. This deliberately contains no
+ * spatial scene information; bathymetry and water transport supply the only
+ * variation visible from above.
+ */
+const SEABED_MEAN_ALBEDO = [0.5, 0.465, 0.36] as const
+const seabedChannel = (albedo: number, sunTint: number): number =>
+  (albedo / Math.PI) *
+  SUN_LIGHT_INTENSITY *
+  sunTint *
+  sunDirection.y *
+  AMBIENT_AND_CAUSTIC_BOOST
+
+export const SEABED_MEAN_RADIANCE = [
+  seabedChannel(SEABED_MEAN_ALBEDO[0], sunColor.r),
+  seabedChannel(SEABED_MEAN_ALBEDO[1], sunColor.g),
+  seabedChannel(SEABED_MEAN_ALBEDO[2], sunColor.b),
+] as const
 
 export interface SeabedHeightField {
   /** Seabed world y (always ≤ −0.5) at a world XZ, linearly filtered. */

@@ -2558,3 +2558,20 @@
     tile, canopy, surface shadow, final-pipeline compile, warm-frame submit/wall
     timing, and ready total. Use it rather than attributing GPU backlog to the
     phase whose next rAF happened to wait for it.
+
+- 2026-07-25 surgical removal of above-water submerged-park transmission:
+  - After the lossless warmup pass, cold incognito readiness fell from 114.05 s
+    to 69 s. The remaining whole-park-through-water feature was explicitly
+    retired; reflection and every underwater optical feature remain.
+  - Deleted `sea/underseaRadiance.ts` and its 2048² RGBA16F radiance target,
+    2048² R16F canopy target, four tiled scene renders, canopy override render,
+    mip generation, camera relocation, and capture-driven shadow invalidations.
+  - Air→water transmission now uses only the existing world-anchored bathymetry
+    and a spatially uniform mean sand radiance through the same Beer–Lambert,
+    downwelling, in-scatter, ripple-footprint, surface-shadow, and edge-handoff
+    math. No static park scene information exists in that path.
+  - Kept the bounded planar reflection, surface-shadow bake, FFT surface, foam,
+    wake, underwater medium/caustics/god rays, exact Snell/TIR path, the
+    underwater-only Arrival pavilion proxy, and the Bell's local waterline
+    continuity. Capture-neutral uniforms were removed because they had no
+    remaining state transition and their normal gameplay values were no-ops.

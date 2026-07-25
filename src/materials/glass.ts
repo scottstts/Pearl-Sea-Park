@@ -67,8 +67,8 @@ export function isOpticallyTransparent(material: MeshStandardNodeMaterial): bool
 
 /**
  * Can this mesh be rendered by an auxiliary pass that writes ONE plain colour
- * attachment? Both the ocean's mirrored reflection and the undersea radiance
- * capture ask this, and both would otherwise fail hard rather than degrade.
+ * attachment? The ocean's mirrored reflection asks this and would otherwise
+ * fail hard rather than degrade.
  *
  * A material carrying its own `mrtNode` — glass and the ocean both declare
  * `mrt({ normal })` — REPLACES a null render-context MRT instead of adding to
@@ -76,7 +76,7 @@ export function isOpticallyTransparent(material: MeshStandardNodeMaterial): bool
  * rejects it ("structures must have at least one member"). Transmission also
  * wants a backdrop capture the auxiliary pass has no business triggering, and
  * `depthWrite: false` geometry has no meaningful place in a depth-resolved
- * top-down capture. One predicate covers all three.
+ * auxiliary capture. One predicate covers all three.
  */
 export function isOpaqueAuxiliaryCapture(material: Material): boolean {
   const optical = material as Material & {

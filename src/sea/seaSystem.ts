@@ -17,8 +17,10 @@ import {
 import { OceanReflectionPass } from './oceanReflection'
 import { createOceanSkirtGeometry, OCEAN_INNER_HALF_SIZE } from './oceanSkirtGeometry'
 import { createSeabedHeightField, type SeabedHeightField } from './seabedRadiance'
-import { SurfaceSunShadow } from './surfaceSunShadow'
-import { UnderseaRadianceField, type UnderseaBakeHooks } from './underseaRadiance'
+import {
+  SurfaceSunShadow,
+  type SurfaceSunShadowBakeSummary,
+} from './surfaceSunShadow'
 import { WakeFoamMap } from './wakeFoamMap'
 import { WaterlineProbe } from './waterlineProbe'
 import { WaveSim } from './waveSim'
@@ -38,9 +40,7 @@ export class SeaSystem implements GameSystem {
   wakeFoam: WakeFoamMap | null = null
   /**
    * The one caustic projector, generated from this system's wave sim and read
-   * by the medium, every lit underwater material, and the ocean's own
-   * transmitted bottom. Owned here so it exists before the surface material
-   * that samples it is built.
+   * by the medium and every lit underwater material.
    */
   caustics: CausticsPass | null = null
   private inner: Mesh | null = null
@@ -50,17 +50,13 @@ export class SeaSystem implements GameSystem {
   private reflection: OceanReflectionPass | null = null
   private surfaceShadow: SurfaceSunShadow | null = null
   private seabed: SeabedHeightField | null = null
-  private undersea: UnderseaRadianceField | null = null
   private readonly timeUniform = uniform(0)
   private readonly pipeline: RenderPipelineSystem
   private submerged = false
   private followStep = 1
 
   /**
-   * The render pipeline is held only for its scene pass: both the mirrored
-   * reflection and the undersea capture must render through its exact MRT, or
-   * they hand the main pass node builder states built for a different output
-   * layout (the cache key does not carry the MRT).
+   * The render pipeline is held for the mirrored reflection's scene pass.
    */
   constructor(pipeline: RenderPipelineSystem) {
     this.pipeline = pipeline
@@ -82,13 +78,8 @@ export class SeaSystem implements GameSystem {
     this.interfaceStructures = new InterfaceStructureLayer(sim, submergedNode)
     this.reflection = new OceanReflectionPass()
     this.caustics = new CausticsPass(sim, ctx.quality.params.causticsSize)
-    // Neither above-water optical source may be a screen-space trace: both
-    // reflection and transmission are then gated on whether a ray direction's
-    // vanishing point happens to be inside the frustum, which is a pure
-    // function of camera pitch. The detailed sheet gets the world-anchored
-    // pair; the skirt keeps the far-field palette, which the detailed sheet
-    // also converges to.
-    this.undersea = new UnderseaRadianceField()
+    // Reflection remains a bounded mirrored render. Transmission is deliberately
+    // capture-free: the bathymetry below carries no park scene information.
     this.seabed = createSeabedHeightField()
     this.wakeFoam = new WakeFoamMap()
     const innerGeometry = new PlaneGeometry(INNER_SIZE, INNER_SIZE, segments, segments)
@@ -102,7 +93,6 @@ export class SeaSystem implements GameSystem {
         reflection: this.reflection.nodes,
         sunShadow: this.surfaceShadow.node,
         submerged: submergedNode,
-        undersea: this.undersea.nodes,
         seabedHeight: this.seabed.sampleHeight,
         wakeFoam: this.wakeFoam,
         debugMode,
@@ -224,30 +214,9 @@ export class SeaSystem implements GameSystem {
     return this.interfaceStructures.register(registration)
   }
 
-  /**
-   * Capture the world-anchored undersea radiance field. Must run once, after
-   * every world system has initialized and the static shadow casters are
-   * sealed — the park has to be in the field for the water to show it.
-   */
-  async bakeUnderseaField(
-    ctx: GameContext,
-    hooks: UnderseaBakeHooks = {},
-  ): Promise<void> {
-    await this.undersea?.bake(ctx, this.pipeline.scenePass, hooks)
-    // The one cast shadow the water itself shows. Same load-time slot, and it
-    // must follow the undersea capture, which restores the world's visibility.
-    const surfaceShadowStart = performance.now()
-    const surfaceShadow = this.surfaceShadow?.bake(ctx)
-    hooks.recordTiming?.(
-      'surface-shadow-bake',
-      performance.now() - surfaceShadowStart,
-      surfaceShadow
-        ? {
-            nonOpaqueMeshes: surfaceShadow.nonOpaqueMeshes,
-            submergedMeshes: surfaceShadow.submergedMeshes,
-          }
-        : undefined,
-    )
+  /** Bake the fixed structures' shadow directly onto the water surface. */
+  bakeSurfaceShadow(ctx: GameContext): SurfaceSunShadowBakeSummary | null {
+    return this.surfaceShadow?.bake(ctx) ?? null
   }
 
   dispose(ctx: GameContext): void {
@@ -259,8 +228,6 @@ export class SeaSystem implements GameSystem {
     this.wakeFoam = null
     this.seabed?.dispose()
     this.seabed = null
-    this.undersea?.dispose()
-    this.undersea = null
     this.caustics?.dispose()
     this.caustics = null
     this.reflection?.dispose()

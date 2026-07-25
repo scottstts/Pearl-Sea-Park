@@ -1,23 +1,12 @@
-import { float, sin, smoothstep, uniform, vec2 } from 'three/tsl'
+import { float, sin, smoothstep, vec2 } from 'three/tsl'
 import type { Node } from 'three/webgpu'
 import { fbm2, valueNoise2 } from '../render/tslNoise'
 
 /**
  * The sand's own surface detail, shared by the seabed material and by the
- * ocean's transmitted-bottom reconstruction.
- *
- * The world-anchored undersea radiance field (sea/underseaRadiance.ts) is a
- * 0.78 m/texel bake — plenty for structures, park shadows, and the sand's
- * 50 m/220 m tonal fields, but far coarser than a display pixel at close
- * range, where one pixel covers ~0.05 m of seabed. The ripple band lives at
- * ~3 m and would visibly soften. So it is deliberately BAKED FLAT and added
- * back analytically at full resolution on the water side: one definition,
- * evaluated in two places, which is why it lives here rather than inline in
- * the material.
+ * ocean's capture-free bathymetric transmission. One definition is evaluated
+ * in both places so the visible sand response stays coherent.
  */
-
-/** Set to 1 only while the undersea radiance field bakes. */
-export const seabedRippleBakeFlat = uniform(0)
 
 /**
  * Ripple slope in terrain-local XZ, added to the geometric normal as

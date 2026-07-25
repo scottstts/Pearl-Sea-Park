@@ -202,9 +202,7 @@ async function boot(): Promise<void> {
   sky?.sealStaticShadowCasters(scene)
   loadTiming.record('init:static-shadow-bundle', performance.now() - shadowSealStart)
 
-  // Compile scene materials BEFORE the one-shot undersea capture. Both use the
-  // scene pass's exact MRT context, so the bake reuses these asynchronously
-  // created pipelines instead of synchronously becoming a second warmup.
+  // Build scene material pipelines asynchronously behind the ticket.
   ticket.setProgress('prewarm', 0.72)
   const shaderWarmupStart = performance.now()
   const shaderWarmup = await precompileRendererShaders(
@@ -218,17 +216,21 @@ async function boot(): Promise<void> {
     { signatures: shaderWarmup.signatures },
   )
 
-  // The ocean's transmitted bottom is a world-anchored capture of the park, so
-  // it can only be taken once the park exists and its shadow casters are
-  // sealed. It runs for validation views too — they skip first-use frame
-  // submission, but never the water's only source of what lies below it.
-  ticket.setProgress('undersea-field', 0.83)
-  const underseaStart = performance.now()
-  await sea?.bakeUnderseaField(ctx, {
-    invalidateShadows: () => sky?.invalidateShadowLevels(),
-    recordTiming: recordLoadTiming,
-  })
-  loadTiming.record('undersea-bake', performance.now() - underseaStart)
+  // The only remaining static ocean bake is the fixed structures' shadow ON
+  // the surface. Above-water transmission contains no captured park field.
+  ticket.setProgress('surface-shadow', 0.83)
+  const surfaceShadowStart = performance.now()
+  const surfaceShadow = sea?.bakeSurfaceShadow(ctx)
+  loadTiming.record(
+    'surface-shadow-bake',
+    performance.now() - surfaceShadowStart,
+    surfaceShadow
+      ? {
+          nonOpaqueMeshes: surfaceShadow.nonOpaqueMeshes,
+          submergedMeshes: surfaceShadow.submergedMeshes,
+        }
+      : undefined,
+  )
   const postcardAudit = auditPostcardBookmarks()
   canvas.dataset.postcardAudit = JSON.stringify(postcardAudit)
   if (!postcardAudit.complete) {
@@ -256,8 +258,8 @@ async function boot(): Promise<void> {
   // Every shader the park can ever ask for is built, driver-compiled, and
   // used once behind the ticket screen. The Enter button appears only after
   // this completes: entry is instant and roaming never hits a first-sight
-  // pipeline compile again. Validation runs compile scene materials for the
-  // capture but still accept first-use frame stutter for faster iteration.
+  // pipeline compile again. Validation runs still accept first-use frame
+  // stutter for faster iteration.
   if (!validationMode) {
     const frameWarmupStart = performance.now()
     await warmupRenderer(

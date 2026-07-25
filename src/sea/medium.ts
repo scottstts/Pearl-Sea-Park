@@ -58,27 +58,6 @@ const AMBIENT_UP = vec3(...AQUATIC_AMBIENT_UP)
 // TIR underside on the ocean surface (oceanSurfaceMaterial tirBody).
 
 /**
- * Sun CAST shadows are switched off while the undersea radiance field captures
- * (1 = normal, 0 = capture). Everything else about the seabed's lighting stays.
- *
- * They are geometrically correct — a shadow really does land on the sand 32 m
- * from the Descent Station — but they do not READ as bottom shadows through
- * the surface, and that is a depth-cue failure rather than a clarity one. A
- * cast shadow has no texture, colour, or parallax of its own, so nothing places
- * it at depth; the eye assigns it to the nearest surface and it looks like an
- * aircraft's shadow lying on the water. Bathymetry and structures do not have
- * that problem: they carry their own detail and read as being down there.
- *
- * The two cues that would sell the depth are refraction parallax and
- * wave-driven wobble on the shadow's edge, and at this sea state (0.35
- * amplitude, a calm glassy swell) both are far too small to do it. So the
- * surface transmits the bottom's SUBSTANCE and not the sun's cast shadows.
- * Self-shading (N·L) is untouched, so structures keep their form, and
- * underwater — where the interface is not in the path — shadows are full.
- */
-export const seabedShadowCaptureKeep = uniform(1)
-
-/**
  * The undersea medium (plan §5): aquatic-perspective fog + volumetric god
  * rays composited in the HDR pipeline hook, the caustics projector, drifting
  * particulates, and the submerged gate. Those aquatic terms are a strict
@@ -225,9 +204,7 @@ export class SeaMediumSystem implements GameSystem {
     if (!sampler) return
     material.receivedShadowNode = Fn(([shadow]: [Node<'float'>]) => {
       const caustic = sampler(positionWorld).g
-      return mix(float(1), shadow, seabedShadowCaptureKeep).mul(
-        caustic.mul(strength).add(1.0),
-      )
+      return shadow.mul(caustic.mul(strength).add(1.0))
     }) as unknown as typeof material.receivedShadowNode
   }
 

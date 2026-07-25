@@ -2,7 +2,6 @@ import { BufferAttribute, BufferGeometry, Color, Mesh, Object3D } from 'three'
 import { MeshStandardNodeMaterial } from 'three/webgpu'
 import {
   Fn,
-  float,
   mix,
   normalGeometry,
   normalize,
@@ -15,7 +14,7 @@ import { fbm2 } from '../render/tslNoise'
 import type { GameContext } from '../runtime/context'
 import type { GameSystem } from '../runtime/system'
 import type { SeaMediumSystem } from '../sea/medium'
-import { seabedRippleBakeFlat, seabedRippleSlope } from './seabedSurface'
+import { seabedRippleSlope } from './seabedSurface'
 
 /**
  * The seabed (plan §6). The height field itself lives in the audit-friendly
@@ -91,11 +90,10 @@ export function createSandMaterial(medium: SeaMediumSystem): MeshStandardNodeMat
   material.colorNode = mix(base, vec3(0.33, 0.4, 0.3), patchTone.smoothstep(0.62, 0.85).mul(0.5))
 
   // Sand ripples: banded sine distorted by noise, as a normal perturbation.
-  // Suppressed only while the undersea radiance field bakes — the water side
-  // re-adds this exact band analytically at full display resolution, which the
-  // 0.78 m/texel bake could not carry (see world/seabedSurface.ts).
+  // The capture-free ocean transmission evaluates the same field at its
+  // refracted bathymetric landing point.
   material.normalNode = Fn(() => {
-    const slope = seabedRippleSlope(xz).mul(float(1).sub(seabedRippleBakeFlat))
+    const slope = seabedRippleSlope(xz)
     // NodeMaterial.normalNode is a view-space hook. Keep the authored ripple
     // field in terrain-local space, then transform the resolved normal exactly
     // once; passing the local vector through directly made the sun rotate

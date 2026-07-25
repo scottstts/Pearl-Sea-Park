@@ -32,9 +32,8 @@ interface SceneWarmupState {
 }
 
 /**
- * Build the scene's material pipelines asynchronously before any one-shot
- * capture renders the park. The undersea field uses the exact scene-pass MRT,
- * so these pipelines are shared by the capture and by gameplay.
+ * Build the scene's material pipelines asynchronously against the exact
+ * scene-pass MRT before first submitted use.
  */
 export async function precompileRendererShaders(
   ctx: GameContext,
