@@ -2531,6 +2531,12 @@
     brightness seam right where the fade completes. Integrate the real noise
     field offline (port `hash21`/`valueNoise2` to JS — they are ten lines) and
     hardcode it, as `CAUSTIC_FIELD_MEAN` already does.
+  - 2026-07-25 follow-up: mosaic bevel normals repeated the sand's old
+    coordinate-space bug. `MeshStandardNodeMaterial.normalNode` is view-space;
+    returning the floor-local/world-aligned perturbation directly made its
+    sunlight depend on camera yaw and pitch. Resolve and normalize the bevel in
+    its authored space, then apply `transformNormalToView()` exactly once. No
+    material response, caustic, exposure, or grading constants needed changes.
 
 - 2026-07-25 cold-load regression after the world-anchored ocean rewrite
   (`render/warmup.ts`, `sea/underseaRadiance.ts`):

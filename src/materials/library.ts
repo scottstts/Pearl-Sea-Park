@@ -14,6 +14,7 @@ import {
   positionWorld,
   sin,
   smoothstep,
+  transformNormalToView,
   vec2,
   vec3,
 } from 'three/tsl'
@@ -296,13 +297,17 @@ export class ParkMaterials {
         // 0.09→0.2 tiles per pixel reproduces the old detailKeep(30) head-on
         // and, unlike it, actually retires at grazing incidence — where a
         // normal perturbation aliases into shimmer long before the colour does.
-        // Floors bake their transforms into geometry, so normalGeometry is
-        // already the world up here — perturb it rather than replacing it.
+        // Floors bake their transforms into geometry, so this local-space
+        // field is also world-aligned here. MeshStandardNodeMaterial's
+        // normalNode hook still consumes a VIEW-space normal: resolve the
+        // authored bevel locally, then transform it exactly once. Returning
+        // the local vector directly makes the sun rotate around a camera-fixed
+        // normal as the player changes view direction.
         const bevel = float(1).sub(smoothstep(0.09, 0.2, coarsest)).mul(0.42)
         const tiltX = smoothstep(0.86, 1.0, local.x).sub(smoothstep(0.14, 0.0, local.x))
         const tiltZ = smoothstep(0.86, 1.0, local.y).sub(smoothstep(0.14, 0.0, local.y))
-        m.normalNode = normalize(
-          normalGeometry.add(vec3(tiltX.mul(bevel), 0, tiltZ.mul(bevel))),
+        m.normalNode = transformNormalToView(
+          normalize(normalGeometry.add(vec3(tiltX.mul(bevel), 0, tiltZ.mul(bevel)))),
         )
         return m
       })(),
